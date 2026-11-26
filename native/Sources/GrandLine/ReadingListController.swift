@@ -153,9 +153,9 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         // GL-14: a list nobody has read off disk yet is not an empty list, and
         // neither of them is "0 saved".
         guard hasLoaded else { return "Opening the reading list\u{2026}" }
-        // R5-UX-10: the empty state's own hint, kept for the first few links.
-        return QuietHint.line("\(ReadingListQuery.headline(store.links)) \u{00B7} \(syncSummary)",
-                              count: store.links.count, hint: "\u{2318}V pastes a link, or drop one here")
+        // UX-13: the paste well says how a link is added, always, so the
+        // line no longer carries R5-UX-10's quiet hint for it.
+        return "\(ReadingListQuery.headline(store.links)) \u{00B7} \(syncSummary)"
     }
 
     /// One wording for the sync state, read by both the drill subtitle and the
@@ -295,7 +295,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
 
         dropHintCard.translatesAutoresizingMaskIntoConstraints = false
         dropHintCard.onDropText = { [weak self] text in self?.capture(text, source: "drop") }
-        dropHintCard.onClick = { [weak self] in self?.pasteTapped() }
+        dropHintCard.onSave = { [weak self] text in self?.saveFromWell(text) ?? false }
         gridDocument.addSubview(dropHintCard)
 
         // P9: the column is a real split-view sidebar - draggable, collapsible
@@ -331,16 +331,15 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
             // that narrows the clip view without narrowing `gridScroll`.
             gridDocument.widthAnchor.constraint(equalTo: gridScroll.contentView.widthAnchor),
 
-            gridStack.leadingAnchor.constraint(equalTo: gridDocument.leadingAnchor),
-            gridStack.trailingAnchor.constraint(equalTo: gridDocument.trailingAnchor),
-            gridStack.topAnchor.constraint(equalTo: gridDocument.topAnchor),
-
+            // UX-13: the paste well leads the page, and the list follows it.
             dropHintCard.leadingAnchor.constraint(equalTo: gridDocument.leadingAnchor),
             dropHintCard.trailingAnchor.constraint(equalTo: gridDocument.trailingAnchor),
-            dropHintCard.topAnchor.constraint(equalTo: gridStack.bottomAnchor,
-                                              constant: HelmResponsiveGrid.spacing),
-            dropHintCard.bottomAnchor.constraint(equalTo: gridDocument.bottomAnchor,
-                                                 constant: -Self.gutter),
+            dropHintCard.topAnchor.constraint(equalTo: gridDocument.topAnchor),
+
+            gridStack.leadingAnchor.constraint(equalTo: gridDocument.leadingAnchor),
+            gridStack.trailingAnchor.constraint(equalTo: gridDocument.trailingAnchor),
+            gridStack.topAnchor.constraint(equalTo: dropHintCard.bottomAnchor, constant: HelmResponsiveGrid.spacing),
+            gridStack.bottomAnchor.constraint(equalTo: gridDocument.bottomAnchor, constant: -Self.gutter),
         ])
     }
 
@@ -498,6 +497,20 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
             Feedback.report(why, kind: .failure, persistence: .transient, in: isViewLoaded ? view : nil)
             return false
         }
+    }
+
+    /// UX-13: the paste well's Save. A field the captain pasted into with
+    /// \u{2318}V read the pasteboard through the field editor, not this page,
+    /// so the concealed rule is asked here too: a Poneglyph secret on the
+    /// pasteboard that is exactly what the field holds is refused.
+    private func saveFromWell(_ text: String) -> Bool {
+        if CredentialVaultClipboard.isConcealed(.general),
+           NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            Feedback.report("That clipboard entry came from Poneglyph, so it was not saved.",
+                            kind: .warning, persistence: .transient, in: isViewLoaded ? view : nil)
+            return false
+        }
+        return capture(text, source: "well")
     }
 
     /// The File menu's "New Link" and the drill header's Paste button.
@@ -834,7 +847,9 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         emptyState?.removeFromSuperview()
         emptyState = nil
         emptyStateTitle = nil
-        dropHintCard.isHidden = visibleCount == 0
+        // UX-13: the paste well is always there, so the list's way in is
+        // never a paragraph.
+        dropHintCard.isHidden = store.isInFailedLoadState
         guard visibleCount == 0, let contentPane = splitPage?.contentPane else { return }
 
         let state: HelmEmptyState
@@ -856,8 +871,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
             state = HelmEmptyState(
                 symbol: "link",
                 title: "Nothing saved yet",
-                body: "Paste a link with \u{2318}V, drop one anywhere on this page, or press \u{2318}6 "
-                    + "in the \u{2325}Space capture panel. Titles are read on this machine.",
+                body: "Links you save appear here as soon as they are pasted, with their titles read on this machine.",
                 size: .standard,
                 accessory: example,
                 hue: RailDestination.readingList.domainHue,
@@ -940,8 +954,18 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     var debugDropHint: ReadingListDropHintView { dropHintCard }
     /// UXP-12: the two places the page gives its paste-or-drop instruction,
     /// as drawn (R4-UI-05 took out the toolbar hint, the third).
+    /// UX-13: whether the paste well shows, whether an empty state shows,
+    /// and whether that empty state repeats the well's instruction.
     var debugInstructionCopies: (dropCard: Bool, emptyState: Bool) {
         (!dropHintCard.isHidden, emptyState != nil)
+    }
+    var debugEmptyStateRepeatsTheInstruction: Bool {
+        emptyState.map { state in
+            func texts(_ view: NSView) -> [String] {
+                view.subviews.flatMap { ($0 as? NSTextField).map { [$0.stringValue] } ?? texts($0) }
+            }
+            return texts(state).contains { $0.contains("\u{2318}V") || $0.lowercased().contains("drop") }
+        } ?? false
     }
     /// R4-UI-05: every subview of the page's root, which no longer holds a
     /// toolbar row of its own.
@@ -1096,15 +1120,28 @@ final class ReadingListDropRootView: NSView {
     }
 }
 
-/// The mockup's dashed card under the grid: "\u{2318}V here, or drop a link from
-/// any browser."
-final class ReadingListDropHintView: NSView {
+/// UX-13: the paste well across the top of the page, always there: a link
+/// glyph, a field that says "Paste or drop a link here", and Save. It is
+/// where a link is pasted, typed or dropped, so an empty list needs no
+/// paragraph about three ways to add one. The dashed edge is the app's one
+/// signal for "this is a place to put something", and it lights while a
+/// link is dragged over it.
+final class ReadingListDropHintView: NSView, NSTextFieldDelegate {
     var onDropText: ((String) -> Void)?
-    var onClick: (() -> Void)?
+    /// Save with the field's text. Returns whether the link was saved, so
+    /// the field empties only then.
+    var onSave: ((String) -> Bool)?
 
+    static let placeholder = "Paste or drop a link here \u{00B7} \u{2318}V"
+    static let height: CGFloat = 60
+    static let tileSide: CGFloat = 30
+    /// The glyph tile's wash of the accent over the card.
+    static let tileWash: CGFloat = 0.14
+
+    private let tile = NSView()
     private let glyph = NSImageView()
-    private let label = NSTextField(labelWithString:
-        "\u{2318}V here, or drop a link from any browser.")
+    let field = HelmTextField(placeholder: ReadingListDropHintView.placeholder)
+    let saveButton = HelmButton(title: "Save", variant: .primary, size: .small)
     private var isHighlighted = false {
         didSet { needsDisplay = true }
     }
@@ -1115,40 +1152,62 @@ final class ReadingListDropHintView: NSView {
         registerForDraggedTypes([.URL, .string])
         wantsLayer = true
 
-        glyph.translatesAutoresizingMaskIntoConstraints = false
-        glyph.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 18, weight: .regular))
-        glyph.imageScaling = .scaleProportionallyUpOrDown
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = HelmType.caption()
-        label.alignment = .center
-        addSubview(glyph)
-        addSubview(label)
-
-        setAccessibilityRole(.button)
-        setAccessibilityLabel("Save the link on the clipboard to the reading list")
-        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
+        tile.wantsLayer = true
+        tile.layer?.cornerRadius = HelmMetrics.rChip
+        glyph.image = HelmSymbol.image("link", pointSize: 13, weight: .semibold)
+        glyph.imageScaling = .scaleNone
+        tile.addSubview(glyph)
+        field.delegate = self
+        field.target = self
+        field.action = #selector(saveTapped)
+        field.setAccessibilityLabel("Link to save")
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        saveButton.target = self
+        saveButton.action = #selector(saveTapped)
+        saveButton.toolTip = "Save the link to the reading list"
+        // Gotcha (5): only the field gives way.
+        saveButton.setContentHuggingPriority(.required, for: .horizontal)
+        saveButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        for view in [tile, glyph, field, saveButton] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+        }
+        for view in [tile, field, saveButton] as [NSView] { addSubview(view) }
 
         NSLayoutConstraint.activate([
-            glyph.centerXAnchor.constraint(equalTo: centerXAnchor),
-            glyph.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s4),
-            label.centerXAnchor.constraint(equalTo: centerXAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: HelmMetrics.s3),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -HelmMetrics.s3),
-            label.topAnchor.constraint(equalTo: glyph.bottomAnchor, constant: HelmMetrics.s1),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s4),
+            heightAnchor.constraint(equalToConstant: Self.height),
+            tile.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s4),
+            tile.centerYAnchor.constraint(equalTo: centerYAnchor),
+            tile.widthAnchor.constraint(equalToConstant: Self.tileSide),
+            tile.heightAnchor.constraint(equalToConstant: Self.tileSide),
+            glyph.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
+            glyph.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+            field.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: HelmMetrics.s3),
+            field.centerYAnchor.constraint(equalTo: centerYAnchor),
+            saveButton.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: HelmMetrics.s3),
+            saveButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s4),
+            saveButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    @objc private func clicked() { onClick?() }
+    @objc private func saveTapped() {
+        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            window?.makeFirstResponder(field)
+            return
+        }
+        if onSave?(text) == true { field.stringValue = "" }
+    }
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        let muted = HelmTheme.mutedInk(theme)
-        label.textColor = muted
-        glyph.contentTintColor = muted
+        let accent = HelmTheme.nsColor(theme.accentHex)
+        let card = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let wash = card.blended(withFraction: Self.tileWash, of: accent) ?? card
+        tile.layer?.backgroundColor = wash.cgColor
+        glyph.contentTintColor = HelmContrast.legibleOn(fill: wash, preferring: accent, target: HelmContrast.nonTextTarget)
         needsDisplay = true
     }
 
@@ -1159,10 +1218,8 @@ final class ReadingListDropHintView: NSView {
         let radius = theme.isDaylight ? HelmMetrics.dModule : HelmMetrics.rCard
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
                                 xRadius: radius, yRadius: radius)
-        if isHighlighted {
-            accent.withAlphaComponent(0.08).setFill()
-            path.fill()
-        }
+        (isHighlighted ? accent.withAlphaComponent(0.08) : HelmTheme.nsColor(theme.chromeBackgroundHex)).setFill()
+        path.fill()
         path.lineWidth = isHighlighted ? 2 : 1
         // Dashed, which is the mockup's own border-style and the app's one
         // signal for "this is a place to put something" rather than a card
@@ -1190,8 +1247,11 @@ final class ReadingListDropHintView: NSView {
     }
 
     #if FM_SELFTESTS
-    var debugLabel: String { label.stringValue }
-    var debugLabelColor: NSColor? { label.textColor }
+    var debugLabel: String { field.placeholderAttributedString?.string ?? field.placeholderString ?? "" }
+    func debugSave(_ text: String) {
+        field.stringValue = text
+        saveTapped()
+    }
     #endif
 }
 

@@ -243,12 +243,14 @@ enum SidebarRedesignsSelfTest {
             let heading = outline.rect(ofRow: work)
             return heading.minY >= clip.bounds.minY - 0.5 && heading.maxY <= clip.bounds.maxY + 0.5
         }
-        shell.workspace.navigator.show(.settings)
+        // UX-28: Settings is the sidebar's foot and scrolls nothing, so the
+        // fixture visits the list's own last row, Setup.
+        shell.workspace.navigator.show(WorkspaceModule.setup.primaryRoute)
         settle(shell)
-        // Discriminating power: the visit to Settings really has to leave the
+        // Discriminating power: the visit to Setup really has to leave the
         // heading out of sight, or the next assertion holds without the fix.
         check(clip.bounds.minY > outline.rect(ofRow: work).minY + 1,
-              "fixture: at 1100x760 Settings did not scroll the Work heading out of sight "
+              "fixture: at 1100x760 Setup did not scroll the Work heading out of sight "
               + "(list at \(clip.bounds.minY), heading at \(outline.rect(ofRow: work).minY))", &ok)
         shell.workspace.navigator.show(.docs)
         settle(shell)
@@ -633,7 +635,8 @@ enum SidebarRedesignsSelfTest {
         // DevOps Hub made it 26. Its projects are cards on its page now, not
         // rows under it. At 950pt the list still overflows, so the whole-list
         // sweep runs where the default set fits.
-        check(outline.numberOfRows == 26, "the default sidebar with one session should be 26 rows, got \(outline.numberOfRows)", &ok)
+        // UX-28 took Settings out of the list into the sidebar's foot: 25.
+        check(outline.numberOfRows == 25, "the default sidebar with one session should be 25 rows, got \(outline.numberOfRows)", &ok)
         var fits = window.frame
         fits.size.height = Self.defaultSetFitsHeight
         window.setFrame(fits, display: false)
@@ -670,7 +673,7 @@ enum SidebarRedesignsSelfTest {
               "the fixture should overflow by less than one row, got \(shortOverflow)pt", &ok)
         shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
-        if let bottom = WorkspaceSidebarModel.listedModules().last {
+        if let bottom = WorkspaceSidebarModel.listedModules().last(where: { $0 != WorkspaceSidebarModel.footModule }) {
             shell.workspace.navigator.show(bottom.primaryRoute)
             settle(shell)
             let lit = outline.rect(ofRow: outline.selectedRow)
@@ -1023,27 +1026,28 @@ enum SidebarRedesignsSelfTest {
               "Tasks' tabs are \(tasks.moduleTabNames)", &ok)
         clickTab("Weekly review", shell)
         check(tasks.debugHeroBand == nil, "the band and its filters show over Weekly review", &ok)
-        let cards = tasks.debugReviewCards
-        check(cards.map(\.debugCaption) == ["Completed this week", "Focus time", "Overdue", "Follow-ups open",
-                                            "Coming up next week"],
-              "Weekly review's cards are \(cards.map(\.debugCaption))", &ok)
+        // UX-05: the review's own band carries the week's done count and
+        // focus time; overdue, follow-ups and next week are its verdict and
+        // the agenda under it.
+        let band = tasks.reviewBand
         let summary = shell.workspace.shiftStore.weeklySummary()
-        check(cards[0].debugValue == "\(summary.completedCount)" && cards[0].debugDetail?.isEmpty == false,
-              "Completed this week reads \(cards[0].debugValue), want \(summary.completedCount) and a comparison", &ok)
-        check(cards[2].debugValue == "\(tasks.counts().overdue)", "Overdue reads \(cards[2].debugValue)", &ok)
+        check(band.debugFigures.map(\.caption) == ["Done this week", "Focus time"],
+              "Weekly review's figures are \(band.debugFigures.map(\.caption))", &ok)
+        check(band.debugFigures.first?.count == "\(summary.completedCount)",
+              "Done this week reads \(band.debugFigures.first?.count ?? "-"), want \(summary.completedCount)", &ok)
         // The floating bar's strip counts the tasks pushed back 2+ times; here
         // that figure is the Pushed back panel's own count.
         check(tasks.debugPushedBackCount == "\(summary.pushedBack.count)",
               "Pushed back repeatedly counts \(tasks.debugPushedBackCount ?? "nothing"), "
                   + "want \(summary.pushedBack.count)", &ok)
         // Focus time is the focus log's: none, then what was logged.
-        check(cards[1].debugValue == "None yet", "Focus time with no sessions reads \(cards[1].debugValue)", &ok)
+        check(band.debugFigures.last?.count == "None", "Focus time with no sessions reads \(band.debugFigures.last?.count ?? "-")", &ok)
         if let task = shell.workspace.shiftStore.activeTasks.first {
             shell.workspace.shiftStore.logFocusSession(taskID: task.id, taskTitle: task.title, seconds: 3000)
             clickTab("Board", shell)
             clickTab("Weekly review", shell)
-            check(cards[1].debugValue == FocusTimerFormat.total(3000) && cards[1].debugDetail?.contains("1 task") == true,
-                  "Focus time reads \(cards[1].debugValue) / \(cards[1].debugDetail ?? "-") after a 50 minute session", &ok)
+            check(band.debugFigures.last?.count == FocusTimerFormat.total(3000),
+                  "Focus time reads \(band.debugFigures.last?.count ?? "-") after a 50 minute session", &ok)
         }
         // Back from Weekly review is where the floating bar's column used to
         // return (the review put it away), so it is where it would come back.
@@ -1070,21 +1074,26 @@ enum SidebarRedesignsSelfTest {
         shell.workspace.navigator.show(.updates)
         settle(shell)
         _ = waitUntil(timeout: 10) {
-            updates.debugToolsTable.debugRows.filter(\.isRecord).count == DependencyCatalog.items.count
-                && !updates.debugToolsTable.debugRows.contains { row in
+            updates.debugToolRows.filter(\.isRecord).count == DependencyCatalog.items.count
+                && !updates.debugToolRows.contains { row in
                     if case .muted(let text)? = row.cells["available"] { return text.hasPrefix("Checking") }
                     return false
                 }
         }
         check(updates.debugSetupSummary.window != nil, "Updates has no Setup hero", &ok)
-        let rows = updates.debugToolsTable.debugRows
-        let groups = rows.compactMap { row -> String? in
-            if case .group(let name) = row.kind { return name }
-            return nil
-        }
-        check(groups == DependencyCatalog.categoryOrder.filter { category in
-            DependencyCatalog.items.contains { $0.category == category } },
-              "the table's groups are \(groups)", &ok)
+        let rows = updates.debugToolRows
+        // UX-22: the tools are grouped by state, one card each, and each
+        // group's header carries its one action.
+        let shown = UpdatesGroup.allCases.filter { updates.debugGroupCard($0)?.table.card.isHidden == false }
+        check(shown == [.updateAvailable, .notInstalled, .couldNotCheck, .upToDate],
+              "UX-22: the Updates groups shown are \(shown)", &ok)
+        check(updates.debugGroupCard(.notInstalled)?.actionButton.title == "Install 1 in \(PlaceName.short(.bootstrap))"
+                && updates.debugGroupCard(.updateAvailable)?.actionButton.title == "Update 1"
+                && updates.debugGroupCard(.couldNotCheck)?.actionButton.title == "Check again"
+                && updates.debugGroupCard(.upToDate)?.actionButton.isHidden == true,
+              "UX-22: the group actions read \(UpdatesGroup.allCases.map { updates.debugGroupCard($0)?.actionButton.title ?? "-" })", &ok)
+        check(updates.debugGroupCard(.upToDate)?.table.isCollapsed == true,
+              "UX-22: Up to date is not folded to its header", &ok)
         func row(_ id: String) -> HelmDataTable.Row? { rows.first { $0.key == id } }
         if let quota = row("quota-axi") {
             if case .status(let text, let tint)? = quota.cells["available"] {
@@ -1096,7 +1105,8 @@ enum SidebarRedesignsSelfTest {
         } else {
             fail("the table has no quota-axi", &ok)
         }
-        check(row("gh")?.primary?.title == "Install in \(PlaceName.short(.bootstrap))", "gh offers \(row("gh")?.primary?.title ?? "nothing")", &ok)
+        // UX-22: the group says Install once; the row keeps what is its own.
+        check(row("gh")?.primary == nil, "gh still offers \(row("gh")?.primary?.title ?? "nothing") of its own", &ok)
         if let up = row("tasks-axi") {
             check(up.primary == nil, "an up-to-date tool offers \(up.primary?.title ?? "")", &ok)
             if case .muted(let text)? = up.cells["available"] { check(text == "Up to date", "tasks-axi reads \(text)", &ok) }
@@ -1106,12 +1116,12 @@ enum SidebarRedesignsSelfTest {
         // The filter row: Needs Attention, then the tool filter.
         updates.debugSetFilter(needsAttention: true)
         settle(shell)
-        let attention = updates.debugToolsTable.debugRows.compactMap(\.key)
+        let attention = updates.debugToolRows.compactMap(\.key)
         check(Set(attention) == ["quota-axi", "gh", "claude-code"], "Needs Attention lists \(attention)", &ok)
         updates.debugSetFilter(needsAttention: false)
         updates.debugSetQuery("axi")
         settle(shell)
-        let axi = updates.debugToolsTable.debugRows.compactMap(\.key)
+        let axi = updates.debugToolRows.compactMap(\.key)
         check(!axi.isEmpty && axi.allSatisfy { $0.hasSuffix("axi") }, "filtering \"axi\" lists \(axi)", &ok)
         updates.debugSetQuery("")
         settle(shell)
@@ -1123,10 +1133,10 @@ enum SidebarRedesignsSelfTest {
               "the far-right button is \(primary?.title ?? "missing")", &ok)
 
         // A tool's detail and its output are the inspector's.
-        updates.debugToolsTable.debugSelect(key: "quota-axi")
+        updates.debugGroupCard(.updateAvailable)?.table.debugSelect(key: "quota-axi")
         settle(shell)
         check(updates.inspectorContent?.title == "quota-axi", "selecting a tool does not fill the inspector", &ok)
-        updates.debugToolsTable.debugSelect(key: nil)
+        updates.debugGroupCard(.updateAvailable)?.table.debugSelect(key: nil)
     }
 
     private static func checkGitHubSync(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

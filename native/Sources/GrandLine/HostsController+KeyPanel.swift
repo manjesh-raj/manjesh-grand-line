@@ -109,7 +109,7 @@ extension HostsController {
         return panel
     }
 
-    private func keyPanelCreated(_ key: SSHKey, privateKeyData: Data, passphrase: String?) {
+    func keyPanelCreated(_ key: SSHKey, privateKeyData: Data, passphrase: String?) {
         persistNewKey(key, privateKeyData: privateKeyData, passphrase: passphrase)
         guard keyStore.key(id: key.id) != nil else { return }
         // The new key is a key now: select it, and its own form opens.

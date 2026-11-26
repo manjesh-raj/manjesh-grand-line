@@ -315,7 +315,7 @@ enum NotebookViewSelfTest {
             _ = store.createPage(title: "Orphan")
             page.debugReload()
             page.debugOpen(pageID: "orphan")
-            check(page.debugBacklinksTitle == "Backlinks",
+            check(page.debugBacklinksTitle == "Linked from",
                   "an orphan's panel carries no count, got \(page.debugBacklinksTitle)")
             check(page.debugBacklinkRowCount == 1,
                   "and shows one explanatory line rather than nothing at all")
@@ -418,14 +418,16 @@ enum NotebookViewSelfTest {
             check(abs(splitEditor - splitPreview) < 2,
                   "and shares it evenly, got \(splitEditor) vs \(splitPreview)")
 
-            page.debugSetMode(.preview)
+            // UX-12: Write is one pane across the two cards' room.
+            page.debugSetMode(.write)
             page.view.layoutSubtreeIfNeeded()
-            check(page.debugEditorCardHidden, "preview mode hides the editor")
+            check(page.debugEditorCardHidden && page.debugPreviewCardHidden && !page.debugWriteCardHidden,
+                  "write mode shows the Write card alone")
             check(page.debugEditorCard.frame.width < 1,
-                  "and collapses it, got \(page.debugEditorCard.frame.width)")
-            check(page.debugPreviewCard.frame.width > splitPreview + 50,
-                  "so the preview takes the width back, got \(page.debugPreviewCard.frame.width) "
-                  + "vs \(splitPreview) in split")
+                  "and collapses the editor, got \(page.debugEditorCard.frame.width)")
+            check(page.debugWriteCard.frame.width > splitEditor + splitPreview,
+                  "so the Write card spans both cards' room, got \(page.debugWriteCard.frame.width) "
+                  + "vs \(splitEditor) + \(splitPreview) in split")
 
             page.debugSetMode(.edit)
             page.view.layoutSubtreeIfNeeded()
@@ -433,16 +435,15 @@ enum NotebookViewSelfTest {
             check(page.debugEditorCard.frame.width > splitEditor + 50,
                   "and the editor takes the width back, got \(page.debugEditorCard.frame.width)")
 
-            // UI-54: the rail is an inspector, hidden until asked for.
-            check(page.debugRailHidden, "the inspector rail starts hidden - Split is two panes")
+            // UI-54, then UX-12: the page's details are the shell's inspector,
+            // offered only once asked for, and never a column of the page.
+            check(page.debugRailHidden && page.inspectorContent == nil, "the page's details start hidden")
             page.debugToggleRail()
-            page.view.layoutSubtreeIfNeeded()
-            check(!page.debugRailHidden && page.debugRail.frame.width > 100,
-                  "the toolbar toggle shows the inspector, got \(page.debugRail.frame.width)")
+            check(!page.debugRailHidden && page.inspectorContent?.view === page.debugRail,
+                  "Show Page Details does not offer the details to the inspector")
+            check(!page.debugRail.isDescendant(of: page.view), "the page's details are still a column of the page")
             page.debugToggleRail()
-            page.view.layoutSubtreeIfNeeded()
-            check(page.debugRailHidden, "the rail toggle hides the rail")
-            check(page.debugRail.frame.width < 1, "and collapses its column, got \(page.debugRail.frame.width)")
+            check(page.debugRailHidden && page.inspectorContent == nil, "the toggle does not take the details back")
 
             // Gotcha (13): nothing on this page may cap the window. Measured
             // rather than reasoned - the fixed page tree and the fixed rail

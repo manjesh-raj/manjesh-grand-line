@@ -281,6 +281,33 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private let runConfigurationCard = CodePreviewInspectorCard(title: "Run configuration")
     private let scriptChecksCard = CodePreviewInspectorCard(title: "Script checks")
     private let editorPreferencesCard = CodePreviewInspectorCard(title: "Editor preferences")
+    /// UX-21: the three cards of fixed facts, in the shell's inspector on
+    /// request rather than in a column beside the editor.
+    private lazy var factsView: NSStackView = {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s2 + 2
+        // The cards keep the pane's gutter on both sides.
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: HelmMetrics.s3, bottom: HelmMetrics.s3, right: HelmMetrics.s3)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }()
+    /// UX-21: the toolbar's one shield chip, which says the run is sandboxed
+    /// and opens the facts.
+    private(set) lazy var sandboxChip: HelmButton = {
+        let chip = HelmButton(title: "", variant: .secondary, size: .small, symbol: "checkmark.shield.fill",
+                              target: self, action: #selector(sandboxChipTapped))
+        // Gotcha (13): below the window's stay-put priority, so the chip
+        // gives way on a narrowing page rather than holding the window open.
+        chip.setContentHuggingPriority(.required, for: .horizontal)
+        chip.setContentCompressionResistancePriority(HelmDaylightPriority.columnHug, for: .horizontal)
+        return chip
+    }()
+    var onInspectorContentChanged: (() -> Void)?
+    var onShowInspector: (() -> Void)?
+    /// UX-21: the chip asked for the facts.
+    private var factsRequested = false
     private lazy var undoButton = HelmPageToolbar.iconButton(
         symbol: "arrow.uturn.backward", tooltip: "Undo (\u{2318}Z)",
         target: self, action: #selector(undoTapped))
@@ -2077,12 +2104,19 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
                              slot(), zoomStepper],
             runStatus: runStatus,
             runButton: runButton,
+            trailingChip: sandboxChip,
             tabStrip: tabStrip,
             titleRow: titleRow,
             codeArea: editorCard,
             dock: dock,
-            inspectorCards: [runConfigurationCard, scriptChecksCard, editorPreferencesCard],
+            // UX-21: the facts are the inspector's (`factsView`), so the
+            // editor takes the width.
+            inspectorCards: [],
             statusBar: statusBar)
+        for card in [runConfigurationCard, scriptChecksCard, editorPreferencesCard] {
+            factsView.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: factsView.widthAnchor, constant: -2 * HelmMetrics.s3).isActive = true
+        }
         let workbench = CodePreviewWorkbenchView(parts: parts)
         root.addSubview(workbench)
         NSLayoutConstraint.activate([
@@ -2177,6 +2211,13 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private func refreshInspector() {
         guard workbench != nil else { return }
         let input = inspectorInput
+        let chip = Self.sandboxChipWords(sandboxAvailable: input.sandboxAvailable)
+        sandboxChip.title = chip.title
+        sandboxChip.toolTip = chip.toolTip
+        sandboxChip.setAccessibilityLabel(chip.title + ". Shows the run configuration, script checks and editor preferences")
+        sandboxChip.labelColorOverride = HelmContrast.legibleOn(
+            fill: HelmTheme.nsColor(theme.chromeBackgroundHex),
+            preferring: HelmTheme.nsColor((input.sandboxAvailable ? HelmTint.good : HelmTint.critical).hex(in: theme)))
         runConfigurationCard.setRows(CodePreviewInspectorModel.runConfiguration(input),
                                      note: CodePreviewInspectorModel.safetyNote(sandboxAvailable: input.sandboxAvailable))
         scriptChecksCard.setChecks(CodePreviewInspectorModel.checks(input))
@@ -2457,4 +2498,45 @@ extension CodePreviewController {
     func buildSidebarPresentation() {
         buildWorkbench()
     }
+}
+
+// MARK: - UX-21: the facts in the inspector
+
+extension CodePreviewController: WorkspaceInspectorSource {
+    /// The chip's words: what the runs are, in two words, and what opens.
+    static func sandboxChipWords(sandboxAvailable: Bool) -> (title: String, toolTip: String) {
+        sandboxAvailable
+            ? ("Sandboxed \u{00B7} no network", "Runs are sandboxed with no network. Show the run configuration, script checks and editor preferences")
+            : ("Runs refused", "sandbox-exec is missing, so runs are refused. Show the run configuration and checks")
+    }
+
+    /// The facts once the chip asked for them, and nothing before: a page
+    /// with content is a page with details to show, which the shell makes
+    /// room for (measured: a 858pt window grew to 941pt on every visit).
+    var inspectorContent: WorkspaceInspectorContent? {
+        guard workbench != nil, factsRequested else { return nil }
+        return WorkspaceInspectorContent(title: "Sandbox and checks", view: factsView)
+    }
+
+    /// The inspector closing puts the facts away until the chip is pressed
+    /// again.
+    func inspectorShouldClose() -> Bool {
+        factsRequested = false
+        return true
+    }
+
+    var inspectorEmptyText: (title: String, body: String) {
+        ("Sandbox and checks", "The run configuration, script checks and editor preferences show here.")
+    }
+
+    @objc func sandboxChipTapped() {
+        factsRequested = true
+        refreshInspector()
+        onInspectorContentChanged?()
+        onShowInspector?()
+    }
+
+    #if FM_SELFTESTS
+    var debugFactsView: NSStackView { factsView }
+    #endif
 }

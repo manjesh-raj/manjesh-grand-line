@@ -500,7 +500,10 @@ enum ReviewTwoUXSelfTest {
         settle(shell)
         for id in ids {
             let item = window.toolbar?.items.first { $0.itemIdentifier == id }
-            check(item?.action != nil && item?.label.hasPrefix("Quick Connect") == true,
+            // UX-25: the label is the place's short name; the overflow form
+            // keeps the phrase.
+            check(item?.action != nil && item?.menuFormRepresentation?.action != nil
+                    && item?.menuFormRepresentation?.title.hasPrefix("Quick Connect") == true,
                   "at 1100 on Notebook \(id.rawValue) has no working overflow form", &ok)
         }
         resize(window, width: 1512, shell)
@@ -768,7 +771,8 @@ enum ReviewTwoUXSelfTest {
         popUp.selectItem(at: 2)
         _ = popUp.sendAction(popUp.action, to: popUp.target)
         settle(shell)
-        check(notebook.debugMode == .preview, "picking Preview in the toolbar left Notebook in \(notebook.debugMode)", &ok)
+        // UX-12: the three modes are Write, Split and Source.
+        check(notebook.debugMode == .edit, "picking Source in the toolbar left Notebook in \(notebook.debugMode)", &ok)
         notebook.debugSetMode(.split)
         settle(shell)
         check(popUp.titleOfSelectedItem == "Split", "the header's view mode did not follow the page (\(popUp.titleOfSelectedItem ?? ""))", &ok)

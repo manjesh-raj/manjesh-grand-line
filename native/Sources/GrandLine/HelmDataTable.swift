@@ -245,6 +245,19 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     /// Hands the wheel to the page while every row fits, so a fitted table
     /// (`sizesToFitRows`) is not a dead zone in the page that scrolls it.
     private let scroll = HelmNestedScrollView()
+    /// The column titles, the rule and the rows, which `isCollapsed` folds.
+    private let body = NSView()
+    private lazy var collapsedHeight = body.heightAnchor.constraint(equalToConstant: 0)
+
+    /// 1.2.0: fold the table to its card's own header (UX-22's Up to date,
+    /// shown on request). The rows are kept; only the body is put away.
+    var isCollapsed = false {
+        didSet {
+            guard isCollapsed != oldValue else { return }
+            body.isHidden = isCollapsed
+            collapsedHeight.isActive = isCollapsed
+        }
+    }
     private let header = HelmDataTableHeader()
     private let headerRule = NSView()
     private let tracking = HelmDataTableTracking()
@@ -336,7 +349,6 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         tracking.onHover = { [weak self] point in self?.pointerMoved(to: point) }
         tracking.translatesAutoresizingMaskIntoConstraints = false
 
-        let body = NSView()
         body.translatesAutoresizingMaskIntoConstraints = false
         header.translatesAutoresizingMaskIntoConstraints = false
         headerRule.wantsLayer = true

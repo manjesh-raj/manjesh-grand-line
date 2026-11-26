@@ -232,7 +232,7 @@ extension HomeCanvasController {
         case .tasks: fillTasks(&content)
         case .mergeQueue: fillMergeQueue(&content)
         case .console: fillConsole(&content)
-        case .health: fillHealth(&content)
+        case .health: fillHealth(&content, width: width)
         case .hosts: fillHosts(&content, width: width)
         case .updates: fillUpdates(&content)
         case .bootstrap: fillBootstrap(&content)

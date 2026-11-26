@@ -76,3 +76,11 @@ extension DictationController: WorkspaceHeaderLineCollapsing {
     var collapsesEmptyHeaderLine: Bool { true }
     var drawsSubtitleOnHeaderLine: Bool { false }
 }
+
+/// UX-10 of full review 4: Commands' band starts right under the toolbar,
+/// with no empty header strip above it (the seam the review named). The
+/// count the line said is in the search field's placeholder now.
+extension CommandLibraryController: WorkspaceHeaderLineCollapsing {
+    var collapsesEmptyHeaderLine: Bool { true }
+    var drawsSubtitleOnHeaderLine: Bool { false }
+}

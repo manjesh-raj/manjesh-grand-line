@@ -30,6 +30,7 @@ enum ConnectionFormsWindowChecks {
         checkConsole(shell, &ok)
         checkHostForm(shell, &ok)
         checkKeyForm(shell, &ok)
+        checkAddOpensASheet(shell, &ok)
         writeRenders(shell, window)
         shell.workspace.hostsPanel.debugCloseFormPanels()
         settle(shell)
@@ -139,6 +140,40 @@ enum ConnectionFormsWindowChecks {
         check(panel.debugIssueText(.address) == nil && !address.showsIssue,
               "the fixed address still shows \(panel.debugIssueText(.address) ?? "a border")", &ok)
         hosts.debugCloseFormPanels()
+        settle(shell)
+    }
+
+    // MARK: UX-26
+
+    /// Add Host and the pencil open the sheet over the page, and New Key
+    /// does too; the inspector is left to read a host's details.
+    private static func checkAddOpensASheet(_ shell: MainSplitShellController, _ ok: inout Bool) {
+        print("\n-- UX-26: Add and Edit open a sheet --")
+        let hosts = shell.workspace.hostsPanel
+        shell.workspace.navigator.show(.hosts)
+        hosts.select(tab: .hosts)
+        settle(shell)
+        hosts.newHost()
+        settle(shell)
+        let sheet = hosts.presentedViewControllers?.compactMap { $0 as? HostEditorController }.first
+        check(sheet?.presentation == .sheet && sheet === hosts.hostSheet && hosts.hostPanel == nil,
+              "UX-26: Add Host did not open the sheet (\(String(describing: hosts.presentedViewControllers)))", &ok)
+        if let sheet { hosts.dismiss(sheet) }
+        settle(shell)
+        if let host = hosts.hostStore.hosts.first {
+            hosts.editHost(host)
+            settle(shell)
+            let edit = hosts.presentedViewControllers?.compactMap { $0 as? HostEditorController }.first
+            check(edit?.presentation == .sheet && edit?.currentRecord?.id == host.id,
+                  "UX-26: the pencil did not open \(host.label)'s sheet", &ok)
+            if let edit { hosts.dismiss(edit) }
+            settle(shell)
+        }
+        hosts.presentKeyEditor(for: nil)
+        settle(shell)
+        let key = hosts.presentedViewControllers?.compactMap { $0 as? KeyEditorController }.first
+        check(key?.presentation == .sheet, "UX-26: New Key did not open a sheet", &ok)
+        if let key { hosts.dismiss(key) }
         settle(shell)
     }
 

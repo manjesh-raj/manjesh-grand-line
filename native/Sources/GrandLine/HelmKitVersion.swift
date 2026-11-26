@@ -84,7 +84,7 @@ enum HelmKit {
         Component("HelmConfirm", "1.0.0", file: "HelmConfirm.swift"),
         Component("HelmConfirmView", "1.0.0", file: "HelmConfirm.swift"),
         // HelmDataTable.swift
-        Component("HelmDataTable", "1.1.0", file: "HelmDataTable.swift"),
+        Component("HelmDataTable", "1.2.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableActionsCell", "1.0.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableRowView", "1.0.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableRunDotsCell", "1.0.0", file: "HelmDataTable.swift"),
@@ -95,7 +95,7 @@ enum HelmKit {
         Component("HelmDomainHue", "1.1.0", file: "HelmDaylight.swift"),
         // HelmDesignSystem.swift
         Component("HelmAccentRow", "1.0.0", file: "HelmDesignSystem.swift"),
-        Component("HelmButton", "1.4.0", file: "HelmDesignSystem.swift"),
+        Component("HelmButton", "1.5.0", file: "HelmDesignSystem.swift"),
         Component("HelmCard", "2.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmCountBadge", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmEmptyState", "1.0.1", file: "HelmDesignSystem.swift"),
@@ -133,7 +133,7 @@ enum HelmKit {
         Component("HelmHeroTile", "1.1.0", file: "HelmHeroCard.swift"),
         Component("HelmHeroTileGrid", "1.1.0", file: "HelmHeroCard.swift"),
         // HelmHeroColumn.swift
-        Component("HelmHeroColumn", "1.7.0", file: "HelmHeroColumn.swift"),
+        Component("HelmHeroColumn", "1.8.0", file: "HelmHeroColumn.swift"),
         Component("HelmHeroNavRow", "1.0.0", file: "HelmHeroColumn.swift"),
         Component("HelmHeroRow", "1.0.0", file: "HelmHeroColumn.swift"),
         // HelmHeroSplitCard.swift
@@ -165,7 +165,7 @@ enum HelmKit {
         Component("HelmScrollEdgeHairline", "1.0.0", file: "HelmListMotion.swift"),
         // HelmModuleCard.swift
         Component("HelmDaylightPriority", "1.0.0", file: "HelmModuleCard.swift"),
-        Component("HelmModuleCard", "2.0.0", file: "HelmModuleCard.swift"),
+        Component("HelmModuleCard", "2.0.1", file: "HelmModuleCard.swift"),
         Component("HelmModuleChip", "1.0.0", file: "HelmModuleCard.swift"),
         Component("HelmModulePeekRow", "1.0.0", file: "HelmModuleCard.swift"),
         Component("HelmModuleRowState", "1.0.0", file: "HelmModuleCard.swift"),
@@ -224,7 +224,7 @@ enum HelmKit {
         // HelmFilterBar.swift
         Component("HelmFilterBar", "1.0.1", file: "HelmFilterBar.swift"),
         // HelmChoiceCard.swift
-        Component("HelmChoiceCard", "1.0.0", file: "HelmChoiceCard.swift"),
+        Component("HelmChoiceCard", "1.1.0", file: "HelmChoiceCard.swift"),
         // HelmIconButton.swift
         Component("HelmIconButton", "1.1.0", file: "HelmIconButton.swift"),
         // HelmPageScaffold.swift

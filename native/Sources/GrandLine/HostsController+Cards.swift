@@ -354,6 +354,9 @@ extension HostsController {
     /// H5's pencil, ⌘E and a menu's Edit: the host's form in the side
     /// panel with the keyboard in it.
     func editHost(_ host: Host) {
-        openHostPanel(forEditing: host)
+        // UX-26: edited in the sheet, as a new host is made.
+        hostsGrid.setSelected(host.id.uuidString, notify: false)
+        hostsTable.setSelectedKey(host.id.uuidString, notify: false)
+        presentHostSheet(for: host)
     }
 }

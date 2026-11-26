@@ -63,7 +63,7 @@ enum TextScaleRowHeightSelfTest {
     private static let heights: [(name: String, base: CGFloat, current: () -> CGFloat)] = [
         ("ReviewPRListView", ReviewPRListView.baseRowHeight, { ReviewPRListView.rowHeight }),
         ("DictationHistoryListView", DictationHistoryListView.baseRowHeight, { DictationHistoryListView.rowHeight }),
-        ("FleetLogListView", FleetLogListView.baseEventRowHeight, { FleetLogListView.eventRowHeight }),
+        ("FleetLogListView", FleetLogListView.baseLineHeight, { FleetLogListView.lineHeight }),
         // Audit #2 §1.2 - the tables #333's own sweep missed. Five of these
         // genuinely clip today (their cells are scaled `HelmType` roles); the
         // raw pane is the one exception and says why at its own declaration.
@@ -174,18 +174,9 @@ enum TextScaleRowHeightSelfTest {
                 title: "Give the palette glass and per-row identity, put symbols in the menus",
                 chipText: "Checks green"),
              { ReviewPRListView.rowHeight }),
-            // Kicker + title and **no meta line** - read off
-            // `FleetLogEventCellView.configure`, not assumed. The first draft
-            // of this fixture handed it a meta line it never renders and
-            // reported the list 17pt short, which is a fixture bug wearing a
-            // layout bug's clothes.
-            ("FleetLogListView", .trailing, .card,
-             HelmAccentRow.Content(
-                tint: .info,
-                kicker: "MERGED",
-                title: "Move the toast off the chrome and retire the stock spinner",
-                badgeSymbol: "arrow.triangle.merge"),
-             { FleetLogListView.eventRowHeight }),
+            // UX-07: the Crew log draws one line per event now, not an
+            // accent row, so it has no shape here; its line height is in
+            // `heights` above, and it follows the scale like the others.
             // The UI/UX revamp's board card: `.cardFlat`, the chip on the meta
             // line. Two shapes, because the lane plan costs a card with no
             // meta line and one with it differently.

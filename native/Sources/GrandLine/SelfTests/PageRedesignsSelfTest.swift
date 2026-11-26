@@ -81,7 +81,8 @@ enum PageRedesignsSelfTest {
                               checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkReplyQuestionHead,
                               checkInFlightBand, checkReviewBand, checkLogBand,
                               checkDevOpsHub,
-                              ConnectionFormsWindowChecks.checkForms, ConsoleFixesWindowChecks.checkConsole] {
+                              ConnectionFormsWindowChecks.checkForms, ConsoleFixesWindowChecks.checkConsole,
+                              ReviewFourWindowChecks.checkTasks] {
                     var ok = true
                     check(shell, window, scratch, &ok)
                     allOK = allOK && ok
@@ -562,7 +563,7 @@ enum PageRedesignsSelfTest {
         // Runbooks and Postmortems list their own items.
         shell.workspace.navigator.show(.runbooks)
         settle(shell)
-        let runbooks = Set(shell.workspace.runbooks.debugRunbookPlates.map(\.debugTitle))
+        let runbooks = Set(shell.workspace.runbooks.debugRunbookRows.map(\.debugTitle))
         check(runbooks == ["Rotate a TLS certificate", "Fail over the database"], "Runbooks lists \(runbooks)", &ok)
         shell.workspace.navigator.show(.postmortems)
         settle(shell)
@@ -591,10 +592,11 @@ enum PageRedesignsSelfTest {
         if let runbook = index.flatItems(query: "Rotate").first(where: { $0.title == "Rotate a TLS certificate" }) {
             runbook.activate()
             settle(shell)
+            // UX-17: it opens chosen in the list, ready to run.
             check(shell.debugCurrentDestination == .runbooks && shell.debugCurrentTab?.name == "Runbooks"
-                    && shell.workspace.runbooks.debugRunbookEditorIsOpen,
+                    && shell.workspace.runbooks.debugDetail.debugTitle == "Rotate a TLS certificate"
+                    && !shell.workspace.runbooks.debugRunbookEditorIsOpen,
                   "a runbook found by Search did not open in Runbooks", &ok)
-            shell.workspace.runbooks.debugCancelRunbookEditor()
         } else {
             fail("Search has no result for the seeded runbook", &ok)
         }
@@ -703,7 +705,8 @@ enum PageRedesignsSelfTest {
         settle(shell)
         check(page.mode == .cards && !cards.view.isHidden && registry.state(of: id).isRunning,
               "Projects left the page on \(page.mode) with \(registry.state(of: id))", &ok)
-        check(cards.heroWords?.headline == "1 project running." && card.debugStatus?.hasPrefix("Running") == true
+        // UX-15: a running card's line says what it serves.
+        check(cards.heroWords?.headline == "1 project running." && card.debugStatus?.hasSuffix("this Mac only") == true
                 && card.debugSubtitle == "127.0.0.1:\(project.port)",
               "the cards read \(cards.heroWords?.headline ?? "-") / \(card.debugStatus ?? "-")", &ok)
         // Gotchas (13) and (15): the project view is hidden now, and nothing
@@ -726,7 +729,14 @@ enum PageRedesignsSelfTest {
 
         // Open, then the window's Back: the project view is a place in the
         // history, so Back steps to the cards.
+        // UX-15: a running card's second icon copies its address. Return
+        // (the card's own activation) opens it.
+        let savedBoard = NSPasteboard.general.string(forType: .string)
         card.debugActionButtons[1].performClick(nil)
+        check(NSPasteboard.general.string(forType: .string)?.contains("127.0.0.1:\(project.port)") == true,
+              "UX-15: a running card's second icon did not copy its address", &ok)
+        if let savedBoard { copyToPasteboard(savedBoard) }
+        card.debugKey(36, characters: "\r")
         settle(shell)
         check(page.mode == .project(id) && page.projectView.debugShowsSite,
               "the card's Open left the page on \(page.mode)", &ok)
@@ -736,7 +746,7 @@ enum PageRedesignsSelfTest {
 
         // The DevOps Hub row, clicked while a project shows, goes back to
         // the cards. From another page it opens the hub as it was left.
-        card.debugActionButtons[1].performClick(nil)
+        card.debugKey(36, characters: "\r")
         settle(shell)
         shell.workspace.navigator.show(.health)
         settle(shell)
@@ -978,12 +988,31 @@ enum PageRedesignsSelfTest {
         clickTab("In flight", shell)
         check(!fleet.debugNeedsYouShowing && !onScreen(fleet.debugReplyButton(taskID: ReviewTourLab.demoDecisionTaskID)),
               "In flight still shows the Needs your call list", &ok)
+        // UX-06: the tab carries its count, and a headline about a decision
+        // has its door on the band, the solid pill, which goes to Needs you.
+        check(shell.toolbar.debugTabLabels.first == "Needs you\u{2002}1",
+              "UX-06: Crew's tabs read \(shell.toolbar.debugTabLabels) with one decision waiting", &ok)
+        if let door = fleet.debugOpenNeedsYouButton, let inFlight = band(fleet) {
+            check(onScreen(door) && door.isDescendant(of: inFlight) && door.heroSelection != nil
+                    && door.title == CrewHeroWords.openNeedsYouTitle,
+                  "UX-06: In flight's Open Needs you is not the band's solid pill", &ok)
+            door.performClick(nil)
+            settle(shell)
+            check(fleet.debugNeedsYouShowing && shell.debugCurrentTab?.name == "Needs you",
+                  "UX-06: Open Needs you did not land on Needs you", &ok)
+            clickTab("In flight", shell)
+        } else {
+            fail("UX-06: In flight says a task needs your call and offers no Open Needs you", &ok)
+        }
 
         // Nothing waiting is said plainly by the band, with when it was
         // checked, and with no second empty card under it.
         let quiet = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [], queuedCount: 0, doneCount: 0,
                                   projectsCount: 0, watcher: WatcherHealth(status: "healthy"))
         fleet.debugRender(snapshot: quiet, mergedPRs: [])
+        check(fleet.debugOpenNeedsYouButton == nil && shell.toolbar.debugTabLabels.first == "Needs you",
+              "UX-06: with nothing waiting In flight still offers Open Needs you, or the tab reads "
+                + "\(shell.toolbar.debugTabLabels.first ?? "-")", &ok)
         clickTab("Needs you", shell)
         if let calm = band(fleet) {
             check(calm.debugHeadline == "Nothing needs you" && calm.debugKicker.hasPrefix("Needs you \u{00B7} checked ")
@@ -1193,7 +1222,8 @@ enum PageRedesignsSelfTest {
             return
         }
         let tiles = fleet.debugBandTiles
-        check(tiles.map(\.debugText) == clauses.map(\.text) && briefed.debugBandViews.count == 2
+        // UX-06's Open Needs you is a band view too, while a decision waits.
+        check(tiles.map(\.debugText) == clauses.map(\.text) && briefed.debugBandViews.filter({ !($0 is HelmButton) }).count == 2
                 && tiles.allSatisfy(onScreen),
               "CR-1: the band's tiles read \(tiles.map(\.debugText))", &ok)
         check(tiles.map(\.isActivatable) == [true, true, true, false],
@@ -1224,7 +1254,7 @@ enum PageRedesignsSelfTest {
         clickTab("In flight", shell)
         fleet.debugBandDismissButton.performClick(nil)
         settle(shell)
-        check(fleet.debugBandBriefingRow == nil && band(fleet)?.debugBandViews.isEmpty == true
+        check(fleet.debugBandBriefingRow == nil && band(fleet)?.debugBandViews.allSatisfy({ $0 is HelmButton }) == true
                 && settings.morningBriefingRecord?.dismissed == true,
               "CR-1: Dismiss until tomorrow did not take the briefing off the band", &ok)
 
@@ -1348,32 +1378,37 @@ enum PageRedesignsSelfTest {
               "CR-1: Log's filter is not on the band's foot (foot \(logBand.debugFootViews))", &ok)
         check(tabs.heroInk == logBand.ink && tabs.heroSelection == navInk.selectedInk,
               "CR-1: the filter is not in the band's ink: \(String(describing: tabs.heroInk)) for \(logBand.ink)", &ok)
-        check(pillTitles(tabs) == ["All\u{2002}10", "Merges\u{2002}3", "Tasks\u{2002}3", "Sync\u{2002}1",
+        check(pillTitles(tabs) == ["Today\u{2002}5", "All\u{2002}10", "Merges\u{2002}3", "Tasks\u{2002}3", "Sync\u{2002}1",
                                    "Investigations\u{2002}1", "Incidents\u{2002}2"],
               "CR-1: the filter's segments read \(pillTitles(tabs))", &ok)
         let pills = tabs.debugPillsForAccessibilityTests()
-        check(pills.count == 6 && pills.allSatisfy { $0.accessibilityRole() == .radioButton }
-                && pills.map { $0.accessibilityLabel() ?? "" } == ["All", "Merges", "Tasks", "Sync", "Investigations", "Incidents"]
-                && pills.map { ($0.accessibilityValue() as? String) ?? "" }.first == "selected",
-              "CR-1: the filter's segments are not six radio buttons named as before", &ok)
+        // UX-07 put Today in front of All. All stays the chosen segment, so
+        // a first visit still shows everything.
+        check(pills.count == 7 && pills.allSatisfy { $0.accessibilityRole() == .radioButton }
+                && pills.map { $0.accessibilityLabel() ?? "" }
+                    == ["Today", "All", "Merges", "Tasks", "Sync", "Investigations", "Incidents"]
+                && pills.map { ($0.accessibilityValue() as? String) ?? "" }[1] == "selected",
+              "CR-1: the filter's segments are not seven radio buttons, Today then the six named as before", &ok)
         let colors = tabs.debugPillLabelColors
-        if colors.count == 6 {
-            let chosen = HelmContrast.ratio(colors[0], logBand.ink)
-            check(colors[0] == navInk.selectedInk && colors.dropFirst().allSatisfy { $0 == logBand.ink }
+        if colors.count == 7 {
+            let chosen = HelmContrast.ratio(colors[1], logBand.ink)
+            check(colors[1] == navInk.selectedInk
+                    && colors.enumerated().allSatisfy { $0.offset == 1 || $0.element == logBand.ink }
                     && chosen >= HelmContrast.textTarget,
-                  "CR-1: the chosen segment's words are \(colors[0]) (\(String(format: "%.2f", chosen)):1 on the ink)", &ok)
+                  "CR-1: the chosen segment's words are \(colors[1]) (\(String(format: "%.2f", chosen)):1 on the ink)", &ok)
         }
-        // The feed sits straight under the band, as it always read.
+        // The feed is a timeline card under the band (UX-07): a day heading,
+        // an hour heading, then the lines and runs under it.
         let list = fleet.debugLogList
-        check(fleet.debugLogListShowing && list.debugRowCount == 13 && onScreen(list),
+        check(fleet.debugLogListShowing && list.debugRowCount == 21 && onScreen(list),
               "CR-1: the feed under Log's band has \(list.debugRowCount) rows, showing \(fleet.debugLogListShowing)", &ok)
         let bandBottom = logBand.convert(NSPoint(x: 0, y: logBand.isFlipped ? logBand.bounds.height : 0), to: nil).y
         let listTop = list.convert(NSPoint(x: 0, y: list.isFlipped ? 0 : list.bounds.height), to: nil).y
-        // The first day sits right under the band (its header row holds its
-        // own space above the day's name), and the last card is whole: the
-        // table is as tall as its rows. It was 16pt short before CR-1, and
-        // the last card was cut 13pt.
-        check(bandBottom >= listTop - 0.5 && bandBottom - listTop < HelmMetrics.s1,
+        // Since UX-07 the feed is a card of its own, so it sits the page's
+        // usual card gap under the band rather than butting against it. The
+        // last row is whole: the table is as tall as its rows (the last card
+        // was cut 13pt before CR-1).
+        check(abs(bandBottom - listTop - HelmMetrics.s4) < 0.5,
               "CR-1: the feed starts \(bandBottom - listTop)pt under the band", &ok)
         func feedIsWhole() -> Bool {
             let rows = list.tableView.numberOfRows
@@ -1391,27 +1426,27 @@ enum PageRedesignsSelfTest {
             pill.keyDown(with: event)
             settle(shell)
         }
-        window.makeFirstResponder(pills[0])
-        arrow(124, on: pills[0])
-        check(tabs.selected == "merge" && window.firstResponder === pills[1] && list.debugRowCount == 6
+        window.makeFirstResponder(pills[1])
+        arrow(124, on: pills[1])
+        check(tabs.selected == "merge" && window.firstResponder === pills[2] && list.debugRowCount == 9
                 && band(fleet) === logBand && logBand.debugHeadline == "5 events today" && feedIsWhole(),
               "CR-1: → from All moved to \(tabs.selected) with \(list.debugRowCount) rows", &ok)
         check(tabs.debugHeroRing.isShowing && !tabs.debugHeroRing.systemRingIsOn,
               "CR-1: a keyed focus on the filter draws no ink ring", &ok)
         // Reduce Motion (pinned on for this suite): the thumb is already
         // under the chosen pill, with nothing sliding.
-        let pillFrame = pills[1].convert(pills[1].bounds, to: tabs)
+        let pillFrame = pills[2].convert(pills[2].bounds, to: tabs)
         check(abs(tabs.debugThumbFrame.width - pillFrame.width) < 0.5,
               "CR-1: under Reduce Motion the filter's thumb is \(tabs.debugThumbFrame) for \(pillFrame)", &ok)
-        arrow(124, on: pills[1])
-        check(tabs.selected == "task" && list.debugRowCount == 6, "CR-1: → to Tasks shows \(list.debugRowCount) rows", &ok)
+        arrow(124, on: pills[2])
+        check(tabs.selected == "task" && list.debugRowCount == 9, "CR-1: → to Tasks shows \(list.debugRowCount) rows", &ok)
+        arrow(123, on: pills[3])
         arrow(123, on: pills[2])
-        arrow(123, on: pills[1])
-        check(tabs.selected == "all" && window.firstResponder === pills[0] && list.debugRowCount == 13,
+        check(tabs.selected == "all" && window.firstResponder === pills[1] && list.debugRowCount == 21,
               "CR-1: ← back to All shows \(list.debugRowCount) rows on \(tabs.selected)", &ok)
         tabs.debugClickTab(id: "incident")
         settle(shell)
-        check(list.debugRowCount == 3 && pills.map { ($0.accessibilityValue() as? String) ?? "" }[5] == "selected",
+        check(list.debugRowCount == 5 && pills.map { ($0.accessibilityValue() as? String) ?? "" }[6] == "selected",
               "CR-1: Incidents shows \(list.debugRowCount) rows", &ok)
         tabs.debugClickTab(id: "all")
         window.makeFirstResponder(nil)
@@ -1448,7 +1483,7 @@ enum PageRedesignsSelfTest {
         settle(shell)
         check(logBand.debugHeadline == "Quiet so far today"
                 && logBand.debugBody == "The last event was yesterday at \(CrewBand.time(at(-1, 18, 18)))."
-                && pillTitles(tabs).first == "All\u{2002}1" && fleet.debugLogListShowing,
+                && pillTitles(tabs).prefix(2) == ["Today\u{2002}0", "All\u{2002}1"] && fleet.debugLogListShowing,
               "CR-1: a quiet log reads \(logBand.debugHeadline) / \(logBand.debugBody ?? "-")", &ok)
 
         // An empty log: the band is the empty state, with no filter and no
@@ -1480,7 +1515,7 @@ enum PageRedesignsSelfTest {
         tabs.debugClickTab(id: "investigation")
         settle(shell)
         check(isDimmed(logBand) && logBand.debugHeadline.hasPrefix("Couldn\u{2019}t read all of the log at ")
-                && pillTitles(tabs) == ["All", "Merges", "Tasks\u{2002}0", "Sync", "Investigations", "Incidents"]
+                && pillTitles(tabs) == ["Today", "All", "Merges", "Tasks\u{2002}0", "Sync", "Investigations", "Incidents"]
                 && list.debugEmptyText.title == "Couldn\u{2019}t read the log"
                 && list.debugEmptyText.body.hasPrefix("Saved investigations could not be read at "),
               "CR-1: a partly read log drew \(logBand.debugHeadline), segments \(pillTitles(tabs)), "

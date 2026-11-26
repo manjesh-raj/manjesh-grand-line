@@ -82,7 +82,13 @@ enum CrewHeroWords {
         /// count. Empty draws none: a log with nothing in it has nothing to
         /// filter, and the band is its empty state.
         var filter: [LogSegment] = []
+        /// UX-06: the headline is about a decision waiting on the captain, so
+        /// the band offers "Open Needs you" as its one action.
+        var opensNeedsYou = false
     }
+
+    /// UX-06: the band's one action when its headline is about a decision.
+    static let openNeedsYouTitle = "Open Needs you"
 
     static let crewSymbol = "person.2.fill"
     static let calmSymbol = "checkmark"
@@ -207,6 +213,9 @@ enum CrewHeroWords {
         /// failed read said "Nothing needs you right now" (GL-14).
         var tasksRead = true
         var checkedAt: Date? = nil
+        /// UX-06: the tasks waiting on the captain (`FleetGreeting.needingCaptain`),
+        /// the ones the verdict's headline is about when it has any.
+        var needingCaptain = 0
     }
 
     static func inFlight(_ reading: InFlightReading, day: String, time: (Date) -> String) -> Band {
@@ -243,8 +252,12 @@ enum CrewHeroWords {
         }
         // A PR scan that failed leaves the verdict partly unknown, so the
         // band takes the dimmed tone the way a failed Needs you read does.
-        return Band(symbol: crewSymbol, kicker: kicker, headline: reading.verdictHeadline, body: reading.verdictBody,
-                    tone: reading.ready == .failed ? .dimmed : .accent, figures: figures, status: watcher)
+        var band = Band(symbol: crewSymbol, kicker: kicker, headline: reading.verdictHeadline, body: reading.verdictBody,
+                        tone: reading.ready == .failed ? .dimmed : .accent, figures: figures, status: watcher)
+        // UX-06: a headline about a decision has its door. `FleetGreeting`
+        // leads with the tasks waiting on the captain whenever there are any.
+        band.opensNeedsYou = reading.needingCaptain > 0
+        return band
     }
 
     /// The watcher's pill: "Watcher healthy", "Watcher stale" or "Watcher off".
@@ -382,7 +395,7 @@ enum CrewHeroWords {
 
     /// One segment of Log's filter on the band.
     struct LogSegment: Equatable {
-        /// `nil` is All.
+        /// `nil` is All, or Today when `isToday`.
         let kind: FleetLogEventKind?
         /// The floating bar's own title for it (`FleetLogListView.filterItems`).
         let title: String
@@ -393,6 +406,9 @@ enum CrewHeroWords {
         /// "Merges 3", with an en space, as Hosts' and DevOps Hub's counted
         /// segments say it.
         var label: String { count.map { "\(title)\u{2002}\($0)" } ?? title }
+        /// UX-07: the Today scope, beside All, so each count says what it
+        /// counts ("Today 15", "All 23").
+        var isToday = false
     }
 
     /// What the last read of the log found, as counts. Built from the feed's
@@ -515,7 +531,9 @@ enum CrewHeroWords {
     /// each with its count when that count is known.
     static func logSegments(_ reading: LogReading) -> [LogSegment] {
         let kinds: [FleetLogEventKind?] = [nil] + FleetLogEventKind.allCases.map { $0 }
-        return kinds.map { kind in
+        let today = LogSegment(kind: nil, title: "Today", count: reading.knows(nil) ? reading.todayTotal : nil,
+                               isToday: true)
+        return [today] + kinds.map { kind in
             let count = kind.map { reading.counts[$0] ?? 0 } ?? reading.total
             return LogSegment(kind: kind, title: kind?.pluralTitle ?? "All", count: reading.knows(kind) ? count : nil)
         }

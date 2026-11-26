@@ -303,9 +303,25 @@ enum CodePreviewWorkbenchViewSelfTest {
 
     private static func checkInspector(_ controller: CodePreviewController, _ workbench: CodePreviewWorkbenchView,
                                        _ window: NSWindow, _ ok: inout Bool) {
-        check(workbench.inspectorShown && !workbench.inspectorScroll.isHidden,
-              "the right column should show at a wide window", &ok)
+        // UX-21: no right column at any width. The editor takes it, and the
+        // three cards are the inspector's, opened from the Sandboxed chip.
+        check(!workbench.inspectorShown && workbench.inspectorScroll.isHidden,
+              "UX-21: the right column of fixed facts still shows at a wide window", &ok)
+        check(abs(frame(workbench.editorFrame, in: controller).maxX - frame(workbench.toolbarCard, in: controller).maxX) < 0.5,
+              "UX-21: the editor card does not take the column's width", &ok)
+        let chip = controller.sandboxChip
+        check(chip.window != nil && !chip.isHiddenOrHasHiddenAncestor && chip.isDescendant(of: workbench.toolbarCard)
+                && chip.title == CodePreviewController.sandboxChipWords(sandboxAvailable: CodeSandbox.isAvailable).title,
+              "UX-21: the toolbar has no Sandboxed chip (\(chip.title))", &ok)
+        var shown = false
+        controller.onShowInspector = { shown = true }
+        chip.performClick(nil)
+        check(shown && controller.inspectorContent?.view === controller.debugFactsView,
+              "UX-21: the chip does not open the facts in the inspector", &ok)
+        controller.onShowInspector = nil
         let cards = controller.debugInspectorCards
+        check(cards.allSatisfy { $0.isDescendant(of: controller.debugFactsView) },
+              "UX-21: the fact cards are not the inspector's", &ok)
         check(cards.map(\.debugTitle) == ["Run configuration", "Script checks", "Editor preferences"],
               "the three cards should be in the concept's order, got \(cards.map(\.debugTitle))", &ok)
         let config = cards[0].debugRowTexts
@@ -348,14 +364,14 @@ enum CodePreviewWorkbenchViewSelfTest {
         window.setFrame(narrow, display: true)
         settle(controller)
         check(!workbench.inspectorShown && workbench.inspectorScroll.isHidden,
-              "the right column should hide below the breakpoint", &ok)
+              "the right column should stay hidden below the breakpoint", &ok)
         check(abs(frame(workbench.editorFrame, in: controller).maxX - frame(workbench.toolbarCard, in: controller).maxX) < 0.5,
               "with the column hidden the editor card should take its width", &ok)
         check(abs(workbench.debugSnippetColumnFrame.width - CodePreviewWorkbenchMetrics.narrowSnippetColumnWidth) < 1,
               "the snippet column should narrow with it, got \(workbench.debugSnippetColumnFrame.width)", &ok)
         window.setFrame(wide, display: true)
         settle(controller)
-        check(workbench.inspectorShown, "the right column should come back at a wide window", &ok)
+        check(!workbench.inspectorShown, "UX-21: the right column came back at a wide window", &ok)
     }
 
     // MARK: 5. The status bar
@@ -455,7 +471,7 @@ enum CodePreviewWorkbenchViewSelfTest {
               "Expand should hide both side columns", &ok)
         controller.debugExpandButton.performClick(nil)
         settle(controller)
-        check(workbench.snippetColumnShown && workbench.inspectorShown, "Expand again should restore them", &ok)
+        check(workbench.snippetColumnShown && !workbench.inspectorShown, "Expand again should restore the snippets alone", &ok)
         controller.debugSelect(name: "echo-hello.sh")
         settle(controller)
     }

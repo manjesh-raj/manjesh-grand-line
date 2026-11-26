@@ -300,6 +300,11 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         root.wantsLayer = true
         view = root
 
+        // UX-08: the page opens on the Crew band, as the other Crew tabs do.
+        band.setArrangement(.band)
+        band.translatesAutoresizingMaskIntoConstraints = false
+        band.setAccessibilityLabel("Ask the crew")
+        root.addSubview(band)
         chat.translatesAutoresizingMaskIntoConstraints = false
         chat.wantsLayer = true
         chat.layer?.cornerRadius = HelmMetrics.rCard
@@ -309,8 +314,11 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         NSLayoutConstraint.activate([
             chat.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.pageGutter),
             chat.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            // S03: the page frame's first-content line.
-            HelmPageScaffold.pinFirstContent(chat, in: root),
+            // S03: the page frame's first-content line, where the band sits.
+            band.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.pageGutter),
+            band.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            HelmPageScaffold.pinFirstContent(band, in: root),
+            chat.topAnchor.constraint(equalTo: band.bottomAnchor, constant: HelmMetrics.s4),
             chat.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s4),
         ])
 
@@ -324,6 +332,36 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         }
         applyTheme(ThemeManager.shared.theme)
         refreshProjects()
+        renderBand()
+        refreshStarters()
+    }
+
+    // MARK: UX-08 - the band and the starters
+
+    private let band = HelmHeroColumn()
+
+    /// "7 aboard. Every write is yours to confirm.", the Crew band's head.
+    static func bandHeadline(aboard: Int) -> String { "\(aboard) aboard. Every write is yours to confirm." }
+
+    private func renderBand() {
+        let aboard = StrawHatMember.allCases.count
+        band.configure(header: .init(symbol: CrewHeroWords.crewSymbol, kicker: "Ask the crew",
+                                     headline: Self.bandHeadline(aboard: aboard), body: nil),
+                       sections: [], foot: [], tone: .init(colour: .themeAccent))
+    }
+
+    /// The starters, from what the stores hold now.
+    private func refreshStarters() {
+        let today = ShiftDateFormatting.components(from: Date()).dateStr
+        let open = shiftStore.activeTasks.filter { $0.status != .completed && $0.status != .cancelled }
+        let overdue = open.filter { ($0.dueDate ?? "9999") < today }
+        let summary = ServiceHealthRegistry.shared.summary()
+        let failing = summary.entries.first { $0.state.bucket == .failing }?.service.title
+        let input = StrawHatStarters.Input(
+            openTasks: open.count, overdueTasks: overdue.count, dueToday: open.filter { $0.dueDate == today }.count,
+            pendingFollowUps: shiftStore.followUps.filter { $0.status == .pending }.count, failingService: failing,
+            servicesReporting: summary.total, schedules: scheduleStore?.schedules.count ?? 0)
+        chat.setStarters(StrawHatStarters.make(input))
     }
 
     deinit {
@@ -336,6 +374,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         // has to be pickable here, and appearing is the only moment it can
         // have happened - this page is showing for every other moment.
         refreshProjects()
+        refreshStarters()
         chat.focusComposer()
     }
 
@@ -982,3 +1021,10 @@ private func isNilOptional(_ value: Any) -> Bool {
     return mirror.children.isEmpty
 }
 #endif
+
+// UX-08: the band says what the grey header line said, so the line is not
+// drawn over it. The subtitle stays the page's summary for the crew panel.
+extension StrawHatController: WorkspaceHeaderLineCollapsing {
+    var collapsesEmptyHeaderLine: Bool { true }
+    var drawsSubtitleOnHeaderLine: Bool { false }
+}

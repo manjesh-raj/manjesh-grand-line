@@ -919,6 +919,7 @@ final class MainSplitShellController: WorkspaceShellController {
             toolbar.setInspectorState(shown: true, wanted: inspectorWanted)
             return
         }
+        if shown, holdingOpen, inspectorItem.isCollapsed { inspectorSource?.inspectorWillOpen() }
         inspectorWanted = shown
         if holdingOpen { inspectorPinnedOpen = shown }
         // S27: a page with no details shows the crew panel while the pane is

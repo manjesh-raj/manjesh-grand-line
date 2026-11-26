@@ -105,10 +105,15 @@ enum WorkspaceSidebarModel {
     /// modules the captain's profile hides (R2-UX-01 (b)). A group with
     /// nothing left in it is left out too, rather than drawn as an empty
     /// heading.
+    /// UX-28: the module pinned to the sidebar's foot rather than listed,
+    /// so it never scrolls away - Settings, where the text size is changed.
+    /// It keeps its place in every other map (the Go menu, its chord).
+    static let footModule: WorkspaceModule = .settings
+
     static func roots(sessions: [HostSession], hidden: Set<WorkspaceModule> = []) -> [Node] {
         var roots = [Node(entry: .module(.home))]
         for group in WorkspaceGroup.allCases {
-            let shown = modules(in: group, hidden: hidden)
+            let shown = modules(in: group, hidden: hidden).filter { $0 != footModule }
             guard !shown.isEmpty else { continue }
             let parent = sessionsParent(hidden: hidden)
             let rows = shown.map { module -> Node in
@@ -274,6 +279,10 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// point to the same palette. A plain gap now separates the header from
     /// Home (`headerGap`).
     private let header = WorkspaceSidebarHeader()
+    /// UX-28: Settings, pinned under the list with a hairline above it.
+    private let foot = WorkspaceSidebarFoot()
+    /// UX-28: the list's last 16pt fade while more rows are below.
+    private let listFade = CAGradientLayer()
     /// Sb-4: the pane's gradient, under everything, from the window's top
     /// edge (the traffic lights sit on it) to its foot. It stays put while
     /// the list scrolls over it.
@@ -356,6 +365,20 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         root.addSubview(scrollView)
+        foot.translatesAutoresizingMaskIntoConstraints = false
+        foot.onClick = { [weak self] in self?.onSelectModule?(WorkspaceSidebarModel.footModule) }
+        root.addSubview(foot)
+        // UX-28: the fade is a mask on the list, so the gradient under it
+        // shows through, whatever the palette.
+        scrollView.wantsLayer = true
+        HelmMotion.withoutImplicitAnimation {
+            listFade.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
+        }
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(listMoved),
+                                               name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+        NotificationCenter.default.addObserver(self, selector: #selector(listMoved),
+                                               name: NSView.frameDidChangeNotification, object: outlineView)
 
         NSLayoutConstraint.activate([
             surface.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -371,7 +394,10 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: Self.headerGap),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: foot.topAnchor),
+            foot.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s2),
+            foot.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s2),
+            foot.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s2),
         ])
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
@@ -380,6 +406,37 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         ) { [weak self] _ in self?.setHiddenModules(AppSettings.shared.hiddenModules) }
         rebuild()
     }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        listMoved()
+    }
+
+    /// UX-28: the fade shows only while rows are hidden below the list's
+    /// foot, so a list that fits, or one scrolled to its end, is not dimmed.
+    @objc private func listMoved() {
+        // The foot's glyph sits under the listed rows' glyphs.
+        let homeRow = outlineView.row(forItem: roots.first)
+        if homeRow >= 0, let cell = outlineView.view(atColumn: 0, row: homeRow, makeIfNecessary: false) {
+            foot.alignCell(toX: cell.convert(cell.bounds, to: foot).minX)
+        }
+        let clip = scrollView.contentView
+        let hiddenBelow = outlineView.frame.height - clip.bounds.maxY > 1
+        HelmMotion.withoutActions {
+            listFade.frame = scrollView.bounds
+            let height = max(scrollView.bounds.height, 1)
+            let start = max(0, 1 - Self.listFadeHeight / height)
+            // The layer's y runs up in an unflipped scroll view: the fade is
+            // at location 0, the list's foot.
+            listFade.startPoint = CGPoint(x: 0.5, y: 1)
+            listFade.endPoint = CGPoint(x: 0.5, y: 0)
+            listFade.locations = [0, NSNumber(value: Double(start)), 1]
+            scrollView.layer?.mask = hiddenBelow ? listFade : nil
+        }
+    }
+
+    /// UX-28: how much of the list's foot fades when it continues.
+    static let listFadeHeight: CGFloat = 16
 
     /// The captain showed or hid a module in Settings: rebuild the rows.
     func setHiddenModules(_ modules: Set<WorkspaceModule>) {
@@ -602,6 +659,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     private func applySelection(reveal shouldReveal: Bool = true) {
+        foot.setLit(footIsLit, theme: ThemeManager.shared.theme)
         guard let item = item(for: current) else {
             isApplyingSelection = true
             outlineView.deselectAll(nil)
@@ -620,6 +678,12 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         isApplyingSelection = false
         if shouldReveal { reveal(row: row) }
+    }
+
+    /// UX-28: the page showing is the foot's module.
+    private var footIsLit: Bool {
+        guard case .rail(let destination)? = current else { return false }
+        return ModuleTable.sidebarModule(for: destination, pageTab: currentPageTab) == WorkspaceSidebarModel.footModule
     }
 
     /// The row that stands for `kind`: a session row for a host page,
@@ -901,6 +965,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     private func applyTheme(_ theme: HelmTheme) {
         header.applyTheme(theme)
+        foot.applyTheme(theme)
         guard isViewLoaded else { return }
         // Sb-4: the gradient, and the gradient's appearance for everything
         // AppKit draws on it - the group disclosure chevron and the scroller.
@@ -920,6 +985,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         }
         builtTextScale = scale
         builtDensity = density
+        // UX-28: the foot's row is built at a scale too.
+        foot.rebuildForScale(theme: theme)
         // GL-32: a text-scale change re-fires the theme too, and that one
         // does rebuild: the row heights and every font follow the scale, and
         // a cell sets its fonts and sizes once, when it is built.
@@ -958,11 +1025,15 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     #if FM_SELFTESTS
     /// What the sidebar draws, top to bottom, as the suite reads it: every
     /// visible row's entry.
+    /// The rows the captain can pick, in order: the list's, then the module
+    /// pinned to the foot (UX-28), which is always last.
     var debugVisibleEntries: [WorkspaceSidebarEntry] {
         (0..<outlineView.numberOfRows).compactMap { (outlineView.item(atRow: $0) as? WorkspaceSidebarItem)?.entry }
+            + [.module(WorkspaceSidebarModel.footModule)]
     }
-    /// The lit row's entry, or nil.
+    /// The lit row's entry, the foot's when it is lit, or nil.
     var debugSelectedEntry: WorkspaceSidebarEntry? {
+        if foot.debugIsLit { return .module(WorkspaceSidebarModel.footModule) }
         let row = outlineView.selectedRow
         guard row >= 0 else { return nil }
         return (outlineView.item(atRow: row) as? WorkspaceSidebarItem)?.entry
@@ -970,6 +1041,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// Pick a row the way a click does: select it, which is what fires
     /// `outlineViewSelectionDidChange`.
     func debugClick(_ entry: WorkspaceSidebarEntry) -> Bool {
+        if entry == .module(WorkspaceSidebarModel.footModule) { return foot.row.performPrimaryAction() }
         guard let row = (0..<outlineView.numberOfRows).first(where: {
             (outlineView.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == entry
         }) else { return false }
@@ -1023,6 +1095,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     func debugCell(for entry: WorkspaceSidebarEntry) -> NSView? {
+        if entry == .module(WorkspaceSidebarModel.footModule) { return foot.debugCell }
         guard let row = (0..<outlineView.numberOfRows).first(where: {
             (outlineView.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == entry
         }) else { return nil }
@@ -1040,6 +1113,11 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     /// Draw the list's scroller as `style` - a legacy track narrows every
     /// row, the way "Show scroll bars: Always" does (gotcha (4)).
+    /// UX-28: the pinned foot, and whether the list's foot is fading.
+    var debugFoot: WorkspaceSidebarFoot { foot }
+    var debugListFades: Bool { scrollView.layer?.mask === listFade }
+    var debugScrollView: NSScrollView { scrollView }
+
     func debugSetScrollerStyle(_ style: NSScroller.Style) {
         scrollView.scrollerStyle = style
         scrollView.tile()
@@ -1847,5 +1925,110 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
     var debugSubtitle: String { subtitle.stringValue }
     var debugTitleColor: NSColor? { title.textColor }
     var debugSubtitleColor: NSColor? { subtitle.textColor }
+    #endif
+}
+
+/// UX-28: the sidebar's foot - a hairline in the ink, then Settings as a row
+/// that never scrolls away. The row is the list's own page cell (its glyph,
+/// its words, its size), lit as the list lights a row: the ink as a pill with
+/// the pill's words. The row is a `HoverHighlightView`, so it is a button to
+/// VoiceOver, draws a focus ring and takes Return and Space (GL-16).
+final class WorkspaceSidebarFoot: NSView {
+    private let rule = NSView()
+    private var cell = WorkspaceSidebarPageCell()
+    let row = HoverHighlightView()
+    private var rowHeight: NSLayoutConstraint?
+    private var isLit = false
+    var onClick: (() -> Void)?
+    private lazy var cellLeading = cell.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: HelmMetrics.s1)
+
+    /// Line the glyph up with the list's glyphs: `x` is where a listed row's
+    /// cell starts, in this view's coordinates. The list's own indent comes
+    /// from the outline view's level indentation and row insets, so it is
+    /// read rather than restated.
+    func alignCell(toX x: CGFloat) {
+        let constant = max(0, x)
+        guard abs(cellLeading.constant - constant) > 0.25 else { return }
+        cellLeading.constant = constant
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        let module = WorkspaceSidebarModel.footModule
+        row.cornerRadius = WorkspaceSidebarMetrics.pillRadius
+        row.accessibilityRoleOverride = .button
+        row.accessibilityLabelOverride = module.title
+        row.toolTip = WorkspaceGoMenu.chordText(for: module).map { "\(module.title) (\($0))" } ?? module.title
+        rule.wantsLayer = true
+        for view in [rule, row, cell] as [NSView] { view.translatesAutoresizingMaskIntoConstraints = false }
+        cell.configure(symbol: module.symbol, title: module.title, badge: nil, theme: ThemeManager.shared.theme)
+        addSubview(rule)
+        addSubview(row)
+        row.addSubview(cell)
+        NSLayoutConstraint.activate([
+            rule.topAnchor.constraint(equalTo: topAnchor),
+            // The list's own rules start under the glyphs.
+            rule.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s2),
+            rule.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s1),
+            rule.heightAnchor.constraint(equalToConstant: 1),
+            row.topAnchor.constraint(equalTo: rule.bottomAnchor, constant: HelmMetrics.s1),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        pinCell()
+        let height = row.heightAnchor.constraint(equalToConstant: HelmType.scaledRowHeight(WorkspaceSidebarMetrics.moduleRowHeight))
+        height.isActive = true
+        rowHeight = height
+        // GL-16: the click recognizer is also what Return, Space and
+        // VoiceOver's press reach, through `performPrimaryAction`.
+        row.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    @objc private func clicked() { onClick?() }
+
+    private func pinCell() {
+        cellLeading = cell.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: cellLeading.constant)
+        NSLayoutConstraint.activate([
+            cell.topAnchor.constraint(equalTo: row.topAnchor),
+            cell.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            cellLeading,
+            cell.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+        ])
+    }
+
+    /// GL-32: a text-scale or density change rebuilds the row, as it
+    /// rebuilds the list's rows - a cell sets its fonts and sizes once.
+    func rebuildForScale(theme: HelmTheme) {
+        let module = WorkspaceSidebarModel.footModule
+        cell.removeFromSuperview()
+        cell = WorkspaceSidebarPageCell()
+        cell.translatesAutoresizingMaskIntoConstraints = false
+        cell.configure(symbol: module.symbol, title: module.title, badge: nil, theme: theme)
+        row.addSubview(cell)
+        pinCell()
+        rowHeight?.constant = HelmType.scaledRowHeight(WorkspaceSidebarMetrics.moduleRowHeight)
+        applyTheme(theme)
+    }
+
+    func setLit(_ lit: Bool, theme: HelmTheme) {
+        isLit = lit
+        row.accessibilityValueOverride = lit ? "selected" : nil
+        applyTheme(theme)
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        let ink = WorkspaceSidebarInk.of(theme)
+        rule.layer?.backgroundColor = ink.rule.cgColor
+        cell.setLit(isLit, theme: theme)
+        row.normalColor = isLit ? ink.ink : .clear
+        row.hoverColor = isLit ? ink.ink : ink.hover
+    }
+
+    #if FM_SELFTESTS
+    var debugIsLit: Bool { isLit }
+    var debugCell: WorkspaceSidebarPageCell { cell }
     #endif
 }

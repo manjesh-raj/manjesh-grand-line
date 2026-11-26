@@ -114,9 +114,18 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         hero.setActions([.mirroring(checkForUpdatesButton)])
         return hero
     }()
-    /// Every tool in one table, grouped by where it comes from - the
-    /// prototype's one table card, with the real groups.
-    private lazy var toolsTable: HelmDataTable = {
+    /// UX-22: the tools grouped by state, one card per group, each header
+    /// carrying the group's one action ("Update 2", "Install 7 in Setup
+    /// steps", "Check again"). Built once each, shown while they hold a row.
+    private lazy var groupCards: [UpdatesGroup: UpdatesGroupCard] = Dictionary(
+        UpdatesGroup.allCases.map { group in (group, makeGroupCard(group)) }, uniquingKeysWith: { first, _ in first })
+    private let groupsStack = NSStackView()
+    /// Up to date folds to its header until the captain opens it.
+    private var showsUpToDate = false
+    /// What the filter row leaves nothing of: one card with the empty state.
+    private lazy var emptyTable = Self.makeToolsTable(name: "Tools")
+
+    static func makeToolsTable(name: String) -> HelmDataTable {
         let table = HelmDataTable(columns: [
             .init(id: "tool", title: "Tool", width: 260, minWidth: 180, flexible: true),
             .init(id: "installed", title: "Installed", width: 130),
@@ -124,13 +133,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             .init(id: "source", title: "Source", width: 120, hiddenBelow: 720),
         ], actionsWidth: 170)
         table.sizesToFitRows = true
-        table.accessibilityName = "Tools"
-        table.onSelect = { [weak self] key in
-            self?.selectedToolID = key
-            self?.onInspectorContentChanged?()
-        }
+        table.accessibilityName = name
         return table
-    }()
+    }
     private let toolsLastChecked = NSTextField(labelWithString: "")
     /// The toolbar's primary action: Check all, by the prototype's name. The
     /// floating bar keeps its Check all pill.
@@ -818,7 +823,8 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         checkAllProgressBar.applyTheme(theme, hue: RailDestination.updates.domainHue)
         checkAllProgressLabel.textColor = HelmTheme.mutedInk(theme)
         filterTabs.applyTheme(theme)
-        toolsTable.applyTheme(theme)
+        for card in groupCards.values { card.table.applyTheme(theme) }
+        emptyTable.applyTheme(theme)
         toolsLastChecked.textColor = HelmTheme.mutedInk(theme)
         renderToolsTable()
     }
@@ -865,10 +871,21 @@ extension UpdatesController: WorkspacePrimaryActionProviding, WorkspaceInspector
         stack.insertArrangedSubview(setupSummary, at: 0)
         setupSummary.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         toolsLastChecked.font = HelmType.caption()
-        let title = NSTextField(labelWithString: "Tools")
-        _ = toolsTable.card.setHeader(symbol: "shippingbox", titleLabel: title, subtitleLabel: toolsLastChecked)
-        stack.addArrangedSubview(toolsTable.card)
-        toolsTable.card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        // UX-22: one card per state, in the order a captain acts on them.
+        groupsStack.orientation = .vertical
+        groupsStack.alignment = .leading
+        groupsStack.spacing = HelmMetrics.s4
+        groupsStack.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(groupsStack)
+        groupsStack.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        for group in UpdatesGroup.allCases {
+            let card = groupCards[group]!.table.card
+            groupsStack.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: groupsStack.widthAnchor).isActive = true
+        }
+        _ = emptyTable.card.setHeader(symbol: "shippingbox", title: "Tools")
+        groupsStack.addArrangedSubview(emptyTable.card)
+        emptyTable.card.widthAnchor.constraint(equalTo: groupsStack.widthAnchor).isActive = true
         renderStats()
         applyTheme()
     }
@@ -891,26 +908,76 @@ extension UpdatesController: WorkspacePrimaryActionProviding, WorkspaceInspector
     /// cards are.
     fileprivate func renderToolsTable() {
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        var tableRows: [HelmDataTable.Row] = []
-        for category in DependencyCatalog.categoryOrder {
-            let matching = rows.filter { row in
-                row.item.category == category
-                    && (query.isEmpty || row.item.name.lowercased().contains(query))
-                    && (filterMode == .all || row.status.showsUpdateButton)
-            }
-            guard !matching.isEmpty else { continue }
-            tableRows.append(.group(category))
-            tableRows += matching.map(toolRow)
+        let matching = rows.filter { row in
+            (query.isEmpty || row.item.name.lowercased().contains(query))
+                && (filterMode == .all || row.status.showsUpdateButton)
         }
-        if tableRows.isEmpty {
-            tableRows = [filterMode == .needsAttention && query.isEmpty
+        // UX-22: grouped by state, each group in the catalogue's own order.
+        let grouped = Dictionary(grouping: matching) { UpdatesGroup(status: $0.status) }
+        for group in UpdatesGroup.allCases {
+            guard let card = groupCards[group] else { continue }
+            let members = grouped[group] ?? []
+            card.table.card.isHidden = members.isEmpty
+            guard !members.isEmpty else { continue }
+            let folded = group == .upToDate && !showsUpToDate && query.isEmpty
+            card.configure(count: members.count, action: groupAction(group, members: members),
+                           note: group == .upToDate ? toolsLastChecked.stringValue : nil,
+                           foldTitle: group == .upToDate && query.isEmpty ? (showsUpToDate ? "Hide" : "Show") : nil)
+            card.table.setRows(members.map(toolRow))
+            card.table.isCollapsed = folded
+        }
+        emptyTable.card.isHidden = !matching.isEmpty
+        if matching.isEmpty {
+            emptyTable.setRows([filterMode == .needsAttention && query.isEmpty
                 ? .empty(symbol: "checkmark.seal", title: "Nothing needs attention",
                          body: "Every tool that has been checked is up to date.")
                 : .empty(symbol: "magnifyingglass", title: "No tools match",
-                         body: "No tool's name contains \u{201C}\(query)\u{201D}.")]
+                         body: "No tool's name contains \u{201C}\(query)\u{201D}.")])
         }
-        toolsTable.setRows(tableRows)
         onInspectorContentChanged?()
+    }
+
+    /// UX-22: a group's one action, or none. Each runs the method the rows'
+    /// own buttons reach.
+    private func groupAction(_ group: UpdatesGroup, members: [UpdateRow]) -> UpdatesGroupCard.Action? {
+        guard let title = UpdatesGroup.actionTitle(group, count: members.count,
+                                                    setupName: PlaceName.short(.bootstrap)) else { return nil }
+        let idle = members.filter { !$0.isBusy }
+        switch group {
+        case .updateAvailable:
+            return .init(title: title, symbol: "arrow.down.circle", isPrimary: true, isEnabled: !idle.isEmpty) { [weak self] in
+                self?.updateAllPending()
+            }
+        case .notInstalled:
+            return .init(title: title, symbol: "arrow.right", isPrimary: true, isEnabled: true) { [weak self] in
+                self?.onNavigateToBootstrap?()
+            }
+        case .couldNotCheck:
+            return .init(title: title, symbol: "arrow.clockwise", isPrimary: false, isEnabled: !idle.isEmpty) { [weak self] in
+                for row in idle { self?.check(row, forceRefresh: true) }
+            }
+        case .notChecked, .upToDate:
+            return nil
+        }
+    }
+
+    private func makeGroupCard(_ group: UpdatesGroup) -> UpdatesGroupCard {
+        let table = Self.makeToolsTable(name: group.title)
+        table.onSelect = { [weak self] key in
+            guard let self else { return }
+            if key != nil {
+                for (other, card) in self.groupCards where other != group { card.table.select(key: nil) }
+            }
+            self.selectedToolID = key
+            self.onInspectorContentChanged?()
+        }
+        let card = UpdatesGroupCard(group: group, table: table)
+        card.onFold = { [weak self] in
+            guard let self else { return }
+            self.showsUpToDate.toggle()
+            self.renderToolsTable()
+        }
+        return card
     }
 
     private func toolRow(_ row: UpdateRow) -> HelmDataTable.Row {
@@ -936,13 +1003,16 @@ extension UpdatesController: WorkspacePrimaryActionProviding, WorkspaceInspector
                     self?.runInTerminal(row)
                 }
             } else if row.status == .notInstalled {
-                tableRow.primary = .init(title: "Install in \(PlaceName.short(.bootstrap))", symbol: "arrow.right") { [weak self] in
-                    self?.onNavigateToBootstrap?()
-                }
+                // UX-22: the group's header says it once for all of them.
+                tableRow.primary = nil
             } else if row.status == .updateAvailable || row.status == .updateFailed {
                 tableRow.primary = .init(title: "Update", symbol: "arrow.down.circle") { [weak self] in
                     self?.confirmAndUpdate(row)
                 }
+            } else if row.status == .checkFailed {
+                // UX-22: the group's Check again covers it; Check Now stays
+                // in the row's menu.
+                tableRow.primary = nil
             } else if row.status.showsCheckButton {
                 tableRow.primary = .init(title: "Check", symbol: "arrow.clockwise") { [weak self] in
                     self?.check(row, forceRefresh: true)
@@ -991,7 +1061,12 @@ extension UpdatesController: WorkspacePrimaryActionProviding, WorkspaceInspector
     }
 
     private func showDetails(_ row: UpdateRow) {
-        toolsTable.select(key: row.item.id)
+        let holder = UpdatesGroup(status: row.status)
+        if holder == .upToDate, !showsUpToDate {
+            showsUpToDate = true
+            renderToolsTable()
+        }
+        for (group, card) in groupCards { card.table.select(key: group == holder ? row.item.id : nil) }
         selectedToolID = row.item.id
         onInspectorContentChanged?()
         onShowInspector?()
@@ -1063,7 +1138,19 @@ extension DependencyKind {
 
 #if FM_SELFTESTS
 extension UpdatesController {
-    var debugToolsTable: HelmDataTable { toolsTable }
+    /// UX-22: every row the group cards hold, in the order they show, and
+    /// the card for one group.
+    var debugToolRows: [HelmDataTable.Row] {
+        UpdatesGroup.allCases.flatMap { group -> [HelmDataTable.Row] in
+            guard let card = groupCards[group], !card.table.card.isHidden else { return [] }
+            return card.table.debugRows
+        } + (emptyTable.card.isHidden ? [] : emptyTable.debugRows)
+    }
+    func debugGroupCard(_ group: UpdatesGroup) -> UpdatesGroupCard? { groupCards[group] }
+    /// The first card showing, for the suites that measure one table.
+    var debugToolsTable: HelmDataTable {
+        UpdatesGroup.allCases.compactMap { groupCards[$0] }.first { !$0.table.card.isHidden }?.table ?? emptyTable
+    }
     var debugSetupSummary: SetupHeroRow { setupSummary }
     var debugCheckForUpdatesButton: HelmButton { checkForUpdatesButton }
     var debugToolsLastChecked: String { toolsLastChecked.stringValue }
@@ -1095,3 +1182,134 @@ extension UpdatesController {
     }
 }
 #endif
+
+// MARK: - UX-22: groups by state
+
+/// A state the Updates page groups its tools by, in the order a captain acts
+/// on them. Pure, so CI's blocking lane asserts it.
+enum UpdatesGroup: CaseIterable, Hashable {
+    case updateAvailable, notInstalled, couldNotCheck, notChecked, upToDate
+
+    init(status: DependencyStatus) {
+        switch status {
+        case .updateAvailable, .updateFailed: self = .updateAvailable
+        case .notInstalled: self = .notInstalled
+        case .checkFailed: self = .couldNotCheck
+        case .unknown, .checking, .updating: self = .notChecked
+        case .upToDate: self = .upToDate
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .updateAvailable: return "Update available"
+        case .notInstalled: return "Not installed"
+        case .couldNotCheck: return "Could not be checked"
+        case .notChecked: return "Not checked yet"
+        case .upToDate: return "Up to date"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .updateAvailable: return "arrow.down.circle"
+        case .notInstalled: return "shippingbox"
+        case .couldNotCheck: return "exclamationmark.triangle"
+        case .notChecked: return "clock"
+        case .upToDate: return "checkmark.seal"
+        }
+    }
+
+    var tint: HelmTint {
+        switch self {
+        case .updateAvailable, .notInstalled: return .warn
+        case .couldNotCheck: return .critical
+        case .notChecked: return .neutral
+        case .upToDate: return .good
+        }
+    }
+
+    /// The header's one action: "Update 2", "Install 7 in Setup steps",
+    /// "Check again", or none.
+    static func actionTitle(_ group: UpdatesGroup, count: Int, setupName: String) -> String? {
+        switch group {
+        case .updateAvailable: return "Update \(count)"
+        case .notInstalled: return "Install \(count) in \(setupName)"
+        case .couldNotCheck: return "Check again"
+        case .notChecked, .upToDate: return nil
+        }
+    }
+}
+
+/// UX-22: one group's card - its title with the count, its one action (or
+/// Up to date's Show and the time it was checked), and its rows as a table.
+final class UpdatesGroupCard {
+    struct Action {
+        let title: String
+        let symbol: String
+        let isPrimary: Bool
+        let isEnabled: Bool
+        let run: () -> Void
+    }
+
+    let group: UpdatesGroup
+    let table: HelmDataTable
+    var onFold: (() -> Void)?
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let noteLabel = NSTextField(labelWithString: "")
+    let actionButton = HelmButton(title: "", variant: .primary, size: .small)
+    let foldButton = HelmButton(title: "Show", variant: .quiet, size: .small)
+    private var run: (() -> Void)?
+    private let target = UpdatesGroupCardTarget()
+
+    init(group: UpdatesGroup, table: HelmDataTable) {
+        self.group = group
+        self.table = table
+        target.card = self
+        actionButton.target = target
+        actionButton.action = #selector(UpdatesGroupCardTarget.act)
+        foldButton.target = target
+        foldButton.action = #selector(UpdatesGroupCardTarget.fold)
+        noteLabel.font = HelmType.caption()
+        let trailing = NSStackView(views: [noteLabel, foldButton, actionButton])
+        trailing.orientation = .horizontal
+        trailing.spacing = HelmMetrics.s2
+        trailing.alignment = .centerY
+        trailing.setHuggingPriority(.required, for: .horizontal)
+        _ = table.card.setHeader(symbol: group.symbol, tint: group.tint, titleLabel: titleLabel, actions: [trailing])
+    }
+
+    /// "Not installed · 7", its action and its note.
+    func configure(count: Int, action: Action?, note: String?, foldTitle: String?) {
+        titleLabel.stringValue = "\(group.title) \u{00B7} \(count)"
+        noteLabel.stringValue = note ?? ""
+        noteLabel.isHidden = note == nil
+        noteLabel.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
+        foldButton.isHidden = foldTitle == nil
+        foldButton.title = foldTitle ?? ""
+        actionButton.isHidden = action == nil
+        if let action {
+            actionButton.title = action.title
+            actionButton.symbolName = action.symbol
+            actionButton.symbolTrailing = action.symbol == "arrow.right"
+            actionButton.variant = action.isPrimary ? .primary : .secondary
+            actionButton.isEnabled = action.isEnabled
+            run = action.run
+        } else {
+            run = nil
+        }
+    }
+
+    fileprivate func act() { run?() }
+    fileprivate func foldTapped() { onFold?() }
+
+    #if FM_SELFTESTS
+    var debugTitle: String { titleLabel.stringValue }
+    #endif
+}
+
+private final class UpdatesGroupCardTarget: NSObject {
+    weak var card: UpdatesGroupCard?
+    @objc func act() { card?.act() }
+    @objc func fold() { card?.foldTapped() }
+}

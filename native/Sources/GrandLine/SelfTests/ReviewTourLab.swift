@@ -943,7 +943,7 @@ enum ReviewTourLab {
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("\(step)")
             case .newRecord(let kind):
-                if kind == "key" { shell.workspace.hostsPanel.openNewKeyPanel(preset: nil) } else { shell.workspace.hostsPanel.newHost() }
+                if kind == "key" { shell.workspace.hostsPanel.openNewKeyPanel(preset: nil) } else { shell.workspace.hostsPanel.openNewHostPanel() }
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("new \(kind)")
@@ -1087,6 +1087,157 @@ enum ReviewTourLab {
             shell.workspace.navigator.show(.homeCanvas)
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             return "ux tips (\(shell.debugHomeCanvas.debugTipTitle ?? "no tip showing"))"
+        // UX-03: the board's first card to do takes the keyboard, so its
+        // quick actions show.
+        case "boardfocus":
+            func cards(in view: NSView) -> [ShiftBoardCardView] {
+                view.subviews.flatMap { ($0 as? ShiftBoardCardView).map { [$0] } ?? cards(in: $0) }
+            }
+            let index = parts.count > 1 ? Int(parts[1]) ?? 1 : 1
+            let all = cards(in: shell.view).filter { !$0.isHiddenOrHasHiddenAncestor
+                && $0.debugWorkspaceCard?.offersQuickActions == true }
+            guard all.indices.contains(index) else { return "ux boardfocus FAILED - \(all.count) cards" }
+            shell.view.window?.makeFirstResponder(all[index])
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            return "ux boardfocus"
+        // UX-10: a favourite, three recent sends and a filled pod name on
+        // Describe Pod, so the Commands page shows its lead rows and its
+        // filled preview.
+        case "cmdfill":
+            let store = shell.workspace.commandLibraryStore
+            let find: (String) -> DevOpsCommand? = { name in store.commands.first { $0.name == name } }
+            guard let describe = find("Describe Pod") else { return "ux cmdfill FAILED - no Describe Pod" }
+            if let logs = find("Get Pod Logs") { store.recordUsage(logs.id, via: "To the terminal", now: Date().addingTimeInterval(-86_400)) }
+            if let restart = find("Restart Deployment") { store.recordUsage(restart.id, via: "Copied", now: Date().addingTimeInterval(-3 * 86_400)) }
+            store.recordUsage(describe.id, via: "To DEV Bastion", now: Date().addingTimeInterval(-7_200))
+            let page = shell.workspace.commandLibrary.debugPage
+            page?.reloadAndRender()
+            page?.openCommand(id: describe.id)
+            page?.debugSetParameter("pod", to: "checkout-worker-7d9")
+            return "ux cmdfill \(page?.debugPreview ?? "-")"
+        // UX-12: open a Notebook page with the caret at its end, so the
+        // Write pane shows the last line's marks.
+        case "notebookopen":
+            let notebook = shell.workspace.notebook
+            guard parts.count > 1 else { return "ux notebookopen FAILED - no page id" }
+            notebook.openPage(id: parts[1])
+            let text = notebook.writeView.textView
+            shell.view.window?.makeFirstResponder(text)
+            text.setSelectedRange(NSRange(location: (text.string as NSString).length, length: 0))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            return "ux notebookopen \(notebook.debugCurrentPageID ?? "-")"
+        // UX-17: a last run on one runbook, then a run of the other with
+        // two steps ticked, 70 and 160 seconds apart.
+        case "runbookrun":
+            let page = shell.workspace.runbooks
+            let store = shell.workspace.docsRunbookStore
+            guard let failover = store.listRunbooks().first(where: { $0.title == "Fail over the database" }) else {
+                return "ux runbookrun FAILED - no failover runbook (run demo knowledge first)"
+            }
+            if let tls = store.listRunbooks().first(where: { $0.title == "Rotate a TLS certificate" }) {
+                page.openRunbook(id: tls.id)
+            }
+            RunbookRunLog.record(RunbookRunRecord(endedAt: Date().addingTimeInterval(-14 * 86_400), seconds: 14 * 60,
+                                                  done: 6, total: 6), for: failover.id)
+            page.debugReloadRunbooks()
+            page.openRunbook(id: failover.id)
+            page.debugDetail.runButton.performClick(nil)
+            page.debugTick(now: Date().addingTimeInterval(70))
+            page.debugTick(now: Date().addingTimeInterval(230))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            return "ux runbookrun \(page.debugDetail.debugCount)"
+        // UX-05: Weekly review's Start review, then optionally Skip N times.
+        case "reviewstart":
+            let shift = shell.workspace.shift
+            shift.reviewBand.startButton.performClick(nil)
+            for _ in 0..<(parts.count > 1 ? Int(parts[1]) ?? 0 : 0) { shift.reviewWalkCard.skipButton.performClick(nil) }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            return "ux reviewstart \(shift.reviewWalkCard.debugCount) \(shift.reviewWalkCard.debugTitle)"
+        // UX-04: open a board card the way a click does, so its task fills
+        // the inspector.
+        case "boardopen":
+            func cards(in view: NSView) -> [ShiftBoardCardView] {
+                view.subviews.flatMap { ($0 as? ShiftBoardCardView).map { [$0] } ?? cards(in: $0) }
+            }
+            let index = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            let all = cards(in: shell.view).filter { !$0.isHiddenOrHasHiddenAncestor }
+            guard all.indices.contains(index) else { return "ux boardopen FAILED - \(all.count) cards" }
+            all[index].onOpen?()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+            return "ux boardopen \(all[index].taskID)"
+        // UX-26: the Add Host sheet, rendered on its own.
+        case "hostsheet":
+            guard parts.count == 2 else { return "ux hostsheet FAILED - want hostsheet <name>" }
+            let hosts = shell.workspace.hostsPanel
+            let editor = HostEditorController(host: nil, keyStore: hosts.keyStore, snippets: [],
+                                              keyUsage: HostsController.keyUsage(hosts.hostStore.hosts), presentation: .sheet)
+            editor.loadView()
+            editor.view.layoutSubtreeIfNeeded()
+            let url = outputDirectory.appendingPathComponent("\(parts[1]).png")
+            return writePNG(of: editor.view, to: url) ? "ux hostsheet -> \(url.path)" : "ux hostsheet FAILED - no bitmap"
+        // UX-15: a DevOps Hub project with a built dist folder, shown running.
+        case "devopsrunning":
+            let registry = LocalProjectRegistry.shared
+            let site = outputDirectory.appendingPathComponent("demo-site", isDirectory: true)
+            let dist = site.appendingPathComponent("dist", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dist, withIntermediateDirectories: true)
+            for name in ["index.html", "app.js", "style.css"] {
+                try? Data("<p>demo</p>".utf8).write(to: dist.appendingPathComponent(name))
+            }
+            var project = LocalProject.devopsAtlas
+            project.folderOverride = site.path
+            LocalProjectStore.save([project], at: registry.debugStoreURL)
+            registry.debugReload()
+            registry.debugSetState(.running(since: registry.clock().addingTimeInterval(-12 * 60)), for: project.id)
+            shell.workspace.devopsHub.showCards()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            return "ux devopsrunning"
+        // UX-11: two saved hosts connected lately, and the Console's start
+        // page re-read.
+        case "hostlastconnected":
+            let store = shell.workspace.hostStore
+            for (index, host) in store.hosts.prefix(3).enumerated() {
+                var updated = host
+                updated.lastConnectedAt = Date().addingTimeInterval(-Double(index + 1) * 86_400)
+                store.update(updated)
+            }
+            shell.workspace.console.refreshStartPage()
+            return "ux hostlastconnected"
+        // UX-11: the Console's tab count and whether its start page shows.
+        case "consolestate":
+            let console = shell.workspace.console
+            return "ux consolestate tabs=\(console.tabs.count) start=\(!console.startPage.isHidden)"
+        // UX-21: Code's Sandboxed chip, which opens the facts in the inspector.
+        case "sandboxchip":
+            shell.workspace.codePreview.sandboxChip.performClick(nil)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            return "ux sandboxchip (\(shell.workspace.codePreview.sandboxChip.title))"
+        // UX-22: Updates' Check for updates, run and waited for, so the
+        // groups have states to show.
+        case "updatescheck":
+            let updates = shell.workspace.updates
+            updates.debugCheckForUpdatesButton.performClick(nil)
+            let deadline = Date().addingTimeInterval(8)
+            while Date() < deadline, updates.debugToolRows.contains(where: { row in
+                if case .muted(let text)? = row.cells["available"] { return text.hasPrefix("Checking") || text == "Not checked" }
+                return false
+            }) { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+            return "ux updatescheck"
+        // UX-13: two links saved through the page's own paste well.
+        case "readinglinks":
+            let page = shell.workspace.readingList
+            _ = page.view
+            page.debugDropHint.debugSave("https://developer.apple.com/documentation/appkit")
+            page.debugDropHint.debugSave("https://github.com/migueldeicaza/SwiftTerm/releases")
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            return "ux readinglinks (\(page.debugCards.count) cards)"
+        // UX-25: the window toolbar's display mode, "labels" or "icons".
+        case "toolbar":
+            guard parts.count == 2 else { return "ux toolbar FAILED - want toolbar labels|icons" }
+            guard let split = shell as? MainSplitShellController else { return "ux toolbar FAILED - no toolbar" }
+            split.toolbar.toolbar.displayMode = parts[1] == "labels" ? .iconAndLabel : .iconOnly
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            return "ux toolbar \(parts[1])"
         // R5-UX-01: the welcome sheet's first step, rendered on its own.
         case "welcome":
             guard parts.count >= 2 else { return "ux welcome FAILED - want welcome <name> [step]" }
@@ -1486,16 +1637,20 @@ enum ReviewTourLab {
     static func seedDemoKnowledge(_ workspace: Workspace) {
         let notebook = workspace.notebookStore
         _ = notebook.createPage(title: "On-call handbook", folder: "Team",
-                                content: "# On-call handbook\n\nWho to page, and when. See [[Edge architecture]].\n")
+                                content: "# On-call handbook\n\nWho to page, and when. See [[Edge architecture]] and [[Ideas]].\n")
         _ = notebook.createPage(title: "Edge architecture", folder: "Team",
                                 content: "# Edge architecture\n\nTwo proxies behind one load balancer.\n")
-        _ = notebook.createPage(title: "Ideas", content: "# Ideas\n\n- A runbook for certificate rotation\n")
+        _ = notebook.createPage(title: "Ideas", content: "# Ideas\n\n- A runbook for certificate rotation, linked from "
+                                    + "[[On-call handbook]]\n- **Ask Nami** to plan the 4.20 freeze")
         let runbooks = workspace.docsRunbookStore
         _ = runbooks.createRunbook(title: "Rotate a TLS certificate",
                                    content: "# Rotate a TLS certificate\n\n1. Check what is expiring.\n"
                                        + "\n```bash\nopenssl x509 -enddate -noout -in /etc/ssl/edge/wildcard.pem\n```\n")
         _ = runbooks.createRunbook(title: "Fail over the database",
-                                   content: "# Fail over the database\n\n1. Confirm the replica is caught up.\n")
+                                   content: "# Fail over the database\n\n1. Confirm replica lag is under 5 seconds\n"
+                                       + "2. Put the app in read-only mode\n3. Promote the replica\n\n```bash\n"
+                                       + "pg_ctl promote -D /var/lib/postgresql/data\n```\n\n4. Point the app at the new primary\n"
+                                       + "5. Leave read-only mode\n6. Note the result in the postmortem\n")
         _ = runbooks.createPostmortem(title: "Cache outage, 9 October",
                                       content: "# Cache outage, 9 October\n\n## Summary\n\nThe edge cache dropped for 23 minutes.\n")
         _ = runbooks.createPostmortem(title: "Certificate expiry, 2 September",
@@ -1697,7 +1852,14 @@ enum ReviewTourLab {
             return t
         }
         _ = task("Renew the staging TLS certificate", .todo, .high, due: -2, project: infra, tags: ["infra"])
-        _ = task("Rotate the CI deploy key", .todo, .high, due: 0, project: infra, tags: ["security"])
+        var key = task("Rotate the CI deploy key", .todo, .high, due: 0, project: infra, tags: ["security"])
+        // UX-04: the inspector's checklist and notes have something to show.
+        key.dueTime = "09:30"
+        key.description = "Old key expires on the 30th."
+        key.subtasks = [ShiftSubtask(id: "key-1", title: "Generate the new key", done: true),
+                        ShiftSubtask(id: "key-2", title: "Add it to the CI secrets", done: false),
+                        ShiftSubtask(id: "key-3", title: "Remove the old key from the repo", done: false)]
+        store.updateTask(key)
         _ = task("Write the 4.20 release notes", .inProgress, .normal, due: 1, project: release)
         _ = task("Cut the 4.20 release branch", .todo, .normal, due: 3, project: release, tags: ["release"])
         _ = task("Review the on-call runbook", .inProgress, .low, due: nil, project: nil)

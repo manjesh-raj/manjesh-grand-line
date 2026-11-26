@@ -220,6 +220,33 @@ extension ConsoleController {
     /// then, and comes back with the first tab.
     func collapseTabBarIfEmpty() {
         tabBar.setCollapsed(tabs.isEmpty)
+        refreshStartPage()
+    }
+
+    /// UX-11: the main Console shows its start page while no tab is open:
+    /// a new shell, the hosts connected to most recently, and the snippets.
+    /// A host page, whose one tab is its session, never shows it. The main
+    /// Console is told so (`offersStartPage`): with no firstmate home it is
+    /// not the Firstmate console, and opens with no tab at all.
+    func refreshStartPage() {
+        let shows = tabs.isEmpty && offersStartPage
+        if shows {
+            startPage.configure(hosts: ConsoleStartWords.hosts(startHosts?() ?? []),
+                                snippets: ConsoleStartWords.snippets(snippetStore.snippets))
+            startPage.applyTheme(theme)
+            cardChrome.isHidden = false
+        }
+        guard startPage.isHidden == shows else { return }
+        startPage.isHidden = !shows
+        if shows, let window = view.window { window.makeFirstResponder(startPage) }
+    }
+
+    /// UX-11: a snippet starts a new shell with its command typed in and not
+    /// sent - nothing runs that the captain did not send.
+    func startWithSnippet(_ snippet: Snippet) {
+        newShellTab()
+        guard let tab = currentTab else { return }
+        focusedTerminal(of: tab).send(txt: snippet.command)
     }
 
     // MARK: Compose (`fm/grandline-console-command-composer`)
@@ -369,6 +396,7 @@ extension ConsoleController {
     }
 
     func applyTheme() {
+        startPage.applyTheme(theme)
         // `ThemeManager.swift`'s checklist item 2 - see the identical note in
         // `HomeCanvasController.applyTheme`. This page is mostly opaque
         // theme-painted chrome plus SwiftTerm's own themed terminal, so

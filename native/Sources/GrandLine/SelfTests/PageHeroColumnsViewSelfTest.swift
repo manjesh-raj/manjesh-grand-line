@@ -241,9 +241,37 @@ enum PageHeroColumnsViewSelfTest {
         ReviewTourLab.seedDemoHealth(health)
         health = showHealth(shell)
         let column = health.debugHealthCard.heroColumn
-        check(column.debugPalette == red, "H-4: a column with a failing service is not red", &ok)
+        // UX-18: one failing service of eight keeps the accent; the pill
+        // under the kicker and the ring's arc carry the state.
+        check(column.debugPalette == accent && column.debugStatusPill != nil
+                && column.debugStatusPill.map { $0.convert($0.bounds, to: column).minY } != nil,
+              "UX-18: one failing service turned the column red, or it shows no status pill", &ok)
+        check(health.debugHealthCard.heroWords(ServiceHealthRegistry.shared.summary()).ringState == .bad,
+              "UX-18: the ring's arc does not carry the failure", &ok)
+        // UX-18: the failing row offers Copy error beside Retry now.
+        let rows = health.debugHealthCard.debugServicesTable.debugRows
+        if let dotfiles = rows.first(where: { $0.key == HealthService.dotfilesAutoSync.rawValue }) {
+            check((dotfiles.accessory as? HelmButton)?.title == HealthCardView.copyErrorTitle
+                    && dotfiles.menu.contains { $0.title == HealthCardView.copyErrorTitle },
+                  "UX-18: the failing row has no Copy error", &ok)
+            let saved = NSPasteboard.general.string(forType: .string)
+            (dotfiles.accessory as? HelmButton)?.performClick(nil)
+            check(NSPasteboard.general.string(forType: .string)?.contains("git push was rejected") == true,
+                  "UX-18: Copy error did not put the row's error on the pasteboard", &ok)
+            if let saved { copyToPasteboard(saved) }
+        } else {
+            fail("UX-18: the table has no Dotfiles auto-sync row", &ok)
+        }
+
         check(column.debugHeadline.hasPrefix(HealthService.dotfilesAutoSync.title),
               "H-4: the failing headline reads \(column.debugHeadline)", &ok)
+        // Most services failing is an outage, and the column is red.
+        for service in HealthService.allCases.prefix(6) {
+            for _ in 0..<3 { ServiceHealthRegistry.shared.recordFailure(service, "outage") }
+        }
+        health = showHealth(shell)
+        check(health.debugHealthCard.heroColumn.debugPalette == red,
+              "UX-18: most services failing did not turn the column red", &ok)
 
         clearHealth()
         health = showHealth(shell)
@@ -447,6 +475,21 @@ enum PageHeroColumnsViewSelfTest {
         check(split.isSidebarCollapsed && !hosts.heroColumnShowing, "C-4: a narrow page keeps the column open", &ok)
         check(hosts.hostsGrid.debugSectionTitles.first == "Recent",
               "C-4: with the column away the grid has no Recent row (\(hosts.hostsGrid.debugSectionTitles))", &ok)
+        // UX-27: the page keeps its hero as Health's band over the tabs: the
+        // verdict, the ring and Quick connect.
+        if let column = hosts.heroColumn {
+            let band = frame(of: column, in: hosts.view)
+            let grid = frame(of: hosts.hostsGrid, in: hosts.view)
+            check(hosts.heroIsBand && column.arrangement == .band && column.window != nil && !column.isHiddenOrHasHiddenAncestor,
+                  "UX-27: with the column away the page shows no hero band", &ok)
+            check(column.debugRing != nil && hosts.heroQuickConnectField.isDescendant(of: column)
+                    && hosts.heroQuickConnectField.window != nil,
+                  "UX-27: the band lost its ring or Quick connect", &ok)
+            check(band.height > 0 && band.minY >= grid.maxY - 0.5,
+                  "UX-27: the band (\(band)) does not sit above the grid (\(grid))", &ok)
+        } else {
+            fail("UX-27: Connections built no hero column", &ok)
+        }
         shell.setInspectorShown(false)
         settle(shell)
         check(abs(window.frame.width - 1512) < 0.5, "C-4: closing the inspector left the window at \(window.frame.width)", &ok)
@@ -454,6 +497,8 @@ enum PageHeroColumnsViewSelfTest {
         check(abs(split.sidebarPane.frame.width - (HelmMetrics.pageGutter + HelmHeroColumn.width)) < 0.5,
               "C-4: the column came back \(split.sidebarPane.frame.width)pt wide", &ok)
         check(!hosts.hostsGrid.debugSectionTitles.contains("Recent"), "C-4: Recent did not move back into the column", &ok)
+        check(!hosts.heroIsBand && hosts.heroColumn?.arrangement == .column && hosts.heroColumn?.superview === split.sidebarPane,
+              "UX-27: widening the page left the hero as a band", &ok)
         // Toggle Sidebar puts it away too, and is remembered across a width change.
         split.toggleSidebar(nil)
         settle(shell)
@@ -518,13 +563,15 @@ enum PageHeroColumnsViewSelfTest {
         let addPills = buttons(in: column).filter { ["Generate", "Import"].contains($0.title) }
         check(addPills.map(\.title) == ["Generate", "Import"] && addPills.allSatisfy { isInk($0.heroInk, column.ink) },
               "Keys: Add a key's pills are \(addPills.map(\.title)), or not in the hero's ink", &ok)
+        // UX-26: a new key is made in a sheet over the page.
         addPills.first?.performClick(nil)
         settle(shell)
-        check(hosts.keyPanelKey == HostsController.newKeyPanelKey && hosts.keyPanel?.debugMode == "generate",
-              "Keys: Generate opened \(hosts.keyPanel?.debugMode ?? "no form")", &ok)
-        hosts.keyPanel?.debugFooterButtons.first?.performClick(nil)
+        let sheet = hosts.presentedViewControllers?.compactMap { $0 as? KeyEditorController }.first
+        check(sheet?.presentation == .sheet && sheet?.debugMode == "generate",
+              "Keys: Generate opened \(sheet?.debugMode ?? "no sheet")", &ok)
+        if let sheet { hosts.dismiss(sheet) }
         settle(shell)
-        check(hosts.keyPanel == nil, "Keys: Cancel left the new key's form open", &ok)
+        check(hosts.presentedViewControllers?.isEmpty != false, "Keys: the new key's sheet stayed open", &ok)
 
         // The column follows the tab: back on Hosts it speaks for the hosts.
         hosts.selectModuleTab(named: "Hosts")

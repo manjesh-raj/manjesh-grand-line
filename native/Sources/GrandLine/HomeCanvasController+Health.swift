@@ -92,16 +92,90 @@ extension HomeCanvasController {
         return HealthRingSummary(value: summary.healthy, total: total, title: title, note: note, tint: tint)
     }
 
-    func fillHealth(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own health
-        // artwork, replacing the plain `waveform.path.ecg` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.health` case.
+    /// UX-02: what the Health hero card says, as values - its pill, its
+    /// headline and second line, its ring, and the services that need a
+    /// look, worst first. Pure, so CI's blocking lane asserts it.
+    struct HealthHero: Equatable {
+        struct Row: Equatable {
+            let service: HealthService
+            let detail: String
+        }
+        let chip: HelmModuleChip?
+        let headline: String
+        let body: String?
+        let ring: HelmModuleCard.HeroRing?
+        /// The services that need a look. Empty draws the one-line tile.
+        let rows: [Row]
+        /// Nothing has reported yet: the dimmed accent (GL-14).
+        let isUnknown: Bool
+    }
+
+    static func healthHero(_ summary: ServiceHealthSummary) -> HealthHero {
+        guard summary.total > 0 else {
+            return HealthHero(chip: nil, headline: "Nothing has reported yet",
+                              body: "Background services report here as they run.", ring: nil, rows: [],
+                              isUnknown: true)
+        }
+        let failing = summary.entries.filter { $0.state.bucket == .failing }
+        let degraded = summary.entries.filter { $0.state.bucket == .degraded }
+        let attention = failing + degraded
+        // "6 healthy, 1 not run yet": the figures the headline does not say.
+        var parts = ["\(summary.healthy) healthy"]
+        if summary.notRun > 0 { parts.append("\(summary.notRun) not run yet") }
+        let state: HelmModuleRowState = !failing.isEmpty ? .bad : (!degraded.isEmpty ? .warn : .ok)
+        let ring = HelmModuleCard.HeroRing(
+            fraction: Double(summary.healthy) / Double(summary.total), label: "\(summary.healthy)/\(summary.total)",
+            caption: nil, spoken: summary.spoken, state: state)
+        guard !attention.isEmpty else {
+            let headline = summary.healthy == summary.total
+                ? (summary.total == 1 ? "The one service is healthy" : "All \(summary.total) services healthy")
+                : "\(summary.healthy) of \(summary.total) services healthy"
+            return HealthHero(chip: nil, headline: headline,
+                              body: summary.notRun > 0 ? parts.dropFirst().joined(separator: ", ") : nil,
+                              ring: ring, rows: [], isUnknown: false)
+        }
+        let headline = attention.count == 1 ? "1 service needs a look" : "\(attention.count) services need a look"
+        let rows = attention.map { entry -> HealthHero.Row in
+            let runs = entry.state.consecutiveFailures
+            let detail = entry.state.bucket == .failing && runs > 1 ? "failed \(runs) runs in a row" : "failed its last run"
+            return HealthHero.Row(service: entry.service, detail: detail)
+        }
+        let chip: HelmModuleChip = !failing.isEmpty ? .bad("\(failing.count) failing")
+            : .warn(degraded.count == 1 ? "1 recent failure" : "\(degraded.count) recent failures")
+        return HealthHero(chip: chip, headline: headline, body: parts.joined(separator: ", "), ring: ring,
+                          rows: rows, isUnknown: false)
+    }
+
+    /// UX-02: Health is the row's third hero card, in the theme's accent, as
+    /// Fleet and Claude are: the ring, the verdict, and each service that
+    /// needs a look as a row with Retry (or Open, for one with no run of its
+    /// own). With nothing to look at it is the verdict and the ring alone.
+    func fillHealth(_ content: inout HelmModuleCard.Content, width: CGFloat) {
         content.artwork = HealthIcon.image
-        let health = healthSummary
         content.subtitle = "background services"
-        // S11: no "1 failing" pill. The ring's title says it, once.
-        let summary = Self.healthRingSummary(health)
-        content.body = .ring(value: summary.value, total: summary.total,
-                             title: summary.title, note: summary.note, spoken: health.spoken, tint: summary.tint)
+        let hero = Self.healthHero(healthSummary)
+        content.chip = hero.chip
+        content.hero = HelmModuleCard.HeroTone(colour: .themeAccent, isDimmed: hero.isUnknown)
+        let layout = HelmModuleCard.HeroLayout(cardWidth: width)
+        guard !hero.rows.isEmpty else {
+            content.body = .heroSummary(HelmModuleCard.HeroSummary(
+                headline: hero.headline, body: hero.body, ring: hero.ring, items: [], layout: layout))
+            return
+        }
+        let rows = hero.rows.prefix(HelmModuleCard.maxPeekRows).map { row -> HelmModuleCard.HeroListRow in
+            if let retry = healthRetryActions[row.service] {
+                return HelmModuleCard.HeroListRow(symbol: row.service.symbol, title: row.service.title,
+                                                  subtitle: row.detail, actionTitle: "Retry",
+                                                  actionTooltip: "Run \(row.service.title) again", handler: retry)
+            }
+            return HelmModuleCard.HeroListRow(symbol: row.service.symbol, title: row.service.title,
+                                              subtitle: row.detail, actionTitle: "Open",
+                                              actionTooltip: "Open \(PlaceName.of(.health))") { [weak self] in
+                self?.onOpenDestination?(.health)
+            }
+        }
+        content.body = .heroList(HelmModuleCard.HeroList(
+            headline: hero.headline, body: hero.body, ring: hero.ring, sectionTitle: "Needs a look",
+            rows: Array(rows), emptyText: "", layout: layout))
     }
 }

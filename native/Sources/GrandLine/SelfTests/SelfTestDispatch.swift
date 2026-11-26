@@ -1377,6 +1377,12 @@ enum SelfTestDispatch {
             exit(StoreObservableSelfTest.run() ? 0 : 1)
         }
 
+        // The UX ideas picked from the 2026-11-25 full review: the half that
+        // needs no window (`ReviewFourUXSelfTest`).
+        if ProcessInfo.processInfo.environment["FM_RUN_REVIEW4_UX_TESTS"] == "1" {
+            exit(ReviewFourUXSelfTest.run() ? 0 : 1)
+        }
+
         // The second full review's UX findings and the captain's three UI items: the
         // pure half - models, menus and source guards (`ReviewTwoUXModelSelfTest`).
         if ProcessInfo.processInfo.environment["FM_RUN_REVIEW2_UX_MODEL_TESTS"] == "1" {

@@ -1,38 +1,14 @@
 // Grand Line - native macOS app.
 //
-// Full review #4, section 8 (UX improvements): the fixes a check can assert
-// without a window, beyond the ones that live in their page's own suite.
+// The UX ideas the captain picked from the 2026-11-25 full review (UX-02 to
+// UX-28): the half that needs no window.
 //
-//   - R4-UX-01: the Calendar takes ⌘0 in the sidebar layout's Go menu, every
-//     other digit stays where it was, and the shortcut catalog lists it.
-//   - R4-UX-04: the host Test's argv (BatchMode, a 5 second connect timeout,
-//     only validated fields, `--` before the destination), its refusals, its
-//     reading of ssh's answers, and the session strip's key-fallback line.
-//   - R4-UX-05: a Home card takes the keyboard, and Return or Space opens it.
-//   - R4-UX-06: the merge confirm names the PR, its repo, branch and checks,
-//     with the URL last.
-//   - R4-UX-07: the Kubernetes scope wall is three steps, and the
-//     Whiteboard's example diagram builds.
-//   - R4-UX-08: a finished backup is a lasting report naming where it went.
+// Each case is one idea's words, model or view, built and laid out without a
+// window, so it runs in CI's blocking lane. Where an idea needs real event
+// dispatch or the real shell, its check sits in the window-backed suite that
+// already mounts that page.
 //
-// Elsewhere: R4-UX-02 is `CredentialVaultViewSelfTest`, R4-UX-03 is
-// `NotificationBridgePanelSelfTest` and `GrandLineNotificationCenterSelfTest`,
-// R4-UX-05's inspector half (a disabled button on a page with no details)
-// was reversed at the captain's request: the button now opens the inspector
-// on every page, which is `MainSplitShellPanesSelfTest.checkTheInspectorOpensOnEveryPage`,
-// R4-UX-07's Whiteboard overlay was removed by `fm/grandline-popover-redesign` (an empty board is
-// a plain canvas now, checked in `WhiteboardViewSelfTest`), and R4-UX-08's
-// schedule Stop is `ScheduleRunnerSelfTest`. R4-UX-09 and R4-UX-10 shipped
-// with R4-UI-09 and are `MainSplitShellPanesSelfTest.checkTasksBoardAndFilterRow`.
-//
-// Pure logic: no window. The menus are built without installing them, and
-// every view here is laid out on its own.
-//
-// Run with:
-//   swift build && FM_RUN_REVIEW4_UX_TESTS=1 .build/debug/GrandLine; echo $?
-
-// GL-27: compiled into debug builds only. Do not remove this guard -
-// `Phase3PolishSelfTest` asserts every file in this directory carries it.
+// GL-27: compiled into debug builds only.
 #if FM_SELFTESTS
 
 import AppKit
@@ -42,286 +18,624 @@ enum ReviewFourUXSelfTest {
     static func run() -> Bool {
         HelmMotion.reducedOverrideForTests = true
         defer { HelmMotion.reducedOverrideForTests = nil }
-
-        var allOK = true
-        for check in [checkCalendarDigit, checkConnectionTestArguments, checkConnectionTestReadings,
-                      checkKeyFallbackNotice, checkHomeCardKeyboard, checkMergeConfirmBody,
-                      checkEmptyStateCopy, checkBackupReport, checkFleetStop] {
-            var ok = true
-            autoreleasepool { check(&ok) }
-            allOK = allOK && ok
-        }
-        print(allOK ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
-        return allOK
+        var ok = true
+        checkTheToolbarNamesItsShortcuts(&ok)
+        checkSettingsStaysInReach(&ok)
+        checkHomeHealthIsAHeroCard(&ok)
+        checkUpdatesGroupByState(&ok)
+        checkTheWelcomeShowsEachSidebar(&ok)
+        checkTheHostSheetHasTwoColumns(&ok)
+        checkTheCrewLogIsATimeline(&ok)
+        checkAskTheCrewStartsWithThingsToAsk(&ok)
+        checkTheConsoleStartPage(&ok)
+        checkTheTaskInspectorWords(&ok)
+        checkTheWeeklyReviewWords(&ok)
+        checkTheCommandsPage(&ok)
+        checkTheNotebookWritesInOnePane(&ok)
+        checkRunbooksRun(&ok)
+        print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
+        return ok
     }
 
-    // MARK: R4-UX-01
+    // MARK: UX-25
 
-    private static func checkCalendarDigit(_ ok: inout Bool) {
-        check(WorkspaceGoMenu.chord(for: .calendar) == 0, "R4-UX-01: the Calendar has no ⌘0", &ok)
-        check(WorkspaceGoMenu.chordText(for: .calendar) == "\u{2318}0",
-              "R4-UX-01: the Calendar's chord reads \(WorkspaceGoMenu.chordText(for: .calendar) ?? "nothing")", &ok)
-        check(WorkspaceGoMenu.chord(for: .calendar, hidden: [.calendar]) == nil,
-              "R4-UX-01: a hidden Calendar still claims ⌘0", &ok)
-        // The digits the captain already knows stay put, in the Operator's
-        // sidebar (R5-UX-05's door rows are hidden there).
-        let op = WorkspaceProfile.operator.hiddenModules
-        check(WorkspaceGoMenu.chord(for: .home, hidden: op) == 1 && WorkspaceGoMenu.chord(for: .tasks, hidden: op) == 2
-                && WorkspaceGoMenu.chord(for: .crew, hidden: op) == 3 && WorkspaceGoMenu.chord(for: .logs, hidden: op) == 9,
-              "R4-UX-01: an existing digit moved", &ok)
+    /// The three shortcut glyphs are named, their tooltips carry the key, the
+    /// first week opens on names, and only the glyph items keep a name.
+    private static func checkTheToolbarNamesItsShortcuts(_ ok: inout Bool) {
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        let day: TimeInterval = 24 * 60 * 60
+        check(WorkspaceToolbar.defaultDisplayMode(saved: nil, labelsWeekStart: start, now: start + 3 * day) == .iconAndLabel,
+              "UX-25: the first week does not open on names", &ok)
+        check(WorkspaceToolbar.defaultDisplayMode(saved: nil, labelsWeekStart: start, now: start + 8 * day) == .iconOnly,
+              "UX-25: names still show after the first week", &ok)
+        check(WorkspaceToolbar.defaultDisplayMode(saved: nil, labelsWeekStart: nil, now: start) == .iconOnly,
+              "UX-25: a launch that never started the week shows names", &ok)
+        check(WorkspaceToolbar.defaultDisplayMode(saved: Int(NSToolbar.DisplayMode.iconOnly.rawValue),
+                                                  labelsWeekStart: start, now: start + day) == .iconOnly,
+              "UX-25: a mode the captain chose lost to the first week", &ok)
 
-        let menu = ReviewTwoUXModelSelfTest.mainMenu()
-        func items(_ menu: NSMenu) -> [NSMenuItem] {
-            menu.items.flatMap { [$0] + ($0.submenu.map(items) ?? []) }
-        }
-        let zero = items(menu).filter { $0.keyEquivalent == "0" && $0.keyEquivalentModifierMask == [.command] }
-        check(zero.count == 1 && zero.first?.representedObject as? String == WorkspaceModule.calendar.rawValue,
-              "R4-UX-01: ⌘0 in the sidebar menu bar is \(zero.map(\.title)), want the Go menu's Calendar alone", &ok)
-        let catalog = KeyboardShortcutCatalog.sections(from: menu).flatMap(\.entries)
-        check(catalog.contains { $0.chord == "\u{2318}0" && $0.title == WorkspaceModule.calendar.title },
-              "R4-UX-01: the shortcut sheet does not list ⌘0 for the Calendar", &ok)
+        let hidden: Set<WorkspaceModule> = []
+        let chord = WorkspaceGoMenu.chordText(for: .console, hidden: hidden)
+        check(chord != nil && WorkspaceToolbar.shortcutHelp("Go", module: .console, hidden: hidden) == "Go (\(chord ?? ""))",
+              "UX-25: Console's tooltip does not end on its key", &ok)
+        check(WorkspaceToolbar.shortcutHelp("Open", module: .calendar, hidden: hidden) == "Open (\u{2318}0)",
+              "UX-25: the Calendar's tooltip does not name \u{2318}0", &ok)
+
+        let toolbar = WorkspaceToolbar(splitView: NSSplitView(), identifier: "ux25.probe.\(UUID().uuidString)")
+        toolbar.toolbar.displayMode = .iconOnly
+        let ids: [NSToolbarItem.Identifier] = [WorkspaceToolbar.ItemID.quickConnectConsole,
+                                                WorkspaceToolbar.ItemID.quickConnectHosts,
+                                                WorkspaceToolbar.ItemID.calendar, WorkspaceToolbar.ItemID.crumb,
+                                                WorkspaceToolbar.ItemID.search]
+        for id in ids { toolbar.toolbar.insertItem(withItemIdentifier: id, at: toolbar.toolbar.items.count) }
+        let items = Dictionary(uniqueKeysWithValues: toolbar.toolbar.items.map { ($0.itemIdentifier, $0) })
+        check(items[WorkspaceToolbar.ItemID.quickConnectConsole]?.label == "Console"
+                && items[WorkspaceToolbar.ItemID.quickConnectHosts]?.label == "Connections"
+                && items[WorkspaceToolbar.ItemID.calendar]?.label == "Calendar",
+              "UX-25: the shortcuts are named \(ids.prefix(3).map { items[$0]?.label ?? "-" })", &ok)
+        check((items[WorkspaceToolbar.ItemID.quickConnectConsole]?.toolTip ?? "").hasSuffix("(\(chord ?? "?"))")
+                && (items[WorkspaceToolbar.ItemID.calendar]?.toolTip ?? "").hasSuffix("(\u{2318}0)"),
+              "UX-25: the shortcuts' tooltips do not carry their keys", &ok)
+        check(items[WorkspaceToolbar.ItemID.crumb]?.label == "Location",
+              "UX-25: icon mode put away the crumb's name, which the overflow menu reads", &ok)
+        toolbar.toolbar.displayMode = .iconAndLabel
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        check(items[WorkspaceToolbar.ItemID.crumb]?.label == "" && items[WorkspaceToolbar.ItemID.search]?.label == ""
+                && items[WorkspaceToolbar.ItemID.quickConnectConsole]?.label == "Console",
+              "UX-25: Icon and Text names the crumb and Search, or drops Console's name", &ok)
+        toolbar.toolbar.displayMode = .iconOnly
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        check(items[WorkspaceToolbar.ItemID.crumb]?.label == "Location" && items[WorkspaceToolbar.ItemID.search]?.label == "Search",
+              "UX-25: going back to icons did not give the view items their names back", &ok)
     }
 
-    // MARK: R4-UX-04
+    // MARK: UX-28
 
-    private static func host(_ address: String = "edge-01.example.test", user: String = "ops", port: Int = 22) -> Host {
-        var host = Host(label: "edge", address: address)
-        host.username = user
-        host.port = port
-        return host
+    /// Settings sits in the sidebar's foot, out of the list, lit when it
+    /// shows and lined up with the rows above; the list fades only while it
+    /// continues below.
+    private static func checkSettingsStaysInReach(_ ok: inout Bool) {
+        let roots = WorkspaceSidebarModel.roots(sessions: [])
+        let listed = roots.flatMap { [$0] + $0.children }.map(\.entry)
+        check(!listed.contains(.module(.settings)) && listed.contains(.module(.setup)),
+              "UX-28: Settings is still a row in the list, or Setup left with it", &ok)
+        check(WorkspaceGoMenu.chord(for: .settings) == WorkspaceGoMenu.chord(for: .settings, hidden: []),
+              "UX-28: the foot moved Settings' chord", &ok)
+
+        autoreleasepool {
+            let sidebar = WorkspaceSidebarController()
+            sidebar.loadView()
+            sidebar.view.frame = NSRect(x: 0, y: 0, width: MainSplitShellController.sidebarWidth, height: 360)
+            sidebar.view.layoutSubtreeIfNeeded()
+            sidebar.viewDidLayout()
+            let foot = sidebar.debugFoot
+            check(foot.frame.minY <= HelmMetrics.s2 + 0.5 && foot.frame.height > 0,
+                  "UX-28: the foot is not at the sidebar's bottom (\(foot.frame))", &ok)
+            check(sidebar.debugListFades, "UX-28: a list that continues below does not fade", &ok)
+            // The foot's glyph lines up with the rows' glyphs.
+            if let row = sidebar.debugCell(for: .module(.home)) as? WorkspaceSidebarPageCell {
+                let listX = row.debugIcon.convert(row.debugIcon.bounds, to: sidebar.view).minX
+                let footX = foot.debugCell.debugIcon.convert(foot.debugCell.debugIcon.bounds, to: sidebar.view).minX
+                check(abs(listX - footX) < 1, "UX-28: the foot's glyph is at x \(footX), the rows' at \(listX)", &ok)
+            } else {
+                fail("UX-28: the list built no Home row", &ok)
+            }
+            let scroll = sidebar.debugScrollView
+            let documentHeight = sidebar.outlineView.frame.height
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, documentHeight - scroll.contentView.bounds.height)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            sidebar.viewDidLayout()
+            check(!sidebar.debugListFades, "UX-28: the list still fades scrolled to its end", &ok)
+            sidebar.select(.rail(.settings))
+            check(foot.debugIsLit && sidebar.outlineView.selectedRow < 0,
+                  "UX-28: showing Settings does not light the foot, or lights a list row too", &ok)
+            sidebar.select(.rail(.homeCanvas))
+            check(!foot.debugIsLit, "UX-28: the foot stays lit on Home", &ok)
+            var opened: WorkspaceModule?
+            sidebar.onSelectModule = { opened = $0 }
+            foot.row.performPrimaryAction()
+            check(opened == .settings, "UX-28: the foot did not open Settings", &ok)
+        }
     }
 
-    private static func checkConnectionTestArguments(_ ok: inout Bool) {
-        var plain = host(port: 2222)
-        // Neither of these may reach a test: forwards would bind ports a live
-        // session of the same host holds, and the test needs no agent.
-        plain.agentForward = true
-        plain.portForwards = [PortForwardRule()]
-        guard case .success(let args) = HostConnectionTest.arguments(for: plain, allHosts: []) else {
-            fail("R4-UX-04: a plain host could not be tested", &ok)
-            return
-        }
-        check(args.prefix(4) == ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"],
-              "R4-UX-04: the test argv starts \(args.prefix(4))", &ok)
-        check(args.suffix(3) == ["--", "ops@edge-01.example.test", "true"],
-              "R4-UX-04: the test argv ends \(args.suffix(3))", &ok)
-        check(args.contains("-p") && args.contains("2222"), "R4-UX-04: the port did not reach the test", &ok)
-        check(!args.contains("-A") && !args.contains("-L"),
-              "R4-UX-04: agent forwarding or a port forward reached the test: \(args)", &ok)
+    // MARK: UX-02
 
-        // A jump host resolves through the saved hosts.
-        var bastion = host("bastion.example.test", user: "jump")
-        bastion.label = "bastion"
-        var behind = host()
-        behind.jumpVia = "bastion"
-        if case .success(let jumped) = HostConnectionTest.arguments(for: behind, allHosts: [bastion, behind]) {
-            check(jumped.contains("-J") && jumped.contains("jump@bastion.example.test"),
-                  "R4-UX-04: the jump chain did not reach the test: \(jumped)", &ok)
-        } else {
-            fail("R4-UX-04: a host behind a jump host could not be tested", &ok)
+    /// Home's Health card says one verdict, names each service that needs a
+    /// look, and is the short tile when nothing does.
+    private static func checkHomeHealthIsAHeroCard(_ ok: inout Bool) {
+        let now = Date()
+        func entry(_ service: HealthService, success: Bool = true, failures: Int = 0) -> ServiceHealthSummary.Entry {
+            var state = ServiceHealthState()
+            if success { state.lastSuccess = now.addingTimeInterval(-60) }
+            if failures > 0 {
+                state.consecutiveFailures = failures
+                state.lastFailure = now.addingTimeInterval(-30)
+                state.lastFailureDetail = "no"
+            }
+            return ServiceHealthSummary.Entry(service: service, state: state)
         }
+        let failing = HomeCanvasController.healthHero(ServiceHealthSummary([
+            entry(.fleetTasks), entry(.persistence), entry(.dotfilesAutoSync, failures: 3),
+            entry(.docsSync, success: false),
+        ]))
+        check(failing.headline == "1 service needs a look" && failing.body == "2 healthy, 1 not run yet"
+                && failing.rows == [.init(service: .dotfilesAutoSync, detail: "failed 3 runs in a row")]
+                && failing.chip == .bad("1 failing") && failing.ring?.state == .bad && failing.ring?.label == "2/4",
+              "UX-02: a failing service reads \(failing)", &ok)
+        let healthy = HomeCanvasController.healthHero(ServiceHealthSummary([entry(.fleetTasks), entry(.persistence)]))
+        check(healthy.rows.isEmpty && healthy.headline == "All 2 services healthy" && healthy.body == nil
+                && healthy.chip == nil && healthy.ring?.state == .ok,
+              "UX-02: a healthy summary reads \(healthy)", &ok)
+        let unknown = HomeCanvasController.healthHero(ServiceHealthSummary())
+        check(unknown.isUnknown && unknown.ring == nil, "UX-02: nothing reported is not the dimmed tile (GL-14)", &ok)
 
-        // GL-08: a field starting with a dash is refused before anything runs.
-        for unsafe in [host("-oProxyCommand=touch /tmp/pwned"), host(user: "-oProxyCommand=x")] {
-            if case .success(let leaked) = HostConnectionTest.arguments(for: unsafe, allHosts: []) {
-                fail("R4-UX-04: an unsafe host was handed to ssh as \(leaked)", &ok)
+        // A hero with no figures draws no strip and no rule over nothing.
+        autoreleasepool {
+            let card = HelmModuleCard()
+            var content = HelmModuleCard.Content(title: "Health", subtitle: "", symbol: "heart",
+                                                 hue: .green, chip: nil, body: .heroSummary(.init(
+                headline: "All 2 services healthy", body: nil, ring: healthy.ring, items: [],
+                layout: .standard)))
+            content.hero = .init(colour: .themeAccent)
+            card.configure(content)
+            card.frame = NSRect(x: 0, y: 0, width: 380, height: 300)
+            card.layoutSubtreeIfNeeded()
+            check(card.debugKPIStrip?.superview == nil, "UX-02: the healthy tile still draws an empty strip", &ok)
+        }
+    }
+
+    // MARK: UX-22
+
+    /// Each state lands in one group, in the order a captain acts on them,
+    /// and only the groups with something to do carry an action.
+    private static func checkUpdatesGroupByState(_ ok: inout Bool) {
+        let statuses: [DependencyStatus] = [.unknown, .checking, .upToDate, .updateAvailable, .notInstalled,
+                                            .checkFailed, .updating, .updateFailed]
+        check(statuses.map(UpdatesGroup.init) == [.notChecked, .notChecked, .upToDate, .updateAvailable,
+                                                    .notInstalled, .couldNotCheck, .notChecked, .updateAvailable],
+              "UX-22: the states group as \(statuses.map(UpdatesGroup.init))", &ok)
+        check(UpdatesGroup.allCases == [.updateAvailable, .notInstalled, .couldNotCheck, .notChecked, .upToDate],
+              "UX-22: the groups are not in the order a captain acts on them", &ok)
+        check(UpdatesGroup.actionTitle(.notInstalled, count: 7, setupName: "Setup steps") == "Install 7 in Setup steps"
+                && UpdatesGroup.actionTitle(.updateAvailable, count: 2, setupName: "x") == "Update 2"
+                && UpdatesGroup.actionTitle(.couldNotCheck, count: 3, setupName: "x") == "Check again"
+                && UpdatesGroup.actionTitle(.upToDate, count: 3, setupName: "x") == nil
+                && UpdatesGroup.actionTitle(.notChecked, count: 3, setupName: "x") == nil,
+              "UX-22: the group actions are wrong", &ok)
+    }
+
+    // MARK: UX-24
+
+    /// Each profile's card pictures the sidebar it gives, every listed module
+    /// once in the sidebar's order, and the step's words are on the gradient.
+    private static func checkTheWelcomeShowsEachSidebar(_ ok: inout Bool) {
+        for profile in WorkspaceProfile.allCases {
+            let lines = WelcomeSheetController.sidebarPreviewLines(for: profile)
+            let names = lines.flatMap { $0.components(separatedBy: " \u{00B7} ") }
+            let listed = WorkspaceSidebarModel.listedModules(hidden: profile.hiddenModules).map(\.title)
+            check(names == listed && lines.first == "Home"
+                    && lines.allSatisfy { $0.components(separatedBy: " \u{00B7} ").count <= WelcomeSheetController.previewPerLine },
+                  "UX-24: \(profile.title)'s preview reads \(lines), want \(listed)", &ok)
+        }
+        autoreleasepool {
+            let sheet = WelcomeSheetController()
+            sheet.loadView()
+            sheet.view.layoutSubtreeIfNeeded()
+            func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+                view.subviews.flatMap { ($0 as? T).map { [$0] } ?? [] + all(type, in: $0) }
+            }
+            let cards = all(HelmChoiceCard.self, in: sheet.view)
+            check(cards.count == WorkspaceProfile.allCases.count && cards.allSatisfy { $0.accessory is WelcomeSidebarPreview },
+                  "UX-24: a profile card has no sidebar preview", &ok)
+            check(!all(HelmHeroSurface.self, in: sheet.view).isEmpty, "UX-24: the welcome sheet has no hero head", &ok)
+        }
+    }
+
+    // MARK: UX-26
+
+    /// The Add Host sheet is 560pt wide, with the connection on the left and
+    /// the authentication on the right, top-aligned.
+    private static func checkTheHostSheetHasTwoColumns(_ ok: inout Bool) {
+        autoreleasepool {
+            let editor = HostEditorController(host: nil, keyStore: SSHKeyStore(), snippets: [], presentation: .sheet)
+            editor.loadView()
+            editor.view.layoutSubtreeIfNeeded()
+            check(abs(editor.view.frame.width - HostEditorController.sheetWidth) < 0.5,
+                  "UX-26: the sheet is \(editor.view.frame.width)pt wide", &ok)
+            let address = editor.debugAddressField.convert(editor.debugAddressField.bounds, to: editor.view)
+            let name = editor.debugLabelField.convert(editor.debugLabelField.bounds, to: editor.view)
+            let keys = editor.debugKeyPicker.convert(editor.debugKeyPicker.bounds, to: editor.view)
+            check(keys.minX > address.maxX && keys.width > 150 && address.width > 150,
+                  "UX-26: authentication (\(keys)) is not beside the connection (\(address))", &ok)
+            check(abs(name.height - address.height) < 1 && abs(address.minY - name.minY) < 90,
+                  "UX-26: the name field (\(name)) is not a field like the address (\(address))", &ok)
+        }
+    }
+
+    // MARK: UX-07
+
+    /// One line per event under its day and hour, a run of the same thing
+    /// folded and opened by its id, and the Today scope beside All.
+    private static func checkTheCrewLogIsATimeline(_ ok: inout Bool) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: Date()) ?? Date()
+        func event(_ title: String, minutesAgo: Double, kind: FleetLogEventKind = .task) -> FleetLogEvent {
+            FleetLogEvent(id: title, date: noon.addingTimeInterval(-minutesAgo * 60), kind: kind, title: title)
+        }
+        let events = [
+            event("Completed \"Renew the TLS certificate\"", minutesAgo: 0),
+            event("Created \"A\"", minutesAgo: 100), event("Created \"B\"", minutesAgo: 100.5),
+            event("Created \"C\"", minutesAgo: 101), event("Created \"D\"", minutesAgo: 101.5),
+            event("Created project \"Infra\"", minutesAgo: 102), event("Created project \"Release\"", minutesAgo: 102.5),
+            event("Merged PR #12", minutesAgo: 103, kind: .merge),
+        ]
+        let rows = FleetLogFeed.timelineRows(for: events, reference: noon, calendar: calendar)
+        let shape = rows.map { row -> String in
+            switch row {
+            case .day(let text): return "day \(text)"
+            case .hour: return "hour"
+            case .event(let event): return "event \(event.title)"
+            case .run(let run): return "run \(run.text)"
             }
         }
-        var unsafeJump = host()
-        unsafeJump.jumpVia = "-oProxyCommand=x"
-        if case .success = HostConnectionTest.arguments(for: unsafeJump, allHosts: []) {
-            fail("R4-UX-04: an unsafe jump host was tested", &ok)
-        }
-        // A hop that resolves from another saved host is checked at run time too.
-        var dashed = Host(label: "dashed", address: "-oProxyCommand=x")
-        dashed.username = ""
-        var viaDashed = host()
-        viaDashed.jumpVia = "dashed"
-        if case .success = HostConnectionTest.arguments(for: viaDashed, allHosts: [dashed, viaDashed]) {
-            fail("R4-UX-04: a jump chain through an unsafe saved host was tested", &ok)
-        }
-        if case .success = HostConnectionTest.arguments(for: host("  "), allHosts: []) {
-            fail("R4-UX-04: a host with no address was tested", &ok)
-        }
+        check(shape == ["day Today", "hour", "event Completed \"Renew the TLS certificate\"", "hour",
+                        "run Created 4 tasks", "run Created 2 projects: Infra, Release", "event Merged PR #12"],
+              "UX-07: the timeline reads \(shape)", &ok)
+        let opened = FleetLogFeed.timelineRows(for: events, expanded: ["Created \"A\""], reference: noon, calendar: calendar)
+        check(opened.count == rows.count + 4, "UX-07: Show all did not open the run's four events in place", &ok)
+        check(FleetLogFeed.parse("Merged PR #12") == nil && FleetLogFeed.parse("Created follow-up \"Ping\"")?.noun == "follow-up",
+              "UX-07: the activity lines parse wrongly", &ok)
 
-        // Through `run`: a refused host never reaches the runner.
-        var ranWith: [String]?
-        var outcome: HostConnectionTest.Outcome?
-        HostConnectionTest.run(host("-bad"), allHosts: [], runner: { args, _ in ranWith = args }) { outcome = $0 }
-        check(ranWith == nil, "R4-UX-04: a refused host reached ssh", &ok)
-        if case .refused? = outcome {} else { fail("R4-UX-04: a refused host read \(String(describing: outcome))", &ok) }
+        var reading = CrewHeroWords.LogReading()
+        reading.hasRead = true
+        reading.counts = [.task: 23]
+        reading.today = [.task: 15]
+        let segments = CrewHeroWords.logSegments(reading)
+        check(segments.first?.label == "Today\u{2002}15" && segments.first?.isToday == true
+                && segments.dropFirst().first?.label == "All\u{2002}23",
+              "UX-07: the scopes read \(segments.prefix(2).map(\.label))", &ok)
+        check(FleetLogListView.filterItems.prefix(2).map(\.id) == [FleetLogListView.todayFilterID, FleetLogListView.allFilterID],
+              "UX-07: the filter does not open on Today and All", &ok)
     }
 
-    private static func result(_ status: Int32, stderr: String = "",
-                               outcome: SubprocessResult.Outcome = .exited) -> SubprocessResult {
-        SubprocessResult(outcome: outcome, status: status, stdoutData: Data(),
-                         stderrData: Data(stderr.utf8), duration: 0.1)
-    }
+    // MARK: UX-08
 
-    private static func checkConnectionTestReadings(_ ok: inout Bool) {
-        let cases: [(SubprocessResult, Bool, HostConnectionTest.Outcome)] = [
-            (result(0), false, .signedIn),
-            (result(255, stderr: "ops@edge: Permission denied (publickey,password)."), false,
-             .needsCredentials(savedKey: false)),
-            (result(255, stderr: "ops@edge: Permission denied (publickey)."), true, .needsCredentials(savedKey: true)),
-            (result(255, stderr: "Host key verification failed."), false, .hostKeyUnknown),
-            (result(255, stderr: "ssh: Could not resolve hostname edgy: nodename nor servname provided"), false,
-             .unreachable("the address does not resolve")),
-            (result(255, stderr: "ssh: connect to host edge port 22: Connection refused"), false,
-             .unreachable("connection refused")),
-            (result(255, stderr: "ssh: connect to host edge port 22: Operation timed out"), false,
-             .unreachable("no answer in 5 seconds")),
-            (result(-2, outcome: .timedOut), false, .unreachable("no answer in 20 seconds")),
-        ]
-        for (answer, savedKey, want) in cases {
-            let got = HostConnectionTest.classify(answer, savedKey: savedKey)
-            check(got == want, "R4-UX-04: \"\(answer.stderr)\" read as \(got.text), want \(want.text)", &ok)
-        }
-        check(HostConnectionTest.Outcome.signedIn.tint == .good
-                && HostConnectionTest.Outcome.hostKeyUnknown.tint == .warn
-                && HostConnectionTest.Outcome.unreachable("x").tint == .critical,
-              "R4-UX-04: the outcomes' tints do not say good, warn and critical", &ok)
-        // The runner's answer reaches the completion.
-        var outcome: HostConnectionTest.Outcome?
-        HostConnectionTest.run(host(), allHosts: [], runner: { _, done in done(result(0)) }) { outcome = $0 }
-        check(outcome == .signedIn, "R4-UX-04: run reported \(String(describing: outcome))", &ok)
-    }
-
-    private static func checkKeyFallbackNotice(_ ok: inout Bool) {
-        // The floating bar's session strip drew this notice, and went with
-        // that layout in P-03 of the 2026-11-25 review. The sidebar layout
-        // never drew it (a follow-up), so what is left is the wiring.
-
-        // The wiring a behavioural check cannot reach without a failing
-        // Keychain read: the fallback branch reports, the success branch
-        // clears, and the coordinator routes it to the registry.
-        if let sessions = source("ConsoleController+Sessions.swift"),
-           let coordinator = source("HostSessionCoordinator.swift") {
-            check(sessions.contains("self.onSavedKeyFallback?(Self.savedKeyFallbackNotice)")
-                    && sessions.contains("self.onSavedKeyFallback?(nil)"),
-                  "R4-UX-04: connectSSH no longer reports a saved key's fallback", &ok)
-            check(coordinator.contains("self?.sessions.setNotice(hostID: sessionHostID, notice)"),
-                  "R4-UX-04: the host page's key fallback no longer reaches the session strip", &ok)
+    /// Six starters from the captain's own data, a role under every
+    /// portrait, and a starter fills the composer rather than sending.
+    private static func checkAskTheCrewStartsWithThingsToAsk(_ ok: inout Bool) {
+        let busy = StrawHatStarters.make(.init(openTasks: 7, overdueTasks: 1, dueToday: 1, pendingFollowUps: 2,
+                                               failingService: "Docs & runbooks sync", servicesReporting: 8, schedules: 3))
+        check(busy.count == StrawHatStarters.count && busy[0].question == "What is overdue, and what can wait?"
+                && busy[0].detail == "From your 7 open tasks"
+                && busy[2].question == "Why does Docs & runbooks sync keep failing?"
+                && busy[4].detail == "From your 2 follow-ups",
+              "UX-08: a busy captain's starters read \(busy.map(\.question))", &ok)
+        let quiet = StrawHatStarters.make(.init())
+        check(quiet.count == StrawHatStarters.count && !quiet.contains { $0.detail.contains(" 0 ") },
+              "UX-08: a new captain's starters count zeros: \(quiet.map(\.detail))", &ok)
+        check(Set(StrawHatMember.allCases.map(\.roleWord)).count == StrawHatMember.allCases.count
+                && StrawHatMember.allCases.allSatisfy { !$0.roleWord.contains(" ") },
+              "UX-08: a crew member's role is not one word of its own", &ok)
+        autoreleasepool {
+            let chat = StrawHatChatView()
+            chat.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+            chat.setStarters(busy)
+            chat.layoutSubtreeIfNeeded()
+            check(!chat.debugStarterGrid.isHidden && chat.debugEmptyStateHidden && chat.debugStarterGrid.debugCards.count == 6,
+                  "UX-08: the empty thread does not show six starters in place of the paragraph", &ok)
+            chat.debugStarterGrid.debugPick(1)
+            check(chat.debugComposerText == busy[1].question, "UX-08: a starter did not fill the composer", &ok)
         }
     }
 
-    // MARK: R4-UX-05
+    // MARK: UX-11
 
-    private static func checkHomeCardKeyboard(_ ok: inout Bool) {
-        let card = HelmModuleCard()
-        check(!card.acceptsFirstResponder, "R4-UX-05: a card that opens nothing takes the keyboard", &ok)
-        var opened = 0
-        card.onOpen = { opened += 1 }
-        check(card.acceptsFirstResponder && card.focusRingType == .exterior,
-              "R4-UX-05: a Home card cannot take the keyboard, or draws no ring", &ok)
-        card.debugKey(49, characters: " ")
-        check(opened == 1, "R4-UX-05: Space on a Home card opened it \(opened) times", &ok)
-        card.debugKey(36, characters: "\r")
-        check(opened == 2, "R4-UX-05: Return on a Home card did not open it", &ok)
-        card.debugKey(0, characters: "a")
-        check(opened == 2, "R4-UX-05: another key opened the card", &ok)
-        if let home = SelfTestSources.homeCanvas(read: source) {
-            check(home.contains("card.onOpen = {"), "R4-UX-05: Home's cards no longer open their module", &ok)
+    /// The hosts connected to most recently, newest first; the tiles and the
+    /// snippets do what they say; Return opens the first.
+    private static func checkTheConsoleStartPage(_ ok: inout Bool) {
+        let now = Date()
+        func host(_ label: String, daysAgo: Double?) -> Host {
+            var h = Host(label: label, address: "\(label).example.test")
+            h.lastConnectedAt = daysAgo.map { now.addingTimeInterval(-$0 * 86_400) }
+            return h
+        }
+        let tiles = ConsoleStartWords.hosts([host("old", daysAgo: 9), host("never", daysAgo: nil), host("new", daysAgo: 1),
+                                             host("mid", daysAgo: 3), host("older", daysAgo: 20)], now: now)
+        check(tiles.map(\.title) == ["new", "mid", "old"] && tiles.first?.detail.hasPrefix("connected ") == true,
+              "UX-11: the start page's hosts are \(tiles.map(\.title))", &ok)
+        autoreleasepool {
+            let page = ConsoleStartPage()
+            var did: [String] = []
+            page.onNewShell = { did.append("shell") }
+            page.onHost = { _ in did.append("host") }
+            page.onSnippet = { did.append("snippet \($0.label)") }
+            page.configure(hosts: tiles, snippets: [Snippet(label: "Disk usage", command: "du -sh *")])
+            check(page.debugTileTitles == ["New shell on this Mac", "new", "mid", "old"] && page.debugSnippetTitles == ["Disk usage"],
+                  "UX-11: the start page offers \(page.debugTileTitles) and \(page.debugSnippetTitles)", &ok)
+            page.debugClickTile(1)
+            page.debugClickSnippet(0)
+            if let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                            context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+                                            isARepeat: false, keyCode: 36) {
+                page.keyDown(with: enter)
+            }
+            check(did == ["host", "snippet Disk usage", "shell"], "UX-11: the start page did \(did)", &ok)
         }
     }
 
-    // MARK: R4-UX-06
+    // MARK: UX-04
 
-    private static func checkMergeConfirmBody(_ ok: inout Bool) {
-        let url = "https://github.com/manjesh-raj/demo/pull/42"
-        let task = FleetTask(id: "demo-task", repo: "manjesh-raj/demo", kind: "ship", pr: url, branch: "fm/demo-task")
-        let open = OpenPRInfo(repo: "manjesh-raj/demo", number: 42, title: "Fix the snooze timer", url: url,
-                              forge: "github", checks: "green")
-        guard let pr = FleetDataSource.mergedPRs(openPRs: [open], tasks: [task]).first else {
-            fail("R4-UX-06: the fixture merged into no PR", &ok)
-            return
+    /// The inspector's chips and activity, against a pinned local noon.
+    private static func checkTheTaskInspectorWords(_ ok: inout Bool) {
+        let calendar = Calendar.current
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0,
+                                 of: calendar.date(from: DateComponents(year: 2026, month: 11, day: 26)) ?? Date()) ?? Date()
+        func day(_ offset: Int) -> String {
+            let parts = calendar.dateComponents([.year, .month, .day], from: calendar.date(byAdding: .day, value: offset, to: noon) ?? noon)
+            return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
         }
-        check(pr.branch == "fm/demo-task", "R4-UX-06: the task's branch did not reach the PR row", &ok)
-        let lines = ReviewController.mergeConfirmBody(pr, url: url).components(separatedBy: "\n")
-        check(lines == ["#42 Fix the snooze timer", "manjesh-raj/demo \u{00B7} branch fm/demo-task", "Checks passing", url],
-              "R4-UX-06: the merge confirm reads \(lines)", &ok)
-        check(ReviewController.checksSentence("red") == "Checks failing"
-                && ReviewController.checksSentence("pending") == "Checks still running"
-                && ReviewController.checksSentence("none") == "No checks reported",
-              "R4-UX-06: a check state reads wrong", &ok)
-        check(ReviewController.mergeConfirmBody(nil, url: url) == url,
-              "R4-UX-06: a PR with no row lost its URL", &ok)
-        if let review = source("ReviewController.swift") {
-            check(review.contains("body: Self.mergeConfirmBody(pr, url: prURL)"),
-                  "R4-UX-06: the merge confirm no longer uses the full body", &ok)
+        var task = ShiftTask.fresh(now: noon)
+        task.dueDate = day(0)
+        task.dueTime = "15:00"
+        let today = TaskInspectorWords.dueChip(task, now: noon, calendar: calendar)
+        check(today.text == "Today " + ShiftDateFormatting.clock("15:00") && today.tint == .warn,
+              "UX-04: a task due later today reads \(today.text) in \(String(describing: today.tint))", &ok)
+        task.dueDate = day(-2)
+        task.dueTime = nil
+        let late = TaskInspectorWords.dueChip(task, now: noon, calendar: calendar)
+        check(late.text == "Overdue 2 days" && late.tint == .critical, "UX-04: two days late reads \(late.text)", &ok)
+        task.dueDate = day(1)
+        check(TaskInspectorWords.dueChip(task, now: noon, calendar: calendar).text == "Tomorrow",
+              "UX-04: tomorrow does not read Tomorrow", &ok)
+        task.dueDate = nil
+        check(TaskInspectorWords.dueChip(task, now: noon, calendar: calendar) .text == "No date",
+              "UX-04: no date does not say so", &ok)
+        check(TaskInspectorWords.priorityChip(.high).tint == .critical && TaskInspectorWords.priorityChip(.normal).tint == nil,
+              "UX-04: only High carries a hue", &ok)
+        check(TaskInspectorWords.checklistKicker([]) == "Checklist"
+                && TaskInspectorWords.checklistKicker([.init(id: "a", title: "a", done: true),
+                                                      .init(id: "b", title: "b", done: false)]) == "Checklist \u{00B7} 1 of 2",
+              "UX-04: the checklist kicker does not count", &ok)
+
+        task.createdAt = ShiftStore.iso8601(calendar.date(byAdding: .day, value: -3, to: noon) ?? noon)
+        func entry(_ kind: String, _ offset: Int, seconds: Int? = nil, target: String? = nil) -> ShiftActivityEntry {
+            ShiftActivityEntry(id: UUID().uuidString,
+                               timestamp: ShiftStore.iso8601(calendar.date(byAdding: .day, value: offset, to: noon) ?? noon),
+                               kind: kind, summary: "", targetID: target ?? task.id, durationSeconds: seconds)
+        }
+        let entries = [entry(FocusActivityLog.kind, -1, seconds: 1800), entry(FocusActivityLog.kind, 0, seconds: 2400),
+                       entry("task_due_date_changed", -1), entry("task_due_date_changed", -2),
+                       entry(FocusActivityLog.kind, 0, seconds: 9000, target: "someone-else")]
+        let created = ShiftRecurrence.shortWeekdayName(calendar.component(.weekday, from: calendar.date(byAdding: .day, value: -3, to: noon) ?? noon))
+        let lines = TaskInspectorWords.activityLines(task: task, entries: entries, unreadable: false, now: noon, calendar: calendar)
+        check(lines == ["Focused 1h 10m \u{00B7} today", "Pushed back 2 times", "Created \u{00B7} \(created)"],
+              "UX-04: the activity reads \(lines)", &ok)
+        // GL-14: an unreadable month is said, never read as no focus time.
+        let unread = TaskInspectorWords.activityLines(task: task, entries: [], unreadable: true, now: noon, calendar: calendar)
+        check(unread.count == 2 && unread.last?.contains("could not be read") == true,
+              "UX-04: an unreadable activity log reads \(unread)", &ok)
+    }
+
+    // MARK: UX-05
+
+    /// The review's queue, its verdict and its last sentence.
+    private static func checkTheWeeklyReviewWords(_ ok: inout Bool) {
+        let calendar = Calendar.current
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0,
+                                 of: calendar.date(from: DateComponents(year: 2026, month: 11, day: 26)) ?? Date()) ?? Date()
+        func day(_ offset: Int) -> String {
+            let parts = calendar.dateComponents([.year, .month, .day], from: calendar.date(byAdding: .day, value: offset, to: noon) ?? noon)
+            return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+        }
+        var project = ShiftProject.fresh()
+        project.name = "Infra hardening"
+        func task(_ id: String, due: Int?, project: ShiftProject? = nil) -> ShiftTask {
+            var t = ShiftTask.fresh(now: noon)
+            t.id = id
+            t.title = id
+            t.dueDate = due.map(day)
+            t.projectID = project?.id
+            return t
+        }
+        let active = [task("late-1", due: -1), task("late-2", due: -2, project: project), task("moving", due: 3),
+                      task("undated", due: nil), task("fine", due: 5), task("both", due: -3)]
+        let pushed = [ShiftPushedBackItem(id: "moving", title: "moving", count: 3, projectName: nil),
+                      ShiftPushedBackItem(id: "both", title: "both", count: 2, projectName: nil),
+                      ShiftPushedBackItem(id: "gone", title: "gone", count: 4, projectName: nil)]
+        let queue = ShiftReviewWords.decisions(active: active, pushedBack: pushed, projects: [project],
+                                               now: noon, calendar: calendar)
+        check(queue.map(\.id) == ["both", "late-2", "late-1", "moving", "undated"],
+              "UX-05: the review's queue is \(queue.map(\.id))", &ok)
+        check(queue.first?.meta == "overdue 3 days \u{00B7} moved twice"
+                && queue.dropFirst().first?.meta == "Infra hardening \u{00B7} overdue 2 days"
+                && queue.last?.meta == "no date",
+              "UX-05: the decisions say \(queue.map(\.meta))", &ok)
+        let verdict = ShiftReviewWords.verdict(queue)
+        check(verdict.headline == "5 things to decide before next week."
+                && verdict.body == "3 overdue, 1 pushed back more than once, 1 with no date. About three minutes.",
+              "UX-05: the verdict reads \(verdict.headline) / \(verdict.body)", &ok)
+        check(ShiftReviewWords.verdict([]).headline == "Nothing to decide before next week.",
+              "UX-05: an empty review does not say there is nothing to decide", &ok)
+        check(ShiftReviewWords.summary(done: 1, moved: 2, dropped: 1, skipped: 0, nextWeek: 3)
+                == "You finished 1, moved 2 and dropped 1. 3 things are due next week.",
+              "UX-05: the summary reads \(ShiftReviewWords.summary(done: 1, moved: 2, dropped: 1, skipped: 0, nextWeek: 3))", &ok)
+        check(ShiftReviewWords.kicker(now: noon, calendar: calendar).hasPrefix("Weekly review \u{00B7} "),
+              "UX-05: the kicker reads \(ShiftReviewWords.kicker(now: noon, calendar: calendar))", &ok)
+    }
+
+    // MARK: UX-10
+
+    /// Commands: categories as chips above the list, favourites and recents
+    /// first with when they were sent, the risk in words, the filled
+    /// preview, and where the command was last sent.
+    private static func checkTheCommandsPage(_ ok: inout Bool) {
+        let now = Date()
+        check(CommandLibraryWords.riskWords(.readOnly) == "Read-only \u{00B7} changes nothing"
+                && CommandLibraryWords.riskWords(.destructive).hasPrefix("Destructive"),
+              "UX-10: the risk words are \(CommandLibraryWords.riskWords(.readOnly))", &ok)
+        check(CommandLibraryWords.sentTo(hosts: ["DEV Bastion", "a", "b"]) == "To DEV Bastion and 2 more hosts",
+              "UX-10: three hosts read \(CommandLibraryWords.sentTo(hosts: ["DEV Bastion", "a", "b"]))", &ok)
+        check(CommandLibraryWords.sentAgo(now.addingTimeInterval(-7_300), now: now).hasPrefix("sent 2 hours ago")
+                || !Calendar.current.isDate(now.addingTimeInterval(-7_300), inSameDayAs: now),
+              "UX-10: two hours ago reads \(CommandLibraryWords.sentAgo(now.addingTimeInterval(-7_300), now: now))", &ok)
+        check(CommandLibraryWords.lastSent(nil, unreadable: false, now: now) == "Not sent from here yet."
+                && CommandLibraryWords.lastSent(nil, unreadable: true, now: now).hasPrefix("Couldn\u{2019}t read"),
+              "UX-10: an unknown last send reads as never sent", &ok)
+        let categories = (1...8).map { (id: "c\($0)", name: "Cat\($0)", count: $0) }
+        let chips = CommandLibraryWords.chips(categories: categories, total: 36, selected: "c7", expanded: false)
+        check(chips.map(\.title) == ["All", "Cat1 1", "Cat2 2", "Cat3 3", "Cat4 4", "Cat7 7", "+3"],
+              "UX-10: the chips read \(chips.map(\.title))", &ok)
+        check(CommandLibraryWords.chips(categories: categories, total: 36, selected: nil, expanded: true).last?.title == "Fewer",
+              "UX-10: the expanded chips end without Fewer", &ok)
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("review4-commands-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // `via` round-trips, and a file written before it existed still
+        // reads (GL-01).
+        let recent = dir.appendingPathComponent("recent-roundtrip.yaml").path
+        try? CommandLibraryYaml.writeRecentUsage([CommandLibraryUsageEntry(id: "a", usedAt: now, via: "Copied"),
+                                                  CommandLibraryUsageEntry(id: "b", usedAt: now)], path: recent)
+        let back = CommandLibraryYaml.readRecentUsage(path: recent)
+        check(!back.failed && back.value.map(\.via) == ["Copied", nil],
+              "UX-10: recent.yaml read back \(back.value.map(\.via)), failed \(back.failed)", &ok)
+        let previous = ProcessInfo.processInfo.environment["FM_COMMAND_LIBRARY_DIR"]
+        setenv("FM_COMMAND_LIBRARY_DIR", dir.path, 1)
+        defer { if let previous { setenv("FM_COMMAND_LIBRARY_DIR", previous, 1) } else { unsetenv("FM_COMMAND_LIBRARY_DIR") } }
+        autoreleasepool {
+            let store = CommandLibraryStore()
+            guard let describe = store.commands.first(where: { $0.name == "Describe Pod" }) else {
+                return fail("UX-10: the seeded library has no Describe Pod", &ok)
+            }
+            store.recordUsage(describe.id, via: "To DEV Bastion", now: now.addingTimeInterval(-120))
+            // The seam: the page gives up the empty header line, so its band
+            // starts right under the toolbar.
+            let controller: AnyObject = CommandLibraryController(store: store)
+            check((controller as? WorkspaceHeaderLineCollapsing).map { $0.collapsesEmptyHeaderLine && !$0.drawsSubtitleOnHeaderLine } == true,
+                  "UX-10: Commands still keeps an empty header line over its band", &ok)
+            let page = CommandLibraryPageView(store: store)
+            page.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 900)
+            page.reloadAndRender()
+            page.view.layoutSubtreeIfNeeded()
+            let lines = page.debugLeftPanelContents().lines
+            check(page.debugChips?.debugTitles.first == "All" && !lines.contains("CATEGORIES"),
+                  "UX-10: the categories are not chips: \(lines.prefix(4))", &ok)
+            check(lines.firstIndex(of: "FAVOURITES AND RECENT") ?? 99 < lines.firstIndex(of: "ALL COMMANDS") ?? 0
+                    && lines.contains { $0.contains("Describe Pod") && $0.contains("sent 2 minutes ago") },
+                  "UX-10: the recent command does not lead the list: \(lines.prefix(6))", &ok)
+            check(page.debugSearchPlaceholder == "Search \(store.commands.count) commands\u{2026}",
+                  "UX-10: the search says \(page.debugSearchPlaceholder)", &ok)
+            page.openCommand(id: describe.id)
+            page.debugSetParameter("pod", to: "checkout-worker-7d9")
+            check(page.debugPreview.hasSuffix("checkout-worker-7d9") && !page.debugPreview.contains("{{"),
+                  "UX-10: the preview reads \(page.debugPreview)", &ok)
+            check(page.debugRiskWords == "Read-only \u{00B7} changes nothing",
+                  "UX-10: the risk pill reads \(page.debugRiskWords)", &ok)
+            check(page.debugLastSentShowing && page.debugLastSent.hasPrefix("To DEV Bastion \u{00B7} today"),
+                  "UX-10: the last send reads \(page.debugLastSent)", &ok)
+            // A category chip, pressed through its own click recognizer,
+            // narrows the list to that category.
+            if let chip = page.debugChips?.chipIDs.dropFirst().first {
+                page.debugChips?.debugPress(chip)
+                page.view.layoutSubtreeIfNeeded()
+                let narrowed = page.debugLeftPanelContents()
+                let inCategory = store.commands.filter { $0.category == chip }.count
+                check(!narrowed.lines.contains("ALL COMMANDS")
+                        && narrowed.commandRowCount == inCategory + (describe.category == chip ? 1 : 0),
+                      "UX-10: the \(chip) chip shows \(narrowed.commandRowCount) rows, want \(inCategory)", &ok)
+            }
         }
     }
 
-    // MARK: R4-UX-07
+    // MARK: UX-12
 
-    private static func checkEmptyStateCopy(_ ok: inout Bool) {
-        let steps = KubernetesController.scopeSteps.components(separatedBy: "\n")
-        check(steps.count == 3 && steps.enumerated().allSatisfy { $0.element.hasPrefix("\($0.offset + 1). ") },
-              "R4-UX-07: the Kubernetes scope wall is not three numbered steps: \(steps)", &ok)
-    }
-
-    // MARK: R4-UX-08
-
-    private static func checkBackupReport(_ ok: inout Bool) {
-        let center = GrandLineNotificationCenter.shared
-        let id = BackupUI.exportReportID
-        defer { Feedback.clear(id: id) }
-        let bundle = GrandLineBackup(hosts: [host()], snippets: [], keys: [], settings: BackupSettings())
-        BackupUI.reportExported(bundle, to: "/tmp/grand-line-backup.glbackup",
-                                file: URL(fileURLWithPath: "/tmp/grand-line-backup.glbackup"), in: nil)
-        guard let entry = center.entries.first(where: { $0.id == id }) else {
-            fail("R4-UX-08: a finished backup left nothing in the bell", &ok)
-            return
+    /// Write: the spans it paints, marks hidden off the caret's line and
+    /// dimmed on it, edits reported after a pause, and Write as the default.
+    private static func checkTheNotebookWritesInOnePane(_ ok: inout Bool) {
+        let text = "# Ideas\n- **Ask Nami** about [[On-call handbook|the handbook]]\nRun `a **b**` now"
+        let spans = NotebookLiveMarkdown.spans(in: text)
+        func has(_ kind: NotebookLiveMarkdown.Kind, _ words: String) -> Bool {
+            spans.contains { $0.kind == kind && (text as NSString).substring(with: $0.range) == words }
         }
-        check(entry.title == "Backup exported: 1 host(s), 0 snippet(s)",
-              "R4-UX-08: the backup report reads \(entry.title)", &ok)
-        check(entry.subtext == "Saved to /tmp/grand-line-backup.glbackup",
-              "R4-UX-08: the backup report does not name the file: \(entry.subtext)", &ok)
-        check(NotificationRowPresentation(for: entry).kicker == "Backup Saved",
-              "R4-UX-08: the backup report reads as \(NotificationRowPresentation(for: entry).kicker)", &ok)
-        // A second export replaces the entry rather than stacking another.
-        BackupUI.reportExported(bundle, to: "a GitHub repo", file: nil, in: nil)
-        check(center.entries.filter { $0.id == id }.count == 1,
-              "R4-UX-08: a second backup stacked a second report", &ok)
-    }
+        check(has(.mark, "# ") && has(.heading(1), "Ideas") && has(.structure, "- ") && has(.bold, "Ask Nami")
+                && has(.link("On-call handbook"), "the handbook") && has(.mark, "On-call handbook|")
+                && has(.code, "a **b**") && !has(.bold, "b"),
+              "UX-12: the spans are \(spans.map { "\($0.kind)=\((text as NSString).substring(with: $0.range))" })", &ok)
+        let outline = NotebookController.outline(of: "# One\n```\n# not a heading\n```\n## Two\n#nospace")
+        check(outline.map(\.title) == ["One", "Two"] && outline.map(\.level) == [1, 2],
+              "UX-12: the outline reads \(outline.map(\.title))", &ok)
+        check(NotebookController.ViewMode.allCases.map(\.title) == ["Write", "Split", "Source"],
+              "UX-12: the modes are \(NotebookController.ViewMode.allCases.map(\.title))", &ok)
 
-    /// The Fleet page's Stop: shown only while a pass is in flight, and
-    /// pressing it ends the pass at once.
-    private static func checkFleetStop(_ ok: inout Bool) {
-        let fleet = FleetController(shiftStore: ShiftStore())
-        _ = fleet.view
-        check(fleet.debugStopButton.isHidden, "R4-UX-08: the Fleet page shows Stop with nothing in flight", &ok)
-        fleet.debugBeginPassWithoutFetching()
-        check(!fleet.debugStopButton.isHidden && !fleet.debugRefreshButton.isEnabled,
-              "R4-UX-08: a pass in flight shows no Stop", &ok)
-        var actionChanges = 0
-        fleet.onDrillActionsChanged = { actionChanges += 1 }
-        fleet.debugBeginPassWithoutFetching()
-        // Stop takes Refresh's place rather than joining it: one more item
-        // pushed the breadcrumb into the overflow at Larger text and 1512pt.
-        check(fleet.drillHeaderActions.count == 1 && fleet.drillHeaderActions.first === fleet.debugStopButton
-                && actionChanges > 0,
-              "R4-UX-08: during a pass the sidebar layout's toolbar carries \(fleet.drillHeaderActions.count) "
-              + "items, want Stop alone in Refresh's place", &ok)
-        fleet.debugStopButton.performClick(nil)
-        check(fleet.drillHeaderActions.count == 1 && fleet.drillHeaderActions.first === fleet.debugRefreshButton,
-              "R4-UX-08: Refresh did not come back after the pass ended", &ok)
-        check(!fleet.debugIsLoading && fleet.debugStopButton.isHidden && fleet.debugRefreshButton.isEnabled,
-              "R4-UX-08: Stop did not end the pass", &ok)
-        if let source = source("FleetController.swift") {
-            check(source.components(separatedBy: "self.refreshGeneration == generation").count == 3,
-                  "R4-UX-08: a stopped pass can still report its results", &ok)
+        autoreleasepool {
+            let write = NotebookWriteView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+            var edits: [(String, String)] = []
+            write.onEdit = { edits.append(($0, $1)) }
+            write.show(id: "ideas", content: "# Ideas\nplain line")
+            // The caret sits at the start, on the heading's line: its mark shows.
+            check(write.debugIsDrawn(at: 0) && write.debugFontSize(at: 2) > write.debugFontSize(at: 9),
+                  "UX-12: on its own line the heading's mark is hidden, or the heading is not larger", &ok)
+            let end = (write.textView.string as NSString).length
+            write.textView.setSelectedRange(NSRange(location: end, length: 0))
+            write.restyle()
+            check(!write.debugIsDrawn(at: 0) && write.debugIsDrawn(at: 2),
+                  "UX-12: off the caret's line the heading's # still shows", &ok)
+            // The typing half needs a key window: ReviewFourWindowChecks.
         }
     }
 
-    // MARK: Helpers
+    // MARK: UX-17
 
-    private static func source(_ file: String) -> String? {
-        guard let dir = SelfTestSources.appSourceDirectory() else {
-            print("  SKIP: the app's sources were not found - the source guards did not run")
-            return nil
-        }
-        return try? String(contentsOf: dir.appendingPathComponent(file), encoding: .utf8)
+    /// The steps a runbook's Markdown makes, a session's clock, and what the
+    /// list row says about the last run.
+    private static func checkRunbooksRun(_ ok: inout Bool) {
+        let steps = RunbookSteps.parse("""
+            # Fail over
+
+            Some words.
+
+            1. Confirm lag
+            2. Promote the replica
+
+            ```bash
+            # a comment
+            pg_ctl promote
+            ```
+
+            - [ ] Note it
+            ```
+            echo one
+            echo two
+            ```
+            """)
+        // A block with no open step above it is a step of its own, per line.
+        let bare = RunbookSteps.parse("# Bare\n\n```\nkubectl get nodes\nkubectl top nodes\n```\n")
+        check(bare.map(\.title) == ["kubectl get nodes", "kubectl top nodes"] && bare.allSatisfy { $0.command == $0.title },
+              "UX-17: a bare block's steps are \(bare.map(\.title))", &ok)
+        check(steps.map(\.title) == ["Confirm lag", "Promote the replica", "Note it"]
+                && steps[1].command == "pg_ctl promote" && steps[2].command == "echo one\necho two" && steps[0].command == nil,
+              "UX-17: the steps are \(steps.map { "\($0.title)=\($0.command ?? "-")" })", &ok)
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        var session = RunbookSession(runbookID: "r", total: 3, now: start)
+        session.tick(now: start.addingTimeInterval(70))
+        session.tick(now: start.addingTimeInterval(230))
+        check(session.durations == [70, 160] && !session.isFinished && session.index == 2,
+              "UX-17: the session timed \(session.durations), on step \(session.index)", &ok)
+        check(session.durations.map(RunbookWords.stepTime) == ["1m 10s", "2m 40s"],
+              "UX-17: the step times read \(session.durations.map(RunbookWords.stepTime))", &ok)
+        let stopped = session.record(now: start.addingTimeInterval(240))
+        check(!stopped.isClean && RunbookWords.lastRun(stopped, now: start.addingTimeInterval(240))
+                == "last run today, 4 min, stopped at step 3 of 3",
+              "UX-17: a stopped run reads \(RunbookWords.lastRun(stopped, now: start.addingTimeInterval(240)))", &ok)
+        session.tick(now: start.addingTimeInterval(300))
+        let clean = session.record(now: start.addingTimeInterval(300))
+        check(session.isFinished && clean.isClean
+                && RunbookWords.rowSubtitle(steps: 3, last: clean, now: start.addingTimeInterval(300)) == "3 steps \u{00B7} last run today, 5 min, clean"
+                && RunbookWords.rowSubtitle(steps: 1, last: nil, now: start) == "1 step \u{00B7} never run",
+              "UX-17: the row reads \(RunbookWords.rowSubtitle(steps: 3, last: clean, now: start.addingTimeInterval(300)))", &ok)
+        RunbookRunLog.record(clean, for: "review4-probe")
+        check(RunbookRunLog.all()["review4-probe"] == clean, "UX-17: the last run did not round-trip", &ok)
     }
 }
 

@@ -125,8 +125,9 @@ enum FleetLogSelfTest {
         check(FleetLogListView.kind(forFilterID: FleetLogListView.allFilterID) == nil,
               "the All pill's id maps to no kind")
         check(FleetLogListView.kind(forFilterID: "sync") == .sync, "each kind's raw value is its own pill id")
-        check(FleetLogListView.filterItems.count == FleetLogEventKind.allCases.count + 1,
-              "the pill row should be All plus one pill per kind")
+        // UX-07: Today and All, then one pill per kind.
+        check(FleetLogListView.filterItems.count == FleetLogEventKind.allCases.count + 2,
+              "the pill row should be Today, All and one pill per kind")
 
         // MARK: Day grouping
 

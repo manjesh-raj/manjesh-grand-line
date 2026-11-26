@@ -226,7 +226,24 @@ struct DevOpsHubCardWords: Equatable {
     static let openSymbol = "arrow.up.forward.app"
     static let editSymbol = "pencil"
 
-    static func make(project: LocalProject, state: LocalProjectState, now: Date = Date()) -> DevOpsHubCardWords {
+    /// UX-15: what a running card serves, in one line: "dist folder, 214
+    /// files, this Mac only". The folder is the build folder Start picked
+    /// (S-02), or the project's own. `files` is nil until the count lands,
+    /// and the line then says the folder alone (GL-14).
+    static func servedLine(project: LocalProject, servedFolder: URL, files: Int?) -> String {
+        let folder = servedFolder.standardizedFileURL == project.folder.standardizedFileURL
+            ? "Project folder" : "\(servedFolder.lastPathComponent) folder"
+        var parts = [folder]
+        if let files {
+            let capped = files >= LocalProjectPreflight.countLimit
+            parts.append(capped ? "over \(files) files" : (files == 1 ? "1 file" : "\(files) files"))
+        }
+        parts.append("this Mac only")
+        return parts.joined(separator: ", ")
+    }
+
+    static func make(project: LocalProject, state: LocalProjectState, now: Date = Date(),
+                     servedFiles: Int? = nil) -> DevOpsHubCardWords {
         let address = "\(LocalStaticServer.loopbackHost):\(project.port)"
         var subtitle = project.displayFolder
         var status: String?
@@ -249,7 +266,11 @@ struct DevOpsHubCardWords: Equatable {
             primary = .cancel
         case .running(let since):
             subtitle = address
-            status = "Running \u{00B7} up \(DevOpsHubWords.duration(now.timeIntervalSince(since)))"
+            // UX-15: the line says what is served, and the dot that it runs.
+            // Its uptime is spoken, and the column and the project say it.
+            status = servedLine(project: project, servedFolder: project.servedFolder, files: servedFiles)
+            spoken = "Running, up \(DevOpsHubWords.duration(now.timeIntervalSince(since))), "
+                + (status ?? "")
             tint = .good
             primary = .stop
         case .failed(.portInUse(let holder)):

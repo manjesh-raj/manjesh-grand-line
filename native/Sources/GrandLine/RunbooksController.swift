@@ -44,7 +44,21 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     /// The plates built by `rebuildRunbookGrid`, kept so `applyTheme()` can
     /// re-tint a plate built between two theme changes. A `HelmPlateCard`
     /// themes itself, so this is not the paint path itself.
-    private var runbookRowCards: [HelmPlateCard] = []
+    /// UX-17: the list's rows, one per runbook.
+    private var runbookRows: [RunbookRowView] = []
+    /// UX-17: the chosen runbook, on the right.
+    private let detailView = RunbookDetailView()
+    private var runbooks: [DocsRunbook] = []
+    private(set) var selectedRunbookID: String?
+    /// The run in progress, if any. One at a time.
+    private(set) var session: RunbookSession?
+    private var sessionTimer: Timer?
+    /// The list column's width.
+    static let listWidth: CGFloat = 300
+    /// Keeps the rows' menu targets alive.
+    private var menuSleeves: [ClosureSleeve] = []
+    /// Sends a step's command to the Console, wired by the workspace.
+    var onSendCommand: ((String) -> Void)?
 
     private let runbookListScroll = NSScrollView()
     private let runbookListStack = NSStackView()
@@ -221,8 +235,33 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         // card that could need the document view to grow past the viewport.
         listContent.widthAnchor.constraint(equalTo: runbookListScroll.contentView.widthAnchor).isActive = true
 
+        // UX-17: the list on the left, the chosen runbook on the right.
+        let browser = NSStackView(views: [runbookListScroll, detailView])
+        browser.orientation = .horizontal
+        browser.alignment = .top
+        browser.distribution = .fill
+        browser.spacing = HelmMetrics.s4
+        browser.translatesAutoresizingMaskIntoConstraints = false
+        runbookListScroll.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
+        runbookListScroll.heightAnchor.constraint(equalTo: browser.heightAnchor).isActive = true
+        detailView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // The card is as tall as its steps: a pull toward no height at all
+        // just above the stack's own 250 pull toward its foot, and well under
+        // gotcha (13)'s 500.
+        let hug = detailView.heightAnchor.constraint(equalToConstant: 0)
+        hug.priority = NSLayoutConstraint.Priority(260)
+        hug.isActive = true
+        detailView.onRun = { [weak self] in self?.startRun() }
+        detailView.onStop = { [weak self] in self?.endRun() }
+        detailView.onTick = { [weak self] in self?.tickStep() }
+        detailView.onEdit = { [weak self] in
+            guard let self, let id = self.selectedRunbookID else { return }
+            self.beginEditRunbook(id)
+        }
+        detailView.onSendCommand = { [weak self] command in self?.sendStepCommand(command) }
+
         let listStack = runbookListContainerStack
-        listStack.setViews([runbookListScroll], in: .leading)
+        listStack.setViews([browser], in: .leading)
         listStack.orientation = .vertical
         listStack.alignment = .leading
         listStack.spacing = 12
@@ -244,7 +283,8 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
             listStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.pageGutter),
             HelmPageScaffold.pinFirstContent(listStack, in: root),
             listStack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
-            runbookListScroll.widthAnchor.constraint(equalTo: listStack.widthAnchor),
+            browser.widthAnchor.constraint(equalTo: listStack.widthAnchor),
+            browser.heightAnchor.constraint(equalTo: listStack.heightAnchor),
 
             runbookEditorContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.pageGutter),
             runbookEditorContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.pageGutter),
@@ -356,37 +396,26 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     }
 
     private func applyRunbooks(_ runbooks: [DocsRunbook]) {
+        self.runbooks = runbooks
+        // `runbookGridItems` still counts what the list shows, for the
+        // header's subtitle.
         runbookGridItems = runbooks.map { runbook in
-            // The card's own metadata line - "Kubernetes \u{00B7} 3 steps" -
-            // read out of the runbook's own fenced steps
-            // (`DocsRunbookMetadata`). "Updated N ago" is the fallback for a
-            // document with no steps yet, and stays on the card's tooltip
-            // either way so the timestamp is never lost.
-            // S07: the timestamp joins the metadata on the one meta line,
-            // now that the card has no action row to make room for.
-            let subtitle = DocsGridSupport.metaLine(DocsRunbookMetadata.runbookSubtitle(runbook),
-                                                    modifiedAt: runbook.modifiedAt)
-            return DocGridItem(
-                title: runbook.title,
-                subtitle: subtitle,
-                tooltip: "\(runbook.title) - \(subtitle)",
-                icon: "doc.text",
-                tint: .info,
-                onOpen: { [weak self] in self?.beginEditRunbook(runbook.id) },
-                onDelete: { [weak self] in self?.confirmDeleteRunbook(id: runbook.id, title: runbook.title) },
-                onDuplicate: { [weak self] in self?.duplicateRunbook(runbook) }
-            )
+            DocGridItem(title: runbook.title, subtitle: "", tooltip: runbook.title, icon: "doc.text", tint: .info,
+                        onOpen: {}, onDelete: {}, onDuplicate: {})
+        }
+        if selectedRunbookID.flatMap({ id in runbooks.first { $0.id == id } }) == nil {
+            selectedRunbookID = runbooks.first?.id
         }
         rebuildRunbookGrid()
         onDrillSubtitleChanged?()
     }
 
-    /// Re-flows `runbookGridItems` into a wrapping multi-column grid, sized
-    /// to whatever width `runbookListStack` actually has.
+    /// UX-17: the list's rows and the chosen runbook's detail.
     private func rebuildRunbookGrid() {
         runbookListStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        runbookRowCards.removeAll()
-        if runbookGridItems.isEmpty {
+        runbookRows.removeAll()
+        menuSleeves.removeAll()
+        if runbooks.isEmpty {
             // **UX issue X5.** This page opened on one sentence and nothing
             // to press. The seeded example is opt-in rather than shipped
             // (see `SeedExamples`' header for why a runbook is not the
@@ -396,8 +425,6 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
                                   target: self, action: #selector(seedExampleRunbookTapped))
             seed.controlSize = .small
             seed.toolTip = "Writes one short example runbook you can edit or delete."
-            // UI-46: the page-level recipe - the page's own watermark, a
-            // title and one sentence - rather than a lone tile over a line.
             let empty = HelmEmptyState(symbol: "list.bullet.rectangle",
                                        title: "No runbooks yet",
                                        body: "Create one with New Runbook, or start from an example.",
@@ -405,26 +432,129 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
                                        accessory: seed,
                                        hue: RailDestination.runbooks.domainHue,
                                        artwork: RailDestination.runbooks.drillHeaderArtwork)
-            // UXP-13: centred in the page's content area by the one shared
-            // rule, rather than as the first row of the (empty) list - which
-            // pinned it near the top of the page. A plain subview of the list
-            // container, so the editor hiding the list hides it too.
             runbookGridEmptyState?.removeFromSuperview()
             runbookGridEmptyState = empty
             runbookListContainerStack.addSubview(empty)
             empty.placeAsPageEmptyState(in: runbookListContainerStack)
+            runbookListScroll.isHidden = true
+            detailView.isHidden = true
             applyTheme()
             return
         }
         runbookGridEmptyState?.removeFromSuperview()
         runbookGridEmptyState = nil
-        let (rows, cards) = DocsGridSupport.layoutGrid(items: runbookGridItems, containerWidth: runbookListStack.frame.width)
-        for row in rows {
+        runbookListScroll.isHidden = false
+        detailView.isHidden = false
+        let runs = RunbookRunLog.all()
+        let now = Date()
+        for runbook in runbooks {
+            let row = RunbookRowView(runbookID: runbook.id, target: self, action: #selector(rowClicked(_:)))
+            row.configure(title: runbook.title,
+                          subtitle: RunbookWords.rowSubtitle(steps: RunbookSteps.parse(runbook.content).count,
+                                                             last: runs[runbook.id], now: now),
+                          width: Self.listWidth, theme: theme)
+            row.isSelected = runbook.id == selectedRunbookID
+            row.menu = rowMenu(for: runbook)
             runbookListStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: runbookListStack.widthAnchor).isActive = true
+            runbookRows.append(row)
         }
-        runbookRowCards = cards
+        renderDetail()
         applyTheme()
+    }
+
+    private func rowMenu(for runbook: DocsRunbook) -> NSMenu {
+        let menu = NSMenu()
+        let entries: [(String, () -> Void)] = [
+            ("Duplicate", { [weak self] in self?.duplicateRunbook(runbook) }),
+            ("Delete\u{2026}", { [weak self] in self?.confirmDeleteRunbook(id: runbook.id, title: runbook.title) }),
+        ]
+        for (title, run) in entries {
+            let sleeve = ClosureSleeve(run)
+            menuSleeves.append(sleeve)
+            let item = NSMenuItem(title: title, action: #selector(ClosureSleeve.invoke), keyEquivalent: "")
+            item.target = sleeve
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func rowClicked(_ sender: NSClickGestureRecognizer) {
+        guard let row = sender.view as? RunbookRowView else { return }
+        select(runbookID: row.runbookID)
+    }
+
+    private func select(runbookID id: String) {
+        selectedRunbookID = id
+        for row in runbookRows { row.isSelected = row.runbookID == id }
+        renderDetail()
+    }
+
+    private func renderDetail() {
+        guard let id = selectedRunbookID, let runbook = runbooks.first(where: { $0.id == id }) else { return }
+        detailView.configure(title: runbook.title, steps: RunbookSteps.parse(runbook.content),
+                             session: session?.runbookID == id ? session : nil, now: Date(), theme: theme)
+    }
+
+    // MARK: UX-17 - a run
+
+    private func startRun() {
+        guard let id = selectedRunbookID, let runbook = runbooks.first(where: { $0.id == id }) else { return }
+        if session != nil { endRun() }
+        let steps = RunbookSteps.parse(runbook.content)
+        guard !steps.isEmpty else { return }
+        session = RunbookSession(runbookID: id, total: steps.count, now: Date())
+        startSessionTimer()
+        renderDetail()
+    }
+
+    /// The step on screen is done; the last one ends the run.
+    private func tickStep(now: Date = Date()) {
+        guard var current = session else { return }
+        current.tick(now: now)
+        session = current
+        if current.isFinished {
+            endRun(now: now)
+        } else {
+            renderDetail()
+        }
+    }
+
+    /// Ends the run where it is and keeps how far it got.
+    private func endRun(now: Date = Date()) {
+        guard let current = session else { return }
+        RunbookRunLog.record(current.record(now: now), for: current.runbookID)
+        session = nil
+        sessionTimer?.invalidate()
+        sessionTimer = nil
+        rebuildRunbookGrid()
+        if let container = view.window?.contentView {
+            Toast.show(in: container, message: current.isFinished
+                ? "Run finished in \(RunbookWords.minutes(current.elapsed(now: now)))"
+                : "Run stopped at step \(current.index + 1) of \(current.total)")
+        }
+    }
+
+    /// "4 min so far" moves while the page shows (GL-13), once a minute is
+    /// enough for a figure counted in minutes.
+    private func startSessionTimer() {
+        sessionTimer?.invalidate()
+        sessionTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            guard let self, self.isViewLoaded, !self.view.isHiddenOrHasHiddenAncestor else { return }
+            self.renderDetail()
+        }
+        // Audit 3.4: a repeating timer says how late it may fire.
+        sessionTimer?.tolerance = 5
+    }
+
+    /// The Command Library's own risk gate decides whether a step's command
+    /// needs a confirmation before it reaches the terminal.
+    private func sendStepCommand(_ command: String) {
+        let asCommand = DevOpsCommand(id: "runbook-step", name: "Runbook step", description: "", category: "",
+                                      commandTemplate: command)
+        CommandRiskConfirmation.confirm(command: asCommand, generatedText: command, actionVerb: "send to the terminal") {
+            onSendCommand?(command)
+        }
     }
 
     /// X5: writes the one example and opens it, so the affordance ends
@@ -562,13 +692,18 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     /// owned outside this page) and for Log Analyzer's "Create Runbook"
     /// action - the one "open this runbook" behavior everywhere in the app.
     func openRunbook(id: String) {
-        beginEditRunbook(id)
+        // UX-17: the runbook opens in the list's detail, ready to run.
+        if !runbookEditorContainer.isHidden { cancelRunbookEditor() }
+        if !runbooks.contains(where: { $0.id == id }) { reloadRunbooksList() }
+        select(runbookID: id)
     }
 
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
-    var debugRunbookPlates: [HelmPlateCard] { runbookRowCards }
+    var debugRunbookRows: [RunbookRowView] { runbookRows }
+    var debugDetail: RunbookDetailView { detailView }
+    func debugTick(now: Date) { tickStep(now: now) }
     var debugRunbookEditorIsOpen: Bool { !runbookEditorContainer.isHidden }
     func debugBeginNewRunbook() { beginNewRunbook() }
     func debugCancelRunbookEditor() { cancelRunbookEditor() }
@@ -597,11 +732,15 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         runbookBodyTextView.backgroundColor = HelmField.fill(theme)
         runbookGridEmptyState?.applyTheme(theme)
 
-        // A `HelmPlateCard` themes itself end to end - fill, border, ribbon,
-        // shadow, both labels and (via `HelmGradientTile`'s own observation)
-        // its tile. This call is only here to keep a plate built *between*
-        // two theme changes correct on the very next render.
-        for plate in runbookRowCards { plate.applyTheme(theme) }
+        if !runbooks.isEmpty, runbookRows.first?.debugTitle != nil {
+            let runs = RunbookRunLog.all()
+            for (row, runbook) in zip(runbookRows, runbooks) {
+                row.configure(title: runbook.title,
+                              subtitle: RunbookWords.rowSubtitle(steps: RunbookSteps.parse(runbook.content).count,
+                                                                 last: runs[runbook.id], now: Date()),
+                              width: Self.listWidth, theme: theme)
+            }
+        }
     }
 }
 

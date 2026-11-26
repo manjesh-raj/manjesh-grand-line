@@ -465,6 +465,14 @@ final class Workspace {
     /// `fm/grandline-health-sidebar-move`: F1/GL-11's Health card, promoted
     /// off the Settings page onto its own rail destination - see
     /// `HealthController.swift`'s header.
+    /// Stage 6: the two services with a real "run now" of their own, for
+    /// Health's Retry and, since UX-02, Home's Health card. Both are the same
+    /// entry points their own pages' buttons use.
+    static let healthRetryActions: [HealthService: () -> Void] = [
+        .backgroundSignals: { BackgroundSignalsPoller.shared.checkNow() },
+        .dotfilesAutoSync: { DotfilesAutoSync.shared.syncNowFromUI() },
+    ]
+
     private(set) lazy var health: HealthController = {
         let health = HealthController()
         health.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
@@ -473,10 +481,7 @@ final class Workspace {
         // Stage 6: the two services with a real "run now" of their own, for
         // the sidebar layout's Retry. Both are the same entry points their
         // own pages' buttons use.
-        health.retryActions = [
-            .backgroundSignals: { BackgroundSignalsPoller.shared.checkNow() },
-            .dotfilesAutoSync: { DotfilesAutoSync.shared.syncNowFromUI() },
-        ]
+        health.retryActions = Self.healthRetryActions
         return built(.health, health)
     }()
 
@@ -500,6 +505,8 @@ final class Workspace {
         // action, so its cluster empties while the editor is open.
         runbooks.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
         runbooks.onDrillActionsChanged = { [weak self] in self?.chromeActionsMayHaveChanged() }
+        // UX-17: a run's step sends its command to the Console's active tab.
+        runbooks.onSendCommand = { [weak self] command in self?.console.sendCommandLibraryTextToActiveTab(command) }
         return built(.runbooks, runbooks)
     }()
 
@@ -999,6 +1006,14 @@ final class Workspace {
             self?.chrome?.workspaceSessionsDidChange(registry)
         }
         console.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        // UX-11: the start page's hosts, and a tile's connect, the way
+        // Connections connects.
+        console.startHosts = { [weak self] in self?.hostStore.hosts ?? [] }
+        console.offersStartPage = true
+        console.onConnectStartHost = { [weak self] id in
+            guard let self, let host = self.hostStore.host(id: id) else { return }
+            self.hostsPanel.connect(host)
+        }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh
@@ -1013,6 +1028,7 @@ final class Workspace {
         // so the hub adds no behaviour of its own, only a faster way to reach
         // it.
         homeCanvas.onOpenDestination = { [weak self] dest in self?.navigator.show(dest) }
+        homeCanvas.healthRetryActions = Self.healthRetryActions
         homeCanvas.onOpenCrewDecisions = { [weak self] in
             self?.navigator.show(.overview)
             self?.overview.revealNeedsYou()

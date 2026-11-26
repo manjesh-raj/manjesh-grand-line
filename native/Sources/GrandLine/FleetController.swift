@@ -219,6 +219,18 @@ final class FleetController: NSViewController {
 
     /// The band every tab this page draws opens on.
     private lazy var crewBand = HelmHeroColumn()
+    /// UX-06: In flight's one action while its headline is about a decision,
+    /// the solid pill on the band (`HelmButton.heroProminent`).
+    private lazy var openNeedsYouButton: HelmButton = {
+        let button = HelmButton(title: CrewHeroWords.openNeedsYouTitle, variant: .secondary, size: .small,
+                                symbol: "arrow.right", target: self, action: #selector(openNeedsYouTapped))
+        button.symbolTrailing = true
+        button.heroProminent = true
+        return button
+    }()
+    /// UX-06: the Needs you count the toolbar's tab last drew, so a read that
+    /// changes it asks the shell to redraw the tabs.
+    private var reportedNeedsYouCount: Int?
     /// The band's strip: In flight's six figures, or Needs you's three.
     /// Ready to merge is its one button, into Review.
     private lazy var bandFigures: HelmKPIStrip = {
@@ -287,6 +299,8 @@ final class FleetController: NSViewController {
                                                size: .compact)
     private let logList = FleetLogListView()
     private var logFilterKind: FleetLogEventKind?
+    /// UX-07: the Today scope, today's events of every kind.
+    private var logTodayOnly = false
     private var logStore: FleetLogStore
     /// CR-1: what the Log tab last read, counted for its band. Read with the
     /// list, so the band counts exactly what the list shows.
@@ -500,6 +514,7 @@ final class FleetController: NSViewController {
         logFilters.onSelect = { [weak self] id in
             guard let self else { return }
             self.logFilterKind = FleetLogListView.kind(forFilterID: id)
+            self.logTodayOnly = id == FleetLogListView.todayFilterID
             self.renderLog()
         }
 
@@ -824,7 +839,9 @@ final class FleetController: NSViewController {
     private func renderLog() {
         let read = FleetLogFeed.read(store: logStore, shift: shiftStore)
         let all = read.events
-        let shown = FleetLogFeed.filtered(all, kind: logFilterKind)
+        var shown = FleetLogFeed.filtered(all, kind: logFilterKind)
+        // UX-07: Today is a scope of its own, every kind on today's date.
+        if logTodayOnly { shown = shown.filter { FleetLogFeed.isToday($0, reference: read.readAt) } }
         var emptyTitle: String
         var emptyBody: String
         if all.isEmpty {
@@ -832,7 +849,8 @@ final class FleetController: NSViewController {
             emptyBody = CrewHeroWords.emptyLogBody
         } else {
             emptyTitle = "Nothing here"
-            emptyBody = "No \(logFilterKind?.pluralTitle.lowercased() ?? "events") in the recent history."
+            emptyBody = logTodayOnly ? "Nothing has been logged today."
+                : "No \(logFilterKind?.pluralTitle.lowercased() ?? "events") in the recent history."
         }
         logReading = CrewHeroWords.LogReading(read)
         // CR-1, the band: an empty list under a kind that could not be read
@@ -841,8 +859,7 @@ final class FleetController: NSViewController {
             emptyTitle = unknown.title
             emptyBody = unknown.body
         }
-        logList.setRows(FleetLogFeed.rows(for: shown), theme: theme,
-                        emptyTitle: emptyTitle, emptyBody: emptyBody)
+        logList.setEvents(shown, theme: theme, emptyTitle: emptyTitle, emptyBody: emptyBody)
         // The band is the empty state of a log with nothing in it, and of
         // one that could not be read at all, so the list goes as the board
         // draws it rather than saying the same thing again under it.
@@ -1600,6 +1617,9 @@ extension FleetController: ModuleTabHosting {
     }
 
     func setModuleTabControlHidden(_ hidden: Bool) { tabs.isHidden = hidden }
+
+    /// UX-06: "Needs you 1", as Connections' "Hosts 7".
+    var moduleTabCounts: [String: Int] { needsYouTabCount.map { ["Needs you": $0] } ?? [:] }
 }
 
 // MARK: - Crew › Needs you
@@ -1813,7 +1833,8 @@ extension FleetController {
             hasRead: true, homeOk: snapshot.homeOk, verdictHeadline: answer.title, verdictBody: answer.meta,
             working: working.count, queued: snapshot.queuedCount, doneToday: snapshot.doneCount,
             projects: snapshot.projectsCount, ready: readyWords, watcher: snapshot.watcher.status,
-            tasksRead: snapshot.tasksRead, checkedAt: Date())
+            tasksRead: snapshot.tasksRead, checkedAt: Date(),
+            needingCaptain: FleetGreeting.needingCaptain(needs + working).count)
     }
 
     /// Draw the band for the tab that is showing. Cheap when nothing changed:
@@ -1828,11 +1849,9 @@ extension FleetController {
     func renderCrewBand() {
         crewBand.isHidden = !crewBandShows
         guard crewBandShows else { return }
-        // Log's feed opens on its first day header, whose row already holds
-        // its own space above the day's name, so it sits closer under the
-        // band than the other tabs' rows do, as the board draws it.
-        contentStack.setCustomSpacing(activeTab == .log && !needsYouShowing ? 0 : NSStackView.useDefaultSpacing,
-                                      after: crewBand)
+        // UX-07: the log is one card now, so it keeps the same gap as the
+        // other tabs' content.
+        contentStack.setCustomSpacing(NSStackView.useDefaultSpacing, after: crewBand)
         let words: CrewHeroWords.Band
         var bandViews: [NSView] = []
         var briefingKey = ""
@@ -1854,6 +1873,9 @@ extension FleetController {
                 briefingKey = "\(bandBriefingBusy)|\(bandBriefing?.generatedAt.timeIntervalSince1970 ?? 0)|\(bandTileClauses.count)"
             }
         }
+        // UX-06: the headline's door leads the band's views.
+        if words.opensNeedsYou { bandViews.insert(openNeedsYouButton, at: 0) }
+        reportNeedsYouCountIfChanged()
         let signature = "\(words)|\(bandViews.count)|\(briefingKey)"
         guard signature != bandSignature else { return }
         bandSignature = signature
@@ -1866,7 +1888,8 @@ extension FleetController {
             // 1.6.0). Its radio roles, ← → and what it filters are the
             // strip's own and unchanged.
             for segment in words.filter {
-                logFilters.setTitle(segment.label, forID: segment.kind?.rawValue ?? FleetLogListView.allFilterID)
+                logFilters.setTitle(segment.label, forID: segment.isToday ? FleetLogListView.todayFilterID
+                                        : segment.kind?.rawValue ?? FleetLogListView.allFilterID)
             }
             foot = [logFilters]
         } else if !words.figures.isEmpty {
@@ -1919,11 +1942,35 @@ extension FleetController {
     }
 
     @objc fileprivate func bandRegenerateTapped() { refresh(forceBriefing: true) }
+
+    /// UX-06: In flight's "Open Needs you", through the same path the
+    /// toolbar's tab takes.
+    @objc fileprivate func openNeedsYouTapped() { showNeedsYou() }
+
+    /// UX-06: the toolbar's Needs you tab carries its count, as Connections'
+    /// tabs do. Only a count that is known is drawn (GL-14), and only one
+    /// that is not zero: an empty Needs you says so on its own band.
+    var needsYouTabCount: Int? {
+        let reading = needsYouWordsReading()
+        guard reading.hasRead, reading.homeOk, !reading.readFailed, reading.waiting > 0 else { return nil }
+        return reading.waiting
+    }
+
+    private func reportNeedsYouCountIfChanged() {
+        let count = needsYouTabCount
+        guard count != reportedNeedsYouCount else { return }
+        reportedNeedsYouCount = count
+        onModuleTabChanged?()
+    }
     @objc fileprivate func bandDismissTapped() { dismissBriefing() }
 
     #if FM_SELFTESTS
     /// The band as drawn, or `nil` with none showing (the floating bar).
     var debugCrewBand: HelmHeroColumn? { crewBandShows && !crewBand.isHidden ? crewBand : nil }
+    /// UX-06: the band's "Open Needs you", or `nil` when the band offers none.
+    var debugOpenNeedsYouButton: HelmButton? {
+        openNeedsYouButton.superview == nil || openNeedsYouButton.isHidden ? nil : openNeedsYouButton
+    }
     /// CR-1 on Log: the filter (on the band's foot in the sidebar layout, in
     /// the list's column in the floating bar), the list, and what was read.
     var debugLogFilters: HelmSegmentedTabs { logFilters }

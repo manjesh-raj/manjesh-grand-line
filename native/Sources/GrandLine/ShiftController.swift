@@ -118,6 +118,22 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private static let reviewViewID = "review"
     var onModuleTabChanged: (() -> Void)?
 
+    // MARK: UX-04 - the task in the inspector
+
+    /// The task whose details fill the inspector, or `nil`. Set by a click
+    /// on a card or a List row; cleared when the inspector closes or the
+    /// task leaves the active list.
+    var inspectedTaskID: String?
+    /// The selected task's view, built once and refilled.
+    lazy var taskInspector: ShiftTaskInspectorView = makeTaskInspector()
+    /// The activity lines for the task they were read for. Read from disk on
+    /// a new selection only (GL-35), not on every save.
+    var inspectedActivity: (id: String, lines: [String])?
+    var onInspectorContentChanged: (() -> Void)?
+    var onShowInspector: (() -> Void)?
+    /// The When panel opened from the inspector's date chip.
+    var inspectorSchedulePopover: ShiftSchedulePopover?
+
     // MARK: The Calendar view (tasks-calendar plan PR 4)
 
     /// Tasks' Calendar view, built the first time it shows
@@ -227,7 +243,12 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// (S09): "last 7 days".
     static var doneWindowCaption: String { "last \(doneColumnLookbackDays) days" }
 
-    private let reviewGreeting = NSTextField(labelWithString: "")
+    /// UX-05: the review's hero and the walk under it.
+    let reviewBand = ShiftReviewHeroBand()
+    let reviewWalkCard = ShiftReviewWalkCard()
+    /// The review in progress: the queue it started with, where it is, and
+    /// what was decided. `nil` before Start review and after Close.
+    var reviewWalk: ReviewWalk?
     /// The pushed-back list, as flat rows inside its card (Rule 1).
     private let reviewPushedBackList = HelmFlatList()
     private var reviewPushedBackListWidth: NSLayoutConstraint?
@@ -328,9 +349,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         table.accessibilityName = "Follow-ups"
         return table
     }()
-    /// Weekly review's five figures: a `.boxed` `HelmKPIStrip` (S14), each
-    /// with its detail line.
-    private lazy var reviewCardsRow = HelmKPIStrip(density: .boxed)
     /// Time on tasks beside Pushed back repeatedly.
     private let reviewLowerRow = NSStackView()
     /// The strip's "pushed back 2+ times" figure, which the five cards do not
@@ -830,6 +848,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             guard let self, let task = self.store.activeTasks.first(where: { $0.id == id }) else { return }
             self.startFocus(on: task, minutes: minutes)
         }
+        boardView.onCompleteTask = { [weak self] id in self?.completeTaskWithUndo(id: id) }
         boardView.onDeleteTask = { [weak self] id in self?.confirmDeleteTask(id: id) }
         boardView.onAddTask = { [weak self] column in self?.addTask(in: column) }
         boardView.onDropTask = { [weak self] id, column in self?.moveTask(id: id, to: column) ?? false }
@@ -927,6 +946,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         }
         render()
         onModuleTabChanged?()
+        onInspectorContentChanged?()
         if wasCalendar != (view == .calendar) { onDrillActionsChanged?() }
     }
 
@@ -1094,9 +1114,14 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// deliberately only touches `active.yaml`, so editing one from the Done
     /// column would silently save nothing - reopening it is the honest path,
     /// and saying so beats a sheet whose Save does nothing.
+    /// UX-04: the card whose task fills the inspector keeps its selected
+    /// edge while the keyboard is in the inspector.
+    func markInspectedCard(_ id: String?) { boardView.inspectedTaskID = id }
+
     private func openBoardTask(id: String) {
-        if let task = store.activeTasks.first(where: { $0.id == id }) {
-            presentTaskEditor(for: task)
+        // UX-04: a live task opens in the inspector, beside the board.
+        if store.activeTasks.contains(where: { $0.id == id }) {
+            inspectTask(id: id)
             return
         }
         guard let done = store.allCompletedTasks().first(where: { $0.id == id }) else { return }
@@ -1153,6 +1178,23 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             // was up, and an Undo of the *due date* must not revert that.
             current.dueDate = previousDue
             self.store.updateTask(current)
+            self.render()
+        }
+    }
+
+    /// UX-03: a card's Done (its button or Space), with GL-33's real Undo -
+    /// the caller still holds the status it had, so reopening restores it.
+    func completeTaskWithUndo(id: String) {
+        guard let task = store.activeTasks.first(where: { $0.id == id }) else { return }
+        let previousStatus = task.status
+        guard moveTask(id: id, to: .done) else { return }
+        Toast.showUndo(in: view, message: "Done: \(task.title)") { [weak self] in
+            guard let self else { return }
+            self.store.setTaskCompleted(id: id, completed: false)
+            if previousStatus != .todo, var reopened = self.store.activeTasks.first(where: { $0.id == id }) {
+                reopened.status = previousStatus
+                self.store.updateTask(reopened)
+            }
             self.render()
         }
     }
@@ -1248,6 +1290,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         applyCalendarVisibility()
         applyTheme()
         onModuleTabChanged?()
+        onInspectorContentChanged?()
     }
 
     /// The Shift menu / search palette's entry point into Weekly Review -
@@ -1258,11 +1301,11 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// task/follow-up/project found via search or the menu bar popover.
     func showDashboard() { switchTopLevelView(.dashboard) }
 
-    /// Weekly review, top to bottom: the "Week of …" header, the five
-    /// figures, Time on tasks beside Pushed back repeatedly, and next week's
-    /// agenda across the foot.
+    /// Weekly review, top to bottom: the review's hero (UX-05), the review
+    /// itself once it is started, Time on tasks beside Pushed back
+    /// repeatedly, and next week's agenda across the foot.
     private func buildWeeklyReviewSection() -> NSView {
-        reviewGreeting.font = HelmType.sectionTitle()
+        wireReviewWalk()
 
         let headerRow = sectionHeaderRow(iconSymbol: "arrow.uturn.backward", tint: .warn, label: reviewPushedBackHeader)
         reviewPushedBackCount.toolTip = "Tasks pushed back two or more times"
@@ -1303,11 +1346,13 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         weeklyReviewContainer.spacing = HelmMetrics.s4
         weeklyReviewContainer.translatesAutoresizingMaskIntoConstraints = false
         weeklyReviewContainer.isHidden = true
-        for section in [reviewGreeting, reviewCardsRow, reviewLowerRow, reviewAgendaPanel] {
+        reviewWalkCard.isHidden = true
+        for section in [reviewBand, reviewWalkCard, reviewLowerRow, reviewAgendaPanel] as [NSView] {
             weeklyReviewContainer.addArrangedSubview(section)
         }
         NSLayoutConstraint.activate([
-            reviewCardsRow.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor),
+            reviewBand.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor),
+            reviewWalkCard.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor),
             reviewLowerRow.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor),
             reviewPushedBackPanel.widthAnchor.constraint(equalTo: reviewFocusPanel.widthAnchor, multiplier: 0.5),
             reviewAgendaPanel.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor),
@@ -1380,7 +1425,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
     private func renderWeeklyReview() {
         let summary = store.weeklySummary()
-        reviewGreeting.stringValue = summary.weekLabel
 
         renderFocusTile()
 
@@ -1431,7 +1475,13 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     func openTask(id: String) {
         showDashboard()
         guard let task = store.activeTasks.first(where: { $0.id == id }) else { return }
-        presentTaskEditor(for: task)
+        // UX-04: in the inspector beside the board or the list. The
+        // calendar fills the page, so it keeps the sheet.
+        if tasksView == .calendar || isProjectDetailFullPage {
+            presentTaskEditor(for: task)
+        } else {
+            inspectTask(id: id)
+        }
     }
 
     func openFollowUp(id: String) {
@@ -1512,6 +1562,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         renderWorkspaceChrome()
         // The calendar redraws only while it shows; switching to it renders it.
         if isShowingCalendar { calendar.render() }
+        refreshTaskInspector()
 
         applyTheme()
     }
@@ -1526,6 +1577,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private func applyProjectDetailFullPage(_ isDetail: Bool) {
         isProjectDetailFullPage = isDetail
         applyTasksViewVisibility()
+        onInspectorContentChanged?()
     }
 
     /// Whether the project detail currently owns the whole page - the board
@@ -2057,7 +2109,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// prefilled task as `task` would silently make the promotion overwrite a
     /// task that does not exist yet.
     /// The sheet itself is `ShiftRecordSheets`', shared with the Calendar.
-    private func presentTaskEditor(for task: ShiftTask?,
+    func presentTaskEditor(for task: ShiftTask?,
                                    prefill: ShiftTask? = nil,
                                    defaultProjectID: String? = nil,
                                    defaultStatus: ShiftTaskStatus? = nil) {
@@ -2255,7 +2307,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         boardView.applyTheme(theme)
         followUpLane.applyTheme(theme)
 
-        reviewGreeting.textColor = ink
         reviewPushedBackHeader.textColor = ink
         reviewPushedBackList.applyTheme(theme)
         reviewPushedBackPanel.applyTheme(theme)
@@ -2267,7 +2318,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         reviewFocusChart.applyTheme(theme)
         tasksTable.applyTheme(theme)
         followUpsTable.applyTheme(theme)
-        reviewCardsRow.applyTheme(theme)
     }
 }
 
@@ -2902,42 +2952,8 @@ extension ShiftController: WorkspacePrimaryActionProviding {
 
     /// The five figures, each from the store's own records.
     fileprivate func renderWorkspaceReview(_ summary: ShiftWeeklySummary) {
-        let lastWeek = Calendar.current.date(byAdding: .day, value: -7, to: DayRollover.now())
-            .map { store.weeklySummary(reference: $0).completedCount }
-        typealias Item = HelmKPIStrip.Item
-        var completedDetail: Item.Detail?
-        if let lastWeek {
-            let delta = summary.completedCount - lastWeek
-            let text = delta == 0 ? "Same as last week" : "\(delta > 0 ? "+" : "\u{2212}")\(abs(delta)) vs last week"
-            completedDetail = .init(text: text, tint: delta > 0 ? .good : nil)
-        }
-        let focusDays = store.focusSecondsByDay(days: 7)
-        let focusSeconds = focusDays.reduce(0) { $0 + $1.seconds }
-        let focusTasks = store.focusTaskCount(days: 7)
-        let c = counts()
-        let today = Calendar.current.startOfDay(for: DayRollover.now())
-        let overdueTasks = store.activeTasks.filter(matchesProjectFilter).filter { task in
-            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return due < today
-        }.sorted(by: Self.byDueDateThenCreated)
-        let pending = store.followUps.filter { $0.status == .pending }
-        let dueToday = pending.filter { fu in
-            fu.followUpAt.flatMap(ShiftDateFormatting.date(from:)).map { Calendar.current.isDate($0, inSameDayAs: DayRollover.now()) }
-                ?? false
-        }.count
-        reviewCardsRow.configure([
-            .figure("\(summary.completedCount)", caption: "Completed this week", detail: completedDetail),
-            .figure(focusSeconds > 0 ? FocusTimerFormat.total(focusSeconds) : "None yet", caption: "Focus time",
-                    detail: .init(text: focusSeconds > 0
-                        ? "last 7 days \u{00B7} \(focusTasks) task\(focusTasks == 1 ? "" : "s") with a timer"
-                        : "Start a focus session from any task")),
-            .figure("\(c.overdue)", caption: "Overdue", tint: .critical, signals: c.overdue > 0,
-                    detail: .init(text: overdueTasks.first?.title ?? "Nothing late")),
-            .figure("\(pending.count)", caption: "Follow-ups open",
-                    detail: .init(text: dueToday > 0 ? "\(dueToday) due today" : "None due today")),
-            .figure("\(summary.upcomingCount)", caption: "Coming up next week",
-                    detail: .init(text: "tasks and follow-ups due")),
-        ], theme: theme)
+        let focusSeconds = store.focusSecondsByDay(days: 7).reduce(0) { $0 + $1.seconds }
+        renderReviewBand(summary: summary, focusSeconds: focusSeconds)
         reviewPushedBackHeader.stringValue = "Pushed back repeatedly"
         reviewPushedBackCount.text = "\(summary.pushedBack.count)"
         reviewPushedBackCount.applyTheme(theme)
@@ -2949,7 +2965,6 @@ extension ShiftController: WorkspacePrimaryActionProviding {
 extension ShiftController {
     var debugTasksTable: HelmDataTable { tasksTable }
     var debugFollowUpsTable: HelmDataTable { followUpsTable }
-    var debugReviewCards: [HelmKPIStrip.BoxedCell] { reviewCardsRow.debugCells }
     /// The Pushed back panel's count, when it is mounted and showing.
     var debugPushedBackCount: String? {
         reviewPushedBackCount.superview != nil && !reviewPushedBackCount.isHidden ? reviewPushedBackCount.text : nil

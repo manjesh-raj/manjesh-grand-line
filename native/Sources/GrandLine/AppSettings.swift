@@ -70,6 +70,7 @@ final class AppSettings {
         static let knowledgeSplitSettled = "fm.hiddenModules.knowledgeSplit"
         static let devopsHubSettled = "fm.hiddenModules.devopsHub"
         static let homeTipsFirstShown = "fm.homeTips.firstShown"
+        static let toolbarLabelsFirstShown = "fm.workspaceToolbar.labelsFirstShown"
         static let homeTipsDismissed = "fm.homeTips.dismissed"
         static let density = "fm.density"
         static let dictationAccessibilityAsked = "fm.dictation.accessibilityAsked"
@@ -862,6 +863,17 @@ final class AppSettings {
         // has them. A self-test or tour process never runs this, so its
         // Home shows no tip unless a suite starts the week itself.
         if homeTipsFirstShown == nil { homeTipsFirstShown = Date() }
+        // UX-25: the week the toolbar shows its shortcuts' names starts at
+        // the first launch that has them.
+        if toolbarLabelsFirstShown == nil { toolbarLabelsFirstShown = Date() }
+    }
+
+    /// UX-25: the day the toolbar first opened with its shortcuts' names,
+    /// which starts the week they show by default
+    /// (`WorkspaceToolbar.defaultDisplayMode`). `nil` until a launch settles it.
+    var toolbarLabelsFirstShown: Date? {
+        get { defaults.object(forKey: Keys.toolbarLabelsFirstShown) as? Date }
+        set { defaults.set(newValue, forKey: Keys.toolbarLabelsFirstShown) }
     }
 
     /// R5-UX-03: the day Home's "Things you can do" strip first showed, which

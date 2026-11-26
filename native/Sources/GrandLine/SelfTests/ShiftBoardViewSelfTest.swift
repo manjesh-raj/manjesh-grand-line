@@ -454,6 +454,61 @@ enum ShiftBoardViewSelfTest {
                 check((c.debugLiftedSnapshotSize()?.width ?? 0) > c.bounds.width,
                       "UI-27: the drag image is padded for its lifted shadow")
             }
+
+            // UX-03: a card to do shows Done, Tomorrow and Focus while it has
+            // the keyboard, Space, T and F do them, and J and K move on.
+            if let c = card(normal.id), let next = card(high.id) ?? card(low.id), let workspace = c.debugWorkspaceCard {
+                check(!workspace.showsQuickActions, "UX-03: a card at rest shows its quick actions")
+                window.makeFirstResponder(c)
+                window.contentView?.layoutSubtreeIfNeeded()
+                check(workspace.showsQuickActions && workspace.actionButtons.map(\.title) == ["Done", "Tomorrow", "Focus"]
+                        && workspace.actionButtons.allSatisfy { $0.window != nil && !$0.isHiddenOrHasHiddenAncestor },
+                      "UX-03: a focused card does not show Done, Tomorrow and Focus")
+                // A click on a showing action reaches the button, not the card.
+                let done = workspace.actionButtons[0]
+                let point = c.superview?.convert(NSPoint(x: done.bounds.midX, y: done.bounds.midY), from: done) ?? .zero
+                check(c.hitTest(point) === done, "UX-03: a click on Done is taken by the card")
+                var actions: [String] = []
+                c.onComplete = { actions.append("done") }
+                let savedPush = c.onPushDue, savedFocus = c.onStartFocus
+                c.onPushDue = { actions.append("push \($0.rawValue)") }
+                c.onStartFocus = { actions.append("focus \($0)") }
+                func key(_ characters: String, _ code: UInt16) {
+                    guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                       windowNumber: window.windowNumber, context: nil,
+                                                       characters: characters, charactersIgnoringModifiers: characters,
+                                                       isARepeat: false, keyCode: code) else { return }
+                    c.keyDown(with: event)
+                }
+                key(" ", 49)
+                key("t", 17)
+                key("f", 3)
+                check(actions == ["done", "push tomorrow", "focus \(FocusTimerEngine.defaultMinutes)"],
+                      "UX-03: Space, T and F did \(actions)")
+                done.performClick(nil)
+                check(actions.last == "done" && actions.count == 4, "UX-03: the Done button did \(actions)")
+                c.onPushDue = savedPush
+                c.onStartFocus = savedFocus
+                c.onComplete = nil
+                _ = next
+                key("j", 38)
+                let moved = window.firstResponder as? ShiftBoardCardView
+                check(moved != nil && moved !== c, "UX-03: J did not move to another card")
+                if let moved {
+                    let up = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                              windowNumber: window.windowNumber, context: nil, characters: "k",
+                                              charactersIgnoringModifiers: "k", isARepeat: false, keyCode: 40)
+                    if let up { moved.keyDown(with: up) }
+                    check(window.firstResponder === c, "UX-03: K did not come back to the card")
+                }
+                window.makeFirstResponder(nil)
+                check(!workspace.showsQuickActions, "UX-03: the quick actions stay after focus moves on")
+            } else {
+                check(false, "UX-03: the fixture has no second card to move to")
+            }
+            if let c = card(finished.id) {
+                check(c.debugWorkspaceCard?.offersQuickActions == false, "UX-03: a Done card offers the quick actions")
+            }
         }
     }
 

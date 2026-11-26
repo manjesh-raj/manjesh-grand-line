@@ -268,9 +268,11 @@ enum ConnectionsCardsSelfTest {
         check(connects == [bastion.id], "H5: the bolt connected \(connects)", &ok)
         realClick(at: centre(of: buttons[1]), in: window)
         settle(shell)
-        // H6: the pencil edits in the side panel, never a window.
-        check(edits.isEmpty && hosts.hostPanelKey == bastion.id.uuidString && shell.inspector.debugTitle == "bastion-stg",
-              "H5: the pencil did not open bastion-stg's form in the panel", &ok)
+        // UX-26: the pencil edits in the sheet over the page, never a window.
+        check(edits.isEmpty && hosts.hostSheet?.currentRecord?.id == bastion.id && hosts.hostSheet?.presentation == .sheet,
+              "H5: the pencil did not open bastion-stg's sheet", &ok)
+        if let sheet = hosts.hostSheet, sheet.presentingViewController != nil { hosts.dismiss(sheet) }
+        settle(shell)
 
         grid.select(key: edge.id.uuidString)
         settle(shell)
@@ -710,10 +712,12 @@ enum ConnectionsCardsSelfTest {
         hosts.onAddOrEdit = { _ in windowsOpened += 1 }
         defer { hosts.onAddOrEdit = savedEdit }
         let before = store.hosts.count
-        hosts.debugAddHostSplit.mainButton.performClick(nil)
+        // UX-26: Add Host opens the sheet (`ConnectionFormsWindowChecks`);
+        // the inspector's new-host form is opened directly here.
+        hosts.openNewHostPanel()
         settle(shell)
         guard let panel = hosts.hostPanel, hosts.hostPanelKey == HostsController.newHostPanelKey else {
-            fail("H10: Add Host did not open a new host's form in the panel", &ok)
+            fail("H10: the new host's form did not open in the panel", &ok)
             return
         }
         check(windowsOpened == 0, "H10: Add Host opened a window", &ok)
@@ -736,7 +740,7 @@ enum ConnectionsCardsSelfTest {
                 && hosts.hostPanel?.debugFooterTitles == ["Connect", "Test", "More actions"],
               "H10: after Create the panel shows \(shell.inspector.debugTitle)", &ok)
         // A new host's Cancel closes its form, and saves nothing.
-        hosts.newHost()
+        hosts.openNewHostPanel()
         settle(shell)
         hosts.hostPanel?.debugType("never-saved", into: hosts.hostPanel!.debugLabelField)
         hosts.hostPanel?.debugFooterButtons.first?.performClick(nil)
@@ -898,17 +902,19 @@ enum ConnectionsCardsSelfTest {
         HostsController.newKeyWriterForTests = { key, _, _ in written.append(key.label) }
         defer { HostsController.newKeyWriterForTests = nil; hosts.selectModuleTab(named: "Hosts"); settle(shell) }
         let before = keyStore.keys.count
-        hosts.debugAddKeySplit.mainButton.performClick(nil)
+        // UX-26: New Key opens a sheet (`ConnectionFormsWindowChecks`); the
+        // inspector's new-key form is opened directly here.
+        hosts.openNewKeyPanel(preset: nil)
         settle(shell)
         guard let panel = hosts.keyPanel, hosts.keyPanelKey == HostsController.newKeyPanelKey else {
-            return fail("K8: New Key did not open a new key's form in the panel", &ok)
+            return fail("K8: the new key's form did not open in the panel", &ok)
         }
         check(shell.inspector.debugTitle == "New Key" && shell.inspector.hostedContentView === panel.view && panel.view.window != nil,
               "K8: the panel shows \(shell.inspector.debugTitle)", &ok)
         check(panel.debugFooterTitles == ["Cancel", "Save Key"], "K8: a new key's footer is \(panel.debugFooterTitles)", &ok)
         check(panel.debugMode == "generate", "K8: a new key's form opens in \(panel.debugMode)", &ok)
         // Paste a Key opens the same form on Import.
-        hosts.debugAddKeySplit.debugPick("Paste a Key\u{2026}")
+        hosts.openNewKeyPanel(preset: .paste)
         settle(shell)
         check(hosts.keyPanel?.debugMode == "import", "K8: Paste a Key opened \(hosts.keyPanel?.debugMode ?? "-")", &ok)
         guard let form = hosts.keyPanel else { return }
@@ -968,8 +974,8 @@ enum ConnectionsCardsSelfTest {
             }
         }
 
-        // Add Host, then away by the sidebar to Console and Home.
-        hosts.debugAddHostSplit.mainButton.performClick(nil)
+        // The new host's form, then away by the sidebar to Console and Home.
+        hosts.openNewHostPanel()
         settle(shell)
         guard let draft = hosts.hostPanel, hosts.hostPanelKey == HostsController.newHostPanelKey,
               !shell.debugInspectorIsCollapsed else {
@@ -1014,7 +1020,7 @@ enum ConnectionsCardsSelfTest {
         // New Key.
         hosts.selectModuleTab(named: "Keys")
         settle(shell)
-        hosts.debugAddKeySplit.mainButton.performClick(nil)
+        hosts.openNewKeyPanel(preset: nil)
         settle(shell)
         check(hosts.keyPanel != nil && !shell.debugInspectorIsCollapsed, "New Key did not open its form in the inspector", &ok)
         leaves("New Key", to: [.homeCanvas])
@@ -1037,7 +1043,7 @@ enum ConnectionsCardsSelfTest {
         check(!shell.debugInspectorIsCollapsed && shell.inspector.hostedContentView === shell.crewPanel.view,
               "the inspector button did not open the crew panel on Home", &ok)
         showHosts(shell)
-        hosts.debugAddHostSplit.mainButton.performClick(nil)
+        hosts.openNewHostPanel()
         settle(shell)
         check(shell.inspector.debugTitle == "New Host", "Add Host over an open inspector shows \(shell.inspector.debugTitle)", &ok)
         hosts.hostPanel?.debugFooterButtons.first?.performClick(nil)
@@ -1099,7 +1105,7 @@ enum ConnectionsCardsSelfTest {
         // The fixture's discriminating power: the close really is eased, so
         // the request below lands while it runs.
         check(WorkspaceMotion.debugPaneMotionsInFlight > 0, "B-02 fixture: the inspector's close did not ease", &ok)
-        hosts.newHost()
+        hosts.openNewHostPanel()
         HelmMotion.reducedOverrideForTests = true
         // Waits on the state itself, never on a fixed pump: the completion
         // that applies the held request runs when the close's animation ends,
@@ -1422,14 +1428,18 @@ enum ConnectionsCardsSelfTest {
         let savedOpen = hosts.onAddOrEdit
         hosts.onAddOrEdit = { opened.append($0) }
         defer { hosts.onAddOrEdit = savedOpen }
-        // H10: both open a new host's form in the panel.
+        // UX-26: both open a new host's sheet over the page.
+        func closeSheet() {
+            if let sheet = hosts.hostSheet, sheet.presentingViewController != nil { hosts.dismiss(sheet) }
+        }
         main.performClick(nil)
-        check(opened.isEmpty && hosts.hostPanelKey == HostsController.newHostPanelKey,
+        check(opened.isEmpty && hosts.hostSheet?.currentRecord == nil && hosts.hostSheet?.presentation == .sheet,
               "H8: Add Host's main half did not open a new host", &ok)
-        hosts.hostPanel?.cancelPanel()
+        closeSheet()
         hostSplit.debugPick("New Host\u{2026}")
-        check(opened.isEmpty && hosts.hostPanelKey == HostsController.newHostPanelKey,
+        check(opened.isEmpty && hosts.hostSheet?.currentRecord == nil && hosts.hostSheet?.presentation == .sheet,
               "H8: New Host from the menu did not open a new host", &ok)
+        closeSheet()
         hosts.hostPanel?.cancelPanel()
         hostSplit.debugPick("Quick Connect")
         settle(shell)

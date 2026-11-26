@@ -69,12 +69,18 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         super.init(nibName: nil, bundle: nil)
     }
 
-    /// Add Project: an empty sheet that suggests `port`.
-    static func adding(port: UInt16, takenPorts: Set<UInt16>) -> DevOpsHubSettingsSheet {
+    /// Add Project: an empty sheet that suggests `port`, or, for a folder
+    /// dropped on the page (UX-15), one filled in from that folder.
+    static func adding(port: UInt16, takenPorts: Set<UInt16>, folder: URL? = nil) -> DevOpsHubSettingsSheet {
         let draft = LocalProject(id: "", name: "", kind: .staticSite, folderOverride: nil, port: port,
                                  opensWhenReady: true, startsAtLaunch: false, lastRun: nil)
-        return DevOpsHubSettingsSheet(draft: draft, takenPorts: takenPorts)
+        let sheet = DevOpsHubSettingsSheet(draft: draft, takenPorts: takenPorts)
+        sheet.droppedFolder = folder
+        return sheet
     }
+
+    /// UX-15: a folder dropped on DevOps Hub, filled in once the sheet loads.
+    private var droppedFolder: URL?
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
@@ -142,6 +148,15 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
     }
 
     // MARK: Actions
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        // UX-15: the dropped folder, as Choose would have filled it.
+        guard mode == .add, let folder = droppedFolder else { return }
+        folderField.stringValue = LocalProject.abbreviate(folder.path)
+        nameField.stringValue = Self.suggestedName(for: folder)
+        checkFolder()
+    }
 
     @objc private func chooseFolder() {
         let panel = NSOpenPanel()

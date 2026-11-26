@@ -126,6 +126,13 @@ final class CommandLibraryPageView: NSObject {
     private let detailExplainButton = HelmButton(title: "AI", variant: .quiet, symbol: "sparkles", target: nil, action: nil)
     private let detailFavoriteButton = HelmButton(title: "Favorite", variant: .quiet, symbol: "star", target: nil, action: nil)
     private let detailContentContainer = NSView()
+    /// UX-10: the kicker over the filled preview.
+    private let whatWillRunLabel = NSTextField(labelWithString: "")
+    /// UX-10: where and when the command was last sent, in a card of its own
+    /// under the detail.
+    private let lastSentCard = NSView()
+    private let lastSentKicker = NSTextField(labelWithString: "")
+    private let lastSentLabel = NSTextField(wrappingLabelWithString: "")
 
     /// Every live parameter input control, keyed by parameter name, for the
     /// currently-rendered command - read from on every keystroke/selection to
@@ -172,7 +179,22 @@ final class CommandLibraryPageView: NSObject {
         buildLeftPanel()
         buildDetailPanel()
 
-        let columns = NSStackView(views: [leftPanel, detailPanel])
+        buildLastSentCard()
+        let rightColumn = NSStackView(views: [detailPanel, lastSentCard])
+        rightColumn.orientation = .vertical
+        rightColumn.alignment = .leading
+        rightColumn.spacing = HelmMetrics.s3
+        rightColumn.translatesAutoresizingMaskIntoConstraints = false
+        rightColumn.setHuggingPriority(.defaultLow, for: .horizontal)
+        rightColumn.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        // Gotcha (12): the stack's own priority. Without it the column took
+        // the command list's height and the Last sent card stretched to fill it.
+        rightColumn.setHuggingPriority(.required, for: .vertical)
+        NSLayoutConstraint.activate([
+            detailPanel.widthAnchor.constraint(equalTo: rightColumn.widthAnchor),
+            lastSentCard.widthAnchor.constraint(equalTo: rightColumn.widthAnchor),
+        ])
+        let columns = NSStackView(views: [leftPanel, rightColumn])
         columns.orientation = .horizontal
         columns.alignment = .top
         // S04: the column sits in the page's band (`HelmPageSidebar.Band`,
@@ -246,6 +268,26 @@ final class CommandLibraryPageView: NSObject {
             leftPanelStack.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: HelmMetrics.s3),
             leftPanelStack.bottomAnchor.constraint(equalTo: leftPanel.bottomAnchor, constant: -HelmMetrics.s3),
         ])
+    }
+
+    private func buildLastSentCard() {
+        lastSentCard.wantsLayer = true
+        lastSentCard.translatesAutoresizingMaskIntoConstraints = false
+        lastSentLabel.font = HelmType.caption()
+        let stack = NSStackView(views: [lastSentKicker, lastSentLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s1
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setHuggingPriority(.required, for: .vertical)
+        lastSentCard.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: lastSentCard.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: lastSentCard.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: lastSentCard.topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: lastSentCard.bottomAnchor, constant: -14),
+        ])
+        lastSentCard.isHidden = true
     }
 
     private func buildDetailPanel() {
@@ -407,7 +449,11 @@ final class CommandLibraryPageView: NSObject {
         buttonsRow.translatesAutoresizingMaskIntoConstraints = false
 
         detailContentContainer.translatesAutoresizingMaskIntoConstraints = false
-        let stack = NSStackView(views: [titleRow, detailMetaLabel, detailCommandBox, detailParamsStack, buttonsRow])
+        // UX-10: the parameters, then what will run with them filled in,
+        // then the actions - the order the captain works in.
+        let stack = NSStackView(views: [titleRow, detailMetaLabel, detailParamsStack, whatWillRunLabel,
+                                        detailCommandBox, buttonsRow])
+        stack.setCustomSpacing(HelmMetrics.s1 + 2, after: whatWillRunLabel)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -490,9 +536,14 @@ final class CommandLibraryPageView: NSObject {
         emptyDetailState.applyTheme(theme)
         detailNameLabel.textColor = ink
         detailMetaLabel.textColor = muted
-        detailCommandBox.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        // UX-10: the preview is code about to run, so it sits on the
+        // terminal's own card.
+        detailCommandBox.layer?.backgroundColor = Self.codeCardFill(theme).cgColor
         detailCommandBox.layer?.borderWidth = 1
         detailCommandBox.layer?.borderColor = line.withAlphaComponent(0.6).cgColor
+        HelmCard.applyCardSurface(to: lastSentCard, theme: theme)
+        whatWillRunLabel.attributedStringValue = detailKicker("WHAT WILL RUN")
+        searchField.placeholderText = CommandLibraryWords.searchPlaceholder(count: store.commands.count)
         // Both the "Copy is emphasised" and "Favorite reads as gold" hand-rolls
         // that used to live here are gone: emphasis is `HelmButton`'s variant
         // (the audit's own prototype makes "Send to Terminal" the pane's
@@ -536,8 +587,10 @@ final class CommandLibraryPageView: NSObject {
             return recent.id
         }
         let listed = leftPanelEntries().compactMap { entry -> String? in
-            if case .commandRow(_, let id, _, _) = entry { return id }
-            return nil
+            switch entry {
+            case .commandRow(_, let id, _, _), .leadRow(let id, _, _): return id
+            default: return nil
+            }
         }
         return listed.first { store.command(id: $0)?.risk == .readOnly }
             ?? listed.first ?? store.commands.first?.id
@@ -579,6 +632,9 @@ final class CommandLibraryPageView: NSObject {
         var categoryIDs: [String] = []
         for row in leftPanelStack.arrangedSubviews {
             if let id = rowCategoryIDs[ObjectIdentifier(row)] { categoryIDs.append(id) }
+            if let chips = row as? CommandLibraryCategoryChips {
+                categoryIDs += chips.chipIDs.filter { $0 != CommandLibraryWords.moreChipID }
+            }
             var fields: [NSTextField] = []
             var queue: [NSView] = [row]
             while let next = queue.popLast() {
@@ -604,6 +660,21 @@ final class CommandLibraryPageView: NSObject {
     func debugRender() { render() }
     /// Selects a command the way a row click does.
     func debugSelectCommand(id: String) { selectCommand(id: id) }
+    /// UX-10: type into a parameter field, as the field's own action sends
+    /// it on each change.
+    func debugSetParameter(_ name: String, to value: String) {
+        guard let field = paramControls[name] as? NSTextField else { return }
+        field.stringValue = value
+        paramValueChanged(field)
+    }
+    var debugPreview: String { detailCommandLabel.stringValue }
+    var debugRiskWords: String { detailRiskPill.label.stringValue }
+    var debugLastSent: String { lastSentLabel.stringValue }
+    var debugLastSentShowing: Bool { !lastSentCard.isHidden }
+    var debugChips: CommandLibraryCategoryChips? {
+        leftPanelStack.arrangedSubviews.compactMap { $0 as? CommandLibraryCategoryChips }.first
+    }
+    var debugSearchPlaceholder: String { searchField.placeholderText }
     #endif
 
     // A section break reads as cramped at the rail's uniform 4pt row
@@ -623,6 +694,11 @@ final class CommandLibraryPageView: NSObject {
 
     /// Indented to the rows' own text inset, so a header and the labels
     /// under it start on one line.
+    /// A kicker inside the detail cards, flush with their text.
+    private func detailKicker(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme)))
+    }
+
     private func mutedHeaderString(_ text: String) -> NSAttributedString {
         let header = NSMutableAttributedString(attributedString: HelmPageSidebar.headerString(text, theme: theme))
         let paragraph = NSMutableParagraphStyle()
@@ -713,7 +789,11 @@ final class CommandLibraryPageView: NSObject {
         case header(String)
         case symbolHeader(String, symbol: String)
         case commandRow(section: String, id: String, name: String, action: Selector)
+        /// UX-10: a favourite or recent command, with when it was sent.
+        case leadRow(id: String, name: String, subtitle: String?)
         case categoryRow(id: String, name: String, count: Int)
+        /// UX-10: the categories as chips above the list.
+        case categoryChips
         case emptyResults
         case workflows
 
@@ -724,6 +804,8 @@ final class CommandLibraryPageView: NSObject {
             case .header(let text): return "header:\(text)"
             case .symbolHeader(let text, _): return "symbol-header:\(text)"
             case .commandRow(let section, let id, _, _): return "command:\(section):\(id)"
+            case .leadRow(let id, _, _): return "command:lead:\(id)"
+            case .categoryChips: return "category-chips"
             case .categoryRow(let id, _, _): return "category:\(id)"
             case .emptyResults: return "empty-results"
             case .workflows: return "workflows"
@@ -760,7 +842,8 @@ final class CommandLibraryPageView: NSObject {
         for entry in entries {
             guard let view = leftPanelRows.rowsByKey[entry.key] else { continue }
             switch entry {
-            case .commandRow(_, let id, _, _): rowCommandIDs[ObjectIdentifier(view)] = id
+            case .commandRow(_, let id, _, _), .leadRow(let id, _, _): rowCommandIDs[ObjectIdentifier(view)] = id
+            case .categoryChips: leftPanelStack.setCustomSpacing(HelmMetrics.s4, after: view)
             case .categoryRow(let id, _, _): rowCategoryIDs[ObjectIdentifier(view)] = id
             case .divider:
                 if let index = arranged.firstIndex(where: { $0 === view }) {
@@ -809,43 +892,38 @@ final class CommandLibraryPageView: NSObject {
     /// highlighted; nothing is ever hidden, and the back row is gone because
     /// there is no longer anywhere to go back from.
     private func browseEntries(into entries: inout [LeftPanelEntry]) {
-        let favorites = store.favoriteCommands()
-        if !favorites.isEmpty {
-            entries.append(.symbolHeader("FAVORITES", symbol: "star.fill"))
-            for command in favorites {
-                entries.append(.commandRow(section: "favorites", id: command.id, name: command.name,
-                                           action: #selector(favoriteRowClicked(_:))))
-            }
-            entries.append(.divider("favorites"))
-        }
-
-        let recent = store.recentlyUsedCommands(limit: 5)
-        if !recent.isEmpty {
-            entries.append(.symbolHeader("RECENTLY USED", symbol: "clock"))
-            for command in recent {
-                entries.append(.commandRow(section: "recent", id: command.id, name: command.name,
-                                           action: #selector(recentRowClicked(_:))))
-            }
-            entries.append(.divider("recent"))
-        }
-
+        // UX-10: the categories are chips above the list, and the commands
+        // the captain reaches for - favourites, then the recently used -
+        // lead it, inside the chosen category when one is chosen.
         var selectedCategoryID: String?
         if case .category(let id) = leftPanelState { selectedCategoryID = id }
+        entries.append(.categoryChips)
 
-        entries.append(.header("CATEGORIES"))
-        // U6: "All" is a category row like any other, sitting above the real
-        // ones and reusing the same click handler through `allCategoryID` -
-        // so the selection highlight, the count column and the
-        // click-again-to-close behaviour are the ones this column already
-        // has, rather than a second row shape that has to be kept in step.
         let byCategory = store.commandsByCategory()
-        entries.append(.categoryRow(id: Self.allCategoryID, name: "All", count: store.commands.count))
-        for (info, commands) in byCategory where !commands.isEmpty {
-            entries.append(.categoryRow(id: info.id, name: info.displayName, count: commands.count))
+        var lead: [DevOpsCommand] = []
+        for command in store.favoriteCommands() + store.recentlyUsedCommands(limit: 5)
+        where !lead.contains(where: { $0.id == command.id })
+            && (selectedCategoryID == nil || command.category == selectedCategoryID) {
+            lead.append(command)
+        }
+        if !lead.isEmpty {
+            entries.append(.symbolHeader("FAVOURITES AND RECENT", symbol: "star.fill"))
+            let now = Date()
+            for command in lead {
+                let subtitle = store.lastUsage(of: command.id).map { CommandLibraryWords.sentAgo($0.usedAt, now: now) }
+                    ?? (store.isFavorite(command.id) ? "favourite" : nil)
+                entries.append(.leadRow(id: command.id, name: command.name, subtitle: subtitle))
+            }
         }
 
-        if leftPanelState == .all {
-            entries.append(.divider("list"))
+        if let selectedCategoryID {
+            entries.append(.header(CommandLibraryCategory.info(for: selectedCategoryID).displayName.uppercased()))
+            let inCategory = byCategory.first { $0.info.id == selectedCategoryID }?.commands ?? []
+            for command in inCategory {
+                entries.append(.commandRow(section: "category", id: command.id, name: command.name,
+                                           action: #selector(categoryCommandRowClicked(_:))))
+            }
+        } else {
             entries.append(.header("ALL COMMANDS"))
             for (_, commands) in byCategory {
                 for command in commands {
@@ -853,18 +931,37 @@ final class CommandLibraryPageView: NSObject {
                                                action: #selector(categoryCommandRowClicked(_:))))
                 }
             }
-        } else if let selectedCategoryID {
-            entries.append(.divider("list"))
-            entries.append(.header(CommandLibraryCategory.info(for: selectedCategoryID).displayName.uppercased()))
-            let inCategory = byCategory.first { $0.info.id == selectedCategoryID }?.commands ?? []
-            for command in inCategory {
-                entries.append(.commandRow(section: "category", id: command.id, name: command.name,
-                                           action: #selector(categoryCommandRowClicked(_:))))
-            }
         }
 
         entries.append(.divider("workflows"))
         entries.append(.workflows)
+    }
+
+    /// Whether the chips show every category, after "+N".
+    private var chipsExpanded = false
+
+    /// The chips' words, for the library as it is now.
+    private func categoryChipWords() -> [CommandLibraryWords.Chip] {
+        var selected: String?
+        if case .category(let id) = leftPanelState { selected = id }
+        let categories = store.commandsByCategory().map { (id: $0.info.id, name: $0.info.displayName, count: $0.commands.count) }
+        return CommandLibraryWords.chips(categories: categories, total: store.commands.count,
+                                         selected: selected, expanded: chipsExpanded)
+    }
+
+    /// A chip: All, a category (a second press goes back to All), or the
+    /// "+N" / "Fewer" chip.
+    private func chipPicked(_ id: String) {
+        if id == CommandLibraryWords.moreChipID {
+            chipsExpanded.toggle()
+        } else if id == Self.allCategoryID {
+            leftPanelState = .all
+        } else if case .category(id) = leftPanelState {
+            leftPanelState = .all
+        } else {
+            leftPanelState = .category(id)
+        }
+        render()
     }
 
     static let allCategoryID = "__all__"
@@ -902,6 +999,12 @@ final class CommandLibraryPageView: NSObject {
             return symbolHeaderLabel(text, symbol: symbol)
         case .commandRow(_, _, _, let action):
             return CommandLibraryPanelRow(target: self, action: action)
+        case .leadRow:
+            return CommandLibraryPanelRow(target: self, action: #selector(recentRowClicked(_:)))
+        case .categoryChips:
+            let chips = CommandLibraryCategoryChips(width: Self.columnWidth)
+            chips.onPick = { [weak self] id in self?.chipPicked(id) }
+            return chips
         case .categoryRow:
             return CommandLibraryPanelRow(target: self, action: #selector(categoryRowClicked(_:)))
         case .emptyResults:
@@ -923,6 +1026,14 @@ final class CommandLibraryPageView: NSObject {
             (view as? CommandLibraryPanelRow)?.configure(text: name, trailing: nil,
                                                          isSelected: id == selectedCommandID,
                                                          palette: palette, theme: theme)
+        case .leadRow(let id, let name, let subtitle):
+            (view as? CommandLibraryPanelRow)?.configure(text: name, trailing: nil,
+                                                         isSelected: id == selectedCommandID,
+                                                         palette: palette, theme: theme, subtitle: subtitle)
+        case .categoryChips:
+            var selected = Self.allCategoryID
+            if case .category(let id) = leftPanelState { selected = id }
+            (view as? CommandLibraryCategoryChips)?.configure(categoryChipWords(), selected: selected, theme: theme)
         case .categoryRow(let id, let name, let count):
             let isSelected: Bool
             if id == Self.allCategoryID {
@@ -1042,7 +1153,12 @@ final class CommandLibraryPageView: NSObject {
         detailContentContainer.isHidden = false
 
         detailNameLabel.stringValue = command.name
-        detailRiskPill.configure(text: command.risk.displayName, tint: command.risk.tint, theme: theme)
+        detailRiskPill.configure(text: CommandLibraryWords.riskWords(command.risk), tint: command.risk.tint, theme: theme)
+        lastSentCard.isHidden = false
+        lastSentKicker.attributedStringValue = detailKicker("LAST SENT")
+        lastSentLabel.stringValue = CommandLibraryWords.lastSent(store.lastUsage(of: command.id),
+                                                                 unreadable: store.recentUsageUnreadable, now: Date())
+        lastSentLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
 
         var metaParts = [command.description]
         var location = command.category.isEmpty ? "" : CommandLibraryCategory.info(for: command.category).displayName
@@ -1163,15 +1279,38 @@ final class CommandLibraryPageView: NSObject {
     }
 
     private func updateCommandPreview(for command: DevOpsCommand) {
-        detailCommandLabel.attributedStringValue = Self.attributedGeneratedCommand(for: command, values: paramValues, theme: theme)
+        detailCommandLabel.attributedStringValue = Self.attributedGeneratedCommand(for: command, values: paramValues,
+                                                                                   theme: theme, onCodeCard: true)
+    }
+
+    /// The terminal's card: the theme's dark terminal card where it has one,
+    /// else its own terminal ground.
+    static func codeCardFill(_ theme: HelmTheme) -> NSColor {
+        HelmTheme.nsColor(codeCard(theme).ground)
+    }
+
+    /// The card's ground and ink: the theme's dark terminal card, else - on
+    /// a light theme with none - its dark sibling's terminal, so the preview
+    /// always reads as a terminal line.
+    static func codeCard(_ theme: HelmTheme) -> (ground: String, ink: String) {
+        if let card = theme.terminalCard { return (card.backgroundHex, card.inkHex) }
+        if theme.mode == .light, let dark = HelmTheme.appTheme(id: theme.pairId) ?? HelmTheme.theme(id: theme.pairId),
+           dark.mode == .dark {
+            return (dark.terminalCard?.backgroundHex ?? dark.backgroundHex, dark.terminalCard?.inkHex ?? dark.foregroundHex)
+        }
+        return (theme.backgroundHex, theme.foregroundHex)
     }
 
     /// Highlights every substituted parameter value in the accent color,
     /// matching the mockup's own highlighted-token treatment - plain literal
     /// text renders in the box's normal ink color.
-    static func attributedGeneratedCommand(for command: DevOpsCommand, values: [String: String], theme: HelmTheme) -> NSAttributedString {
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let accent = HelmTheme.nsColor(theme.accentHex)
+    static func attributedGeneratedCommand(for command: DevOpsCommand, values: [String: String], theme: HelmTheme,
+                                           onCodeCard: Bool = false) -> NSAttributedString {
+        let fill = codeCardFill(theme)
+        let ink = onCodeCard ? HelmContrast.legibleOn(fill: fill, preferring: HelmTheme.nsColor(codeCard(theme).ink))
+            : HelmTheme.nsColor(theme.chromeInkHex)
+        let accent = onCodeCard ? HelmContrast.legibleOn(fill: fill, preferring: HelmTheme.nsColor(theme.accentHex))
+            : HelmTheme.nsColor(theme.accentHex)
         let font = ShiftFont.mono(12)
         let result = NSMutableAttributedString()
         // B19: same source, same rule as `CommandLibraryCommand.effectiveParameters`.
@@ -1210,7 +1349,7 @@ final class CommandLibraryPageView: NSObject {
             guard let self else { return }
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(generated, forType: .string)
-            self.store.recordUsage(id)
+            self.store.recordUsage(id, via: "Copied")
             Toast.show(in: self.view, message: "Command copied")
         }
     }
@@ -1220,7 +1359,7 @@ final class CommandLibraryPageView: NSObject {
         let generated = command.generatedCommand(values: paramValues)
         confirmIfNeeded(for: command, generatedText: generated, actionVerb: "send to the terminal") { [weak self] in
             guard let self else { return }
-            self.store.recordUsage(id)
+            self.store.recordUsage(id, via: "To the terminal")
             self.onSendToTerminal?(generated)
             Toast.show(in: self.view, message: "Sent to terminal")
         }
@@ -1758,6 +1897,8 @@ final class CommandLibraryPanelRow: HoverHighlightView {
 
     private let label = NSTextField(labelWithString: "")
     private let trailingLabel = NSTextField(labelWithString: "")
+    /// UX-10: a favourite or recent row's second line ("sent 2 hours ago").
+    private let subtitleLabel = NSTextField(labelWithString: "")
 
     private static let textInset: CGFloat = HelmMetrics.s2
 
@@ -1774,13 +1915,22 @@ final class CommandLibraryPanelRow: HoverHighlightView {
         let row = NSStackView(views: [label, trailingLabel])
         row.orientation = .horizontal
         row.distribution = .fill
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.isHidden = true
+        subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let lines = NSStackView(views: [row, subtitleLabel])
+        lines.orientation = .vertical
+        lines.alignment = .leading
+        lines.spacing = HelmMetrics.s0
+        lines.detachesHiddenViews = true
+        lines.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(lines)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.textInset),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.textInset),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 5),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+            lines.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.textInset),
+            lines.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.textInset),
+            lines.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            lines.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+            row.widthAnchor.constraint(equalTo: lines.widthAnchor),
         ])
         translatesAutoresizingMaskIntoConstraints = false
         addGestureRecognizer(NSClickGestureRecognizer(target: target, action: action))
@@ -1790,7 +1940,11 @@ final class CommandLibraryPanelRow: HoverHighlightView {
 
     /// Everything about the row that can change between renders.
     func configure(text: String, trailing: String?, isSelected: Bool,
-                   palette: HelmPageSidebar.RowPalette, theme: HelmTheme) {
+                   palette: HelmPageSidebar.RowPalette, theme: HelmTheme, subtitle: String? = nil) {
+        subtitleLabel.isHidden = subtitle == nil
+        subtitleLabel.stringValue = subtitle ?? ""
+        subtitleLabel.font = HelmType.captionSmall()
+        subtitleLabel.textColor = isSelected ? palette.selectedInk.withAlphaComponent(0.8) : HelmTheme.mutedInk(theme)
         label.stringValue = text
         label.font = isSelected
             ? .systemFont(ofSize: HelmType.caption().pointSize, weight: .semibold)
@@ -1806,3 +1960,108 @@ final class CommandLibraryPanelRow: HoverHighlightView {
         hoverColor = isSelected ? palette.selectedFill : palette.hoverFill
     }
 }
+
+// MARK: - UX-10: the categories as chips
+
+/// All, the first few categories with their counts, and "+N", as a wrapping
+/// row of chips above the command list. The chosen chip is solid ink. Each
+/// chip is a `HoverHighlightView`, so it carries the button role, the focus
+/// ring and the keyboard press (GL-16).
+final class CommandLibraryCategoryChips: NSView {
+
+    static let chipHeight: CGFloat = 22
+    static let gap: CGFloat = 6
+
+    var onPick: ((String) -> Void)?
+    private let width: CGFloat
+    private var chips: [(id: String, view: HoverHighlightView, label: NSTextField)] = []
+    private(set) var chipIDs: [String] = []
+    private var selected = ""
+
+    /// `width` is the column's own, fixed, so the wrap never depends on a
+    /// width this view decides (gotcha (22)'s shape).
+    init(width: CGFloat) {
+        self.width = width
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override var isFlipped: Bool { true }
+
+    func configure(_ words: [CommandLibraryWords.Chip], selected: String, theme: HelmTheme) {
+        self.selected = selected
+        if words.map(\.id) != chipIDs || words.map(\.title) != chips.map(\.label.stringValue) {
+            chips.forEach { $0.view.removeFromSuperview() }
+            chips = words.map { word in
+                let view = HoverHighlightView()
+                view.translatesAutoresizingMaskIntoConstraints = true
+                let label = NSTextField(labelWithString: word.title)
+                label.font = HelmType.chip()
+                label.translatesAutoresizingMaskIntoConstraints = false
+                view.addSubview(label)
+                NSLayoutConstraint.activate([
+                    label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                    label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                ])
+                let id = word.id
+                view.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(chipClicked(_:))))
+                view.toolTip = id == CommandLibraryWords.moreChipID
+                    ? (word.title == "Fewer" ? "Show fewer categories" : "Show every category") : "Show \(word.title)"
+                addSubview(view)
+                return (id, view, label)
+            }
+            chipIDs = words.map(\.id)
+        }
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let ground = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        for chip in chips {
+            let on = chip.id == selected
+            chip.view.cornerRadius = Self.chipHeight / 2
+            // Off chips are the card's own colour, so they read on the band.
+            chip.view.normalColor = on ? ink : ground
+            chip.view.hoverColor = on ? ink : ground.blended(withFraction: 0.06, of: ink) ?? ground
+            chip.label.textColor = on ? HelmContrast.legibleOn(fill: ink, preferring: ground) : ink
+            chip.view.accessibilityValueOverride = on ? "selected" : nil
+        }
+        needsLayout = true
+        invalidateIntrinsicContentSize()
+    }
+
+    @objc private func chipClicked(_ sender: NSClickGestureRecognizer) {
+        guard let chip = chips.first(where: { $0.view === sender.view }) else { return }
+        onPick?(chip.id)
+    }
+
+    /// Where each chip goes, wrapping at the column's width.
+    private func frames() -> [NSRect] {
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        return chips.map { chip in
+            let w = ceil(chip.label.intrinsicContentSize.width) + 18
+            if x > 0, x + w > width {
+                x = 0
+                y += Self.chipHeight + Self.gap
+            }
+            defer { x += w + Self.gap }
+            return NSRect(x: x, y: y, width: w, height: Self.chipHeight)
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: frames().last.map { $0.maxY } ?? 0)
+    }
+
+    override func layout() {
+        super.layout()
+        for (chip, frame) in zip(chips, frames()) { chip.view.frame = frame }
+    }
+
+    #if FM_SELFTESTS
+    var debugTitles: [String] { chips.map(\.label.stringValue) }
+    /// Press a chip the way a click does, through its own recognizer.
+    func debugPress(_ id: String) { chips.first { $0.id == id }?.view.performPrimaryAction() }
+    #endif
+}
+

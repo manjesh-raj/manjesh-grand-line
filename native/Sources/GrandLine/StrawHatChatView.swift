@@ -98,6 +98,8 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// why the glow lives here rather than on the reply block itself.
     private let crewStrip = StrawHatCrewStrip()
     private let crewStripDivider = NSView()
+    /// UX-08: the empty thread's starter questions.
+    private let starterGrid = StrawHatStarterGrid()
     private let scroll = NSScrollView()
     private let document = FlippedView()
     private let stack = NSStackView()
@@ -256,6 +258,12 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         // it the whole area is all that is needed.
         emptyState.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyState)
+        starterGrid.translatesAutoresizingMaskIntoConstraints = false
+        starterGrid.onPick = { [weak self] starter in
+            self?.setComposerText(starter.question)
+            self?.focusComposer()
+        }
+        addSubview(starterGrid)
 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: Self.contentInset),
@@ -272,6 +280,11 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
             emptyState.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -Self.contentInset),
             emptyState.topAnchor.constraint(equalTo: scroll.topAnchor, constant: Self.contentInset),
             emptyState.bottomAnchor.constraint(equalTo: scroll.bottomAnchor, constant: -Self.contentInset),
+
+            starterGrid.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: Self.contentInset),
+            starterGrid.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -Self.contentInset),
+            starterGrid.topAnchor.constraint(equalTo: scroll.topAnchor, constant: Self.contentInset),
+            starterGrid.bottomAnchor.constraint(lessThanOrEqualTo: scroll.bottomAnchor, constant: -Self.contentInset),
         ])
     }
 
@@ -464,7 +477,16 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     }
 
     private func updateEmptyState() {
-        emptyState.isHidden = !messages.isEmpty
+        // UX-08: an empty thread offers its starters, top-aligned, in the
+        // transcript's place; the paragraph is for a page given none.
+        starterGrid.isHidden = !messages.isEmpty || starterGrid.starters.isEmpty
+        emptyState.isHidden = !messages.isEmpty || !starterGrid.starters.isEmpty
+    }
+
+    /// UX-08: the six starters, from the page's own data.
+    func setStarters(_ starters: [StrawHatStarters.Starter]) {
+        starterGrid.setStarters(starters, theme: theme)
+        updateEmptyState()
     }
 
     /// Lights the strip for whoever spoke in the *most recent* reply.
@@ -1021,6 +1043,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         well.domainHue = theme.isDaylight ? RailDestination.strawHat.domainHue : nil
         well.applyTheme(theme)
         emptyState.applyTheme(theme)
+        starterGrid.applyTheme(theme)
         crewStrip.applyTheme(theme)
         crewStripDivider.layer?.backgroundColor =
             HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5).cgColor
@@ -1115,6 +1138,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
 
     var debugMessageCount: Int { messages.count }
     var debugEmptyStateHidden: Bool { emptyState.isHidden }
+    var debugStarterGrid: StrawHatStarterGrid { starterGrid }
     /// The empty state's real frame - it is a sibling of the scroll view
     /// filling the whole transcript area, so it should be tall, not a card
     /// stranded at the top (which is what it was before a real render caught
@@ -1154,5 +1178,137 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
 
     /// The composer's current text - proves a submit really cleared it.
     var debugComposerText: String { textView.string }
+    #endif
+}
+
+/// UX-08: the empty thread's starters, two to a row: a sparkle and the
+/// question, the detail under it. A card is a `HoverHighlightView` (GL-16),
+/// and picking one fills the composer.
+final class StrawHatStarterGrid: NSView {
+    private(set) var starters: [StrawHatStarters.Starter] = []
+    var onPick: ((StrawHatStarters.Starter) -> Void)?
+    private let grid = NSStackView()
+    private var cards: [(view: HoverHighlightView, question: NSTextField, detail: NSTextField, glyph: NSImageView)] = []
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        grid.orientation = .vertical
+        grid.alignment = .leading
+        grid.spacing = HelmMetrics.s3
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.leadingAnchor.constraint(equalTo: leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: trailingAnchor),
+            grid.topAnchor.constraint(equalTo: topAnchor),
+            grid.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Things to ask")
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func setStarters(_ starters: [StrawHatStarters.Starter], theme: HelmTheme) {
+        guard starters != self.starters else { return }
+        self.starters = starters
+        for row in grid.arrangedSubviews { grid.removeArrangedSubview(row); row.removeFromSuperview() }
+        cards = []
+        for start in stride(from: 0, to: starters.count, by: 2) {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.distribution = .fillEqually
+            row.spacing = HelmMetrics.s3
+            row.alignment = .top
+            row.translatesAutoresizingMaskIntoConstraints = false
+            for starter in starters[start..<min(start + 2, starters.count)] {
+                row.addArrangedSubview(makeCard(starter))
+            }
+            if starters.count - start == 1 { row.addArrangedSubview(NSView()) }
+            grid.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
+        }
+        applyTheme(theme)
+    }
+
+    private func makeCard(_ starter: StrawHatStarters.Starter) -> NSView {
+        let card = HoverHighlightView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.cornerRadius = HelmMetrics.rRow
+        card.accessibilityRoleOverride = .button
+        card.accessibilityLabelOverride = "\(starter.question). \(starter.detail)"
+        let glyph = NSImageView(image: HelmSymbol.image("sparkle", pointSize: HelmType.scaled(11), weight: .semibold) ?? NSImage())
+        let question = NSTextField(wrappingLabelWithString: starter.question)
+        question.font = .systemFont(ofSize: HelmType.scaled(13), weight: .semibold)
+        question.maximumNumberOfLines = 2
+        let detail = NSTextField(labelWithString: starter.detail)
+        detail.font = HelmType.caption()
+        detail.lineBreakMode = .byTruncatingTail
+        for view in [glyph, question, detail] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            card.addSubview(view)
+        }
+        question.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let inset = HelmMetrics.s3 + 2
+        NSLayoutConstraint.activate([
+            glyph.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: inset),
+            glyph.widthAnchor.constraint(equalToConstant: Self.glyphSide),
+            glyph.heightAnchor.constraint(equalToConstant: Self.glyphSide),
+            // Gotcha (23): no baseline tie in a view that can be hidden.
+            glyph.topAnchor.constraint(equalTo: question.topAnchor, constant: 3),
+            question.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: HelmMetrics.s1 + 2),
+            question.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -inset),
+            question.topAnchor.constraint(equalTo: card.topAnchor, constant: inset),
+            detail.leadingAnchor.constraint(equalTo: glyph.leadingAnchor),
+            detail.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -inset),
+            detail.topAnchor.constraint(equalTo: question.bottomAnchor, constant: 2),
+            detail.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -inset),
+        ])
+        let index = cards.count
+        // GL-16: the click recognizer is also Return, Space and VoiceOver's press.
+        card.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(cardClicked(_:))))
+        card.identifier = NSUserInterfaceItemIdentifier("starter-\(index)")
+        cards.append((card, question, detail, glyph))
+        return card
+    }
+
+    static let glyphSide: CGFloat = 12
+
+    @objc private func cardClicked(_ sender: NSClickGestureRecognizer) {
+        guard let id = sender.view?.identifier?.rawValue, let index = Int(id.dropFirst("starter-".count)),
+              starters.indices.contains(index) else { return }
+        onPick?(starters[index])
+    }
+
+    override func layout() {
+        super.layout()
+        // Gotcha (22): the question wraps at its card's width, less its insets.
+        for card in cards {
+            let width = max(80, card.view.bounds.width - 2 * (HelmMetrics.s3 + 2) - 18)
+            if abs(card.question.preferredMaxLayoutWidth - width) > 0.5 { card.question.preferredMaxLayoutWidth = width }
+        }
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        for card in cards {
+            HelmCard.applyCardSurface(to: card.view, theme: theme, cornerRadius: HelmMetrics.rRow,
+                                      daylightRadius: HelmMetrics.rRow)
+            // The hover view paints its own fill, so it is handed the card's.
+            let fill = HelmTheme.nsColor(theme.chromeBackgroundHex)
+            card.view.normalColor = fill
+            card.view.hoverColor = fill.blended(withFraction: 0.06, of: HelmTheme.nsColor(theme.accentHex)) ?? fill
+            card.question.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+            card.detail.textColor = HelmTheme.mutedInk(theme)
+            card.glyph.contentTintColor = HelmTheme.nsColor(theme.chromeInkHex)
+        }
+    }
+
+    #if FM_SELFTESTS
+    func debugPick(_ index: Int) { if starters.indices.contains(index) { onPick?(starters[index]) } }
+    var debugCards: [HoverHighlightView] { cards.map(\.view) }
     #endif
 }

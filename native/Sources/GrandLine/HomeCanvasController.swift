@@ -375,6 +375,9 @@ final class HomeCanvasController: NSViewController {
     /// R5-BUG-02's footer said "7/7 services healthy" beside a card reading
     /// "7/8" because each asked the registry for itself.
     var healthSummary = ServiceHealthSummary()
+    /// UX-02: the services the Health card's rows can run again, the same
+    /// entry points Health's own Retry uses (`Workspace.healthRetryActions`).
+    var healthRetryActions: [HealthService: () -> Void] = [:]
     /// C1: the content column's preferred width, retuned to the available
     /// width on every grid rebuild.
     var contentWidthConstraint: NSLayoutConstraint?

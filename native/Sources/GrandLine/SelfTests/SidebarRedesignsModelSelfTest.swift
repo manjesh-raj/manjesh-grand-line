@@ -117,13 +117,16 @@ enum SidebarRedesignsModelSelfTest {
               "Console and Hosts are not two icons with two actions", &ok)
         check(WorkspaceToolbar.QuickConnectIcon.consoleSymbol != WorkspaceToolbar.QuickConnectIcon.hostsSymbol,
               "Console and Hosts draw the same symbol", &ok)
-        // With no caption, each icon's label says what it is - for VoiceOver,
-        // and for the overflow menu, which lists an image item by its label.
-        check(console.label == "Quick Connect to Console" && hosts.label == "Quick Connect to a Host",
+        // UX-25: each icon's label is the place it opens, which the Icon and
+        // Text mode draws under it; the palette and VoiceOver keep the
+        // phrase that says it is Quick Connect.
+        check(console.label == "Console" && hosts.label == "Connections"
+                && console.paletteLabel == "Quick Connect to Console" && hosts.paletteLabel == "Quick Connect to a Host",
               "the icons are labelled \(console.label) and \(hosts.label)", &ok)
         check(console.toolTip?.hasPrefix("Quick Connect to Console") == true && hosts.toolTip?.hasPrefix("Quick Connect to a host") == true,
               "the icons' tooltips do not say they are Quick Connect: \(console.toolTip ?? "") / \(hosts.toolTip ?? "")", &ok)
-        check(console.image?.accessibilityDescription == console.label && hosts.image?.accessibilityDescription == hosts.label,
+        check(console.image?.accessibilityDescription == console.paletteLabel
+                && hosts.image?.accessibilityDescription == hosts.paletteLabel,
               "the icons' images are not described for VoiceOver", &ok)
         // U-02: above the module's action and the chip, below the page's own
         // actions, so a narrow window keeps them and still has the page's.

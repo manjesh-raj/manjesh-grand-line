@@ -313,6 +313,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// C-4: the hero column in the split's sidebar pane
     /// (`HostsController+HeroColumn.swift`).
     var heroColumn: HelmHeroColumn?
+    /// UX-27: where the hero column goes as a band while its pane is put
+    /// away, and the gaps under it that open only while it holds the band.
+    let bandHost = NSView()
+    var bandGaps: [NSLayoutConstraint] = []
     /// The column's Recent pills' runs, by tag.
     var heroRecentRuns: [() -> Void] = []
     /// The column's Quick connect field. One instance, so its text survives
@@ -321,6 +325,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// H6: the host form in the side panel, and which record it is for -
     /// a host's id, or `newHostPanelKey` (H10). `HostsController+Panel.swift`.
     var hostPanel: HostEditorController?
+    /// UX-26: the Add or Edit Host sheet while it is up.
+    weak var hostSheet: HostEditorController?
     var hostPanelKey: String?
     /// Set while the panel's save writes the store, whose reload must not
     /// rebuild the form mid-save.
@@ -499,11 +505,26 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             content.trailingAnchor.constraint(equalTo: column.trailingAnchor),
         ])
 
+        // UX-27: a narrow page keeps its hero as a band over the tabs, as
+        // Health does. Empty, the host is zero tall and the tabs start where
+        // they always did.
+        bandHost.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(bandHost)
+        let bandEmpty = bandHost.heightAnchor.constraint(equalToConstant: 0)
+        bandEmpty.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            bandHost.topAnchor.constraint(equalTo: content.topAnchor),
+            bandHost.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            bandHost.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            bandEmpty,
+        ])
         for tabView in [hostsTabView, keysTabView, snippetsTabView] {
             tabView.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(tabView)
+            let top = tabView.topAnchor.constraint(equalTo: bandHost.bottomAnchor)
+            bandGaps.append(top)
             NSLayoutConstraint.activate([
-                tabView.topAnchor.constraint(equalTo: content.topAnchor),
+                top,
                 tabView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
                 tabView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
                 tabView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
@@ -1239,8 +1260,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// ⌘N / the toolbar's Add Host: add a new host.
     @objc func newHost() {
         select(tab: .hosts)
-        // H10: a new host is an empty form in the side panel.
-        openNewHostPanel()
+        // UX-26: a new host is a 560pt sheet over the page, with room for
+        // its fields. The inspector stays for reading a host.
+        presentHostSheet(for: nil)
     }
 
     /// The Hosts menu's Quick Connect: focus the quick-connect field.
@@ -1353,8 +1375,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     func presentKeyEditor(for key: SSHKey?, preset: KeyEditorController.Preset? = nil) {
-        // K7 and K8: a key is edited, and a new one made, in the side panel.
-        if let key { openKeyPanel(forEditing: key, preset: preset) } else { openNewKeyPanel(preset: preset) }
+        // UX-26: a new key is made in a sheet over the page. Editing a key
+        // keeps K7's form in the side panel, which reads its details.
+        if let key { openKeyPanel(forEditing: key, preset: preset) } else { presentKeySheet(preset: preset) }
     }
 
     /// Create mode: `SSHKeyStore.addNew` writes the Keychain secrets before

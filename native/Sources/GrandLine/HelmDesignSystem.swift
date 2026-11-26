@@ -1238,6 +1238,14 @@ final class HelmButton: NSButton {
         didSet { if heroSelection != oldValue { restyle() } }
     }
 
+    /// 1.5.0: the one action a hero offers, drawn solid in the hero's ink
+    /// with its words in the hero's deep stop, the boards' white pill ("Open
+    /// Needs you", "Start review", "Retry"). `HelmHeroColumn` hands such a
+    /// button its pill words as `heroSelection` on every theme pass, so the
+    /// page never paints it from a stale palette. `false`, the default, is
+    /// the ghost pill.
+    var heroProminent = false
+
     /// 1.3.0: the well a `.secondary` button is drawn as. `.inset`,
     /// the default, is the sunken fill every secondary button has always had.
     /// `.raised` is `HelmField.Surface.raised` - the card's own colour with a

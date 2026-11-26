@@ -279,6 +279,10 @@ enum CommandLibraryCategory {
 struct CommandLibraryUsageEntry: Equatable {
     var id: String
     var usedAt: Date
+    /// UX-10: where the command went, in words ("to the terminal",
+    /// "copied", "to DEV Bastion"), or `nil` for an entry written before
+    /// this was recorded, or by a caller that does not say.
+    var via: String? = nil
 }
 
 // MARK: - Config (captain-configurable select-option lists)

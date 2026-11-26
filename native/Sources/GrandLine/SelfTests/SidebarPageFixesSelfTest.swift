@@ -253,13 +253,26 @@ enum SidebarPageFixesSelfTest {
             default: break
             }
         }
-        check(high > 0 && groups.count > 1, "the fixture has no severe lines or patterns - the counts would pass vacuously", &ok)
-        let values = logs.debugMetricCards.map(\.debugValue)
-        check(values == ["\(high)", "\(warning)", "\(groups.count)"],
-              "the summary cards read \(values), want \([high, warning, groups.count])", &ok)
+        check(high > 0 && groups.count > 1 && warning >= 0,
+              "the fixture has no severe lines or patterns - the checks below would pass vacuously", &ok)
         check(logs.debugPatternsTable.debugRows.filter(\.isRecord).map(\.key) == groups.map(\.pattern),
               "the patterns table does not list the analyzer's groups", &ok)
-        check(logs.debugActionBarIsUnderTheLikelyCause, "the follow-up actions are not under the likely cause", &ok)
+        // UX-16: the likely cause is the tab's hero, with the actions on it,
+        // above the evidence, the patterns and the input, which folds.
+        let hero = logs.causeHero
+        let root = fixture.analysis?.ai?.rootCause
+        check(root != nil && !hero.isHidden && hero.window != nil && hero.debugHeadline == root?.summary
+                && hero.debugKicker.hasPrefix("Likely cause \u{00B7} ") && hero.debugStatusPill != nil,
+              "UX-16: the hero reads \(hero.debugKicker) / \(hero.debugHeadline)", &ok)
+        check(logs.debugActionBarIsOnTheHero, "UX-16: the follow-up actions are not on the likely cause's hero", &ok)
+        let heroBottom = hero.convert(hero.bounds, to: nil).minY
+        let tableTop = logs.debugPatternsTable.card.convert(logs.debugPatternsTable.card.bounds, to: nil).maxY
+        check(heroBottom >= tableTop - 0.5, "UX-16: the hero is not above the patterns (\(heroBottom) vs \(tableTop))", &ok)
+        check(logs.debugRawPaneHeight < 200 && !logs.debugShowAllButton.isHidden,
+              "UX-16: the input is \(logs.debugRawPaneHeight)pt tall, not folded", &ok)
+        logs.debugShowAllButton.performClick(nil)
+        check(logs.debugRawPaneHeight >= 600, "UX-16: Show all left the input at \(logs.debugRawPaneHeight)pt", &ok)
+        logs.debugShowAllButton.performClick(nil)
         check(logs.debugInputSummary.hasPrefix("\(fixture.evidence[0].lineCount) lines"),
               "the input card reads \"\(logs.debugInputSummary)\"", &ok)
         // A pattern opens its lines.
@@ -304,7 +317,7 @@ enum SidebarPageFixesSelfTest {
               "the table lists \(keys), not every known service in order", &ok)
 
         // Retry only where a failing service can be re-run, and it runs that.
-        let withRetry = table.debugRows.filter { $0.primary?.title == "Retry" }.compactMap(\.key)
+        let withRetry = table.debugRows.filter { $0.primary?.title == HealthCardView.retryTitle }.compactMap(\.key)
         check(Set(withRetry) == [HealthService.backgroundSignals.rawValue, HealthService.dotfilesAutoSync.rawValue],
               "Retry shows on \(withRetry)", &ok)
         table.debugActionsCell(key: HealthService.dotfilesAutoSync.rawValue)?.debugPrimaryButton.performClick(nil)

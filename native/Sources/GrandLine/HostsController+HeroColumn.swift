@@ -133,6 +133,9 @@ extension HostsController {
         return max(Self.heroCollapseWidth, column + floor + HelmMetrics.pageGutter + HelmMetrics.s2)
     }
 
+    /// UX-27: Quick connect's width on the band.
+    static let bandQuickConnectWidth: CGFloat = 220
+
     /// The column's three hosts.
     static let heroRecentLimit = 3
 
@@ -161,6 +164,9 @@ extension HostsController {
             return true
         }
         heroQuickConnectField.setAccessibilityLabel("Quick connect: type user@host and press Return")
+        // UX-27: on the band the field keeps a usable width beside the
+        // figures; in the column it is wider than this anyway.
+        heroQuickConnectField.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.bandQuickConnectWidth).isActive = true
         heroQuickConnectField.toolTip = "Type user@host, or a saved host's name, and press Return to connect"
         HelmSplitPage.pin(column, in: split.sidebarPane,
                           insets: NSEdgeInsets(top: HelmMetrics.pageContentInset, left: HelmMetrics.pageGutter,
@@ -192,12 +198,46 @@ extension HostsController {
     /// The column was put away or came back: the content's leading gap
     /// follows, and Recent moves between the column and the grid.
     func heroColumnVisibilityChanged() {
+        placeHeroColumn()
         refreshContentLeading()
         refreshExpansionStripPlacement()
         applyHostFilter(searchField.stringValue)
         reloadKeysForSearch()
         refreshFindOrConnectButton()
     }
+
+    /// UX-27: the column in the split's pane, or across the top of the tabs
+    /// as Health's one-line band while the pane is put away (a window under
+    /// about 1200pt, or the inspector open), so the page keeps its verdict,
+    /// its ring and Quick connect.
+    func placeHeroColumn() {
+        guard let column = heroColumn, let split = splitPage else { return }
+        let asBand = !split.sidebarIsWanted || split.isSidebarCollapsed
+        let alreadyThere = asBand ? column.superview === bandHost : column.superview === split.sidebarPane
+        guard !alreadyThere else { return }
+        column.removeFromSuperview()
+        column.setArrangement(asBand ? .band : .column)
+        if asBand {
+            column.translatesAutoresizingMaskIntoConstraints = false
+            bandHost.addSubview(column)
+            NSLayoutConstraint.activate([
+                column.topAnchor.constraint(equalTo: bandHost.topAnchor),
+                column.leadingAnchor.constraint(equalTo: bandHost.leadingAnchor),
+                column.trailingAnchor.constraint(equalTo: bandHost.trailingAnchor),
+                column.bottomAnchor.constraint(equalTo: bandHost.bottomAnchor),
+            ])
+        } else {
+            HelmSplitPage.pin(column, in: split.sidebarPane,
+                              insets: NSEdgeInsets(top: HelmMetrics.pageContentInset, left: HelmMetrics.pageGutter,
+                                                   bottom: HelmMetrics.pageGutter, right: 0),
+                              yieldsWidth: true)
+        }
+        for gap in bandGaps { gap.constant = asBand ? HelmMetrics.s4 : 0 }
+        renderHeroColumn()
+    }
+
+    /// UX-27: the column is drawn as the band over the tabs.
+    var heroIsBand: Bool { heroColumn?.superview === bandHost }
 
     // MARK: Rendering
 
@@ -257,13 +297,16 @@ extension HostsController {
             recentRows = [HelmHeroRow(leading: .symbol("clock"), title: "Nothing yet",
                                       subtitle: "The hosts you connect to show here.")]
         }
+        // UX-27: the band has no sections, so Quick connect moves to its
+        // foot beside the figures.
+        let bandFoot: [NSView] = heroIsBand ? [heroQuickConnectField] : []
         column.configure(
             header: header,
-            sections: [
+            sections: heroIsBand ? [] : [
                 .init(title: "Recent", trailing: recent.isEmpty ? nil : "\(recent.count)", views: recentRows),
                 .init(title: "Quick connect", trailing: nil, views: [heroQuickConnectField]),
             ],
-            foot: [heroFootFigures()],
+            foot: bandFoot + [heroFootFigures()],
             tone: HelmModuleCard.HeroTone(colour: .themeAccent, isDimmed: words.isDimmed))
     }
 

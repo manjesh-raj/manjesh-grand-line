@@ -74,14 +74,17 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     private var lastError: String?
     private var hasRestored = false
 
+    /// UX-12: Write is one pane that shows the page formatted as it is
+    /// typed (`NotebookWriteView`). Split and Source keep the Monaco editor.
+    /// Preview went: Write already shows the formatted page.
     enum ViewMode: String, CaseIterable {
-        case edit, split, preview
+        case write, split, edit
 
         var title: String {
             switch self {
+            case .write: return "Write"
             case .edit: return "Source"
             case .split: return "Split"
-            case .preview: return "Preview"
             }
         }
     }
@@ -94,7 +97,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     /// around 300pt, which is under the measure prose needs. So the shape is
     /// a switch with `.split` as the default, and the two single-pane modes
     /// exist for the width the captain actually has.
-    var mode: ViewMode = .split
+    var mode: ViewMode = .write
 
     // MARK: Views
 
@@ -133,27 +136,33 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     private let previewDocument = FlippedView()
     private let preview = NotebookPreviewView()
 
-    private let rail = NSView()
+    /// UX-12: the Write pane, in a card of its own.
+    private let writeCard = HelmCard()
+    let writeView = NotebookWriteView()
+    private let writeTitleLabel = NSTextField(labelWithString: "")
+    /// UX-12: the page's outline, first in the inspector.
+    private let outlineCard = HelmCard()
+    private let outlineStack = NSStackView()
+    private var outlineSleeves: [ClosureSleeve] = []
+    var onInspectorContentChanged: (() -> Void)?
+    var onShowInspector: (() -> Void)?
+
+    /// The page's details - its outline, the pages that link to it and its
+    /// facts - shown in the shell's inspector (UX-12) rather than in a column
+    /// of the page.
+    private let rail = FlippedView()
     private let backlinksCard = HelmCard()
     private let backlinksStack = NSStackView()
     private let inspectorCard = HelmCard()
     private let inspectorStack = NSStackView()
-    /// UI-54: Split means two panes. Backlinks and Page are an inspector the
+    /// UI-54: Split means two panes. The page's details are an inspector the
     /// toolbar's `sidebar.right` button shows, hidden until the captain asks
-    /// for it, and the choice is remembered.
+    /// for it, and the choice is remembered. Since UX-12 that inspector is the
+    /// shell's own (`WorkspaceInspectorSource`), not a column of the page.
     private var railVisible = AppDefaults.store.bool(forKey: NotebookController.inspectorDefaultsKey) {
         didSet { AppDefaults.store.set(railVisible, forKey: Self.inspectorDefaultsKey) }
     }
     static let inspectorDefaultsKey = "fm.notebook.inspectorVisible"
-    private var railWidth: NSLayoutConstraint!
-    /// The collapsed state's own constraint. Separate from `railWidth`, and
-    /// **required**, for a reason gotcha (13) makes precise: a required
-    /// *equality* on a fixed column is a floor on how narrow the window may
-    /// get, which is why the visible width sits at 499 - but a required
-    /// `width == 0` is a *maximum*, so it can never be a floor and it does
-    /// beat the column's own content. Measured: at 499 alone the hidden rail
-    /// still resolved to 154.5pt, because the cards inside it outrank it.
-    private var railCollapse: NSLayoutConstraint!
     private var editorWidthTie: NSLayoutConstraint!
     private var themeObservation: ThemeObservation?
     private var fontObservation: FontSizeObservation?
@@ -327,6 +336,8 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         webView.onReady = { [weak self] in self?.editorBecameReady() }
         webView.onPageError = { [weak self] message in self?.report(error: message) }
         webView.onSnippetChanged = { [weak self] id, content in self?.pageEdited(id: id, content: content) }
+        writeView.onEdit = { [weak self] id, content in self?.pageEdited(id: id, content: content) }
+        writeView.onOpenLink = { [weak self] target in self?.openLinkTarget(target) }
 
         themeObservation = ThemeManager.shared.observe { [weak self, weak root] theme in
             guard let self else { return }
@@ -475,6 +486,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
         buildEditorCard()
         buildPreviewCard()
+        buildWriteCard()
         buildRail()
 
         // P9: the page tree is a real split-view sidebar - draggable,
@@ -494,17 +506,8 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         let pane = split.contentPane
         pane.addSubview(editorCard)
         pane.addSubview(previewCard)
-        pane.addSubview(rail)
+        pane.addSubview(writeCard)
         splitPage = split
-
-        railWidth = rail.widthAnchor.constraint(equalToConstant: Self.railColumnWidth)
-        // Gotcha (13): a fixed column's width reaches `bodyContainer` through
-        // this page, so a *required* one is a floor on how narrow the whole
-        // window may get. 499 is below `NSLayoutPriorityWindowSizeStayPut` and
-        // still beats every label beside it at any real width.
-        railWidth.priority = HelmDaylightPriority.contentTie
-        railCollapse = rail.widthAnchor.constraint(equalToConstant: 0)
-        railCollapse.isActive = false
 
         // The two cards share the remaining width evenly in `.split`. The tie
         // is the one constraint `applyMode` swaps, so the three modes are one
@@ -529,11 +532,14 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
             previewCard.topAnchor.constraint(equalTo: editorCard.topAnchor),
             previewCard.bottomAnchor.constraint(equalTo: editorCard.bottomAnchor),
 
-            rail.leadingAnchor.constraint(equalTo: previewCard.trailingAnchor, constant: Self.gutter),
-            rail.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -Self.gutter),
-            rail.topAnchor.constraint(equalTo: editorCard.topAnchor),
-            rail.bottomAnchor.constraint(lessThanOrEqualTo: editorCard.bottomAnchor),
-            railWidth,
+            previewCard.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -Self.gutter),
+
+            // UX-12: Write spans the two cards' room. In Write the editor
+            // collapses and the preview stands hidden behind it.
+            writeCard.leadingAnchor.constraint(equalTo: editorCard.leadingAnchor),
+            writeCard.trailingAnchor.constraint(equalTo: previewCard.trailingAnchor),
+            writeCard.topAnchor.constraint(equalTo: editorCard.topAnchor),
+            writeCard.bottomAnchor.constraint(equalTo: editorCard.bottomAnchor),
         ])
     }
 
@@ -563,6 +569,13 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         editorCard.setHeader(symbol: "square.and.pencil", tint: .info,
                              titleLabel: editorTitleLabel, subtitleLabel: nil)
         editorCard.setBody(host)
+    }
+
+    private func buildWriteCard() {
+        writeCard.translatesAutoresizingMaskIntoConstraints = false
+        writeCard.setHeader(symbol: "doc.text", tint: .info, titleLabel: writeTitleLabel, subtitleLabel: nil)
+        writeCard.setBody(writeView)
+        writeCard.isHidden = true
     }
 
     private let editorTitleLabel = NSTextField(labelWithString: "Source")
@@ -603,18 +616,17 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
     private func buildRail() {
         rail.translatesAutoresizingMaskIntoConstraints = false
-        // The column inside keeps its designed width and is clipped when the
-        // rail collapses, rather than being pinned to both of the rail's
-        // edges - a trailing tie would make `railCollapse`'s required zero
-        // unsatisfiable against the cards' own content.
-        rail.wantsLayer = true
-        rail.layer?.masksToBounds = true
-        for stack in [backlinksStack, inspectorStack] {
+        for stack in [backlinksStack, inspectorStack, outlineStack] {
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = HelmMetrics.s2
             stack.translatesAutoresizingMaskIntoConstraints = false
         }
+        outlineStack.spacing = HelmMetrics.s0
+        outlineCard.translatesAutoresizingMaskIntoConstraints = false
+        outlineCard.setHeader(symbol: "list.bullet.indent", tint: .info, title: "Outline")
+        outlineCard.setBody(outlineStack, insets: HelmCard.contentInsets)
+
         backlinksCard.translatesAutoresizingMaskIntoConstraints = false
         backlinksCard.setHeader(symbol: "arrow.turn.up.left", tint: .violet,
                                 titleLabel: backlinksTitleLabel, subtitleLabel: nil)
@@ -625,23 +637,25 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
                                 title: "Page")
         inspectorCard.setBody(inspectorStack, insets: HelmCard.contentInsets)
 
-        let column = NSStackView(views: [backlinksCard, inspectorCard])
+        // UX-12: the shell's inspector hosts this column, at its width.
+        let column = NSStackView(views: [outlineCard, backlinksCard, inspectorCard])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = HelmMetrics.s3
         column.translatesAutoresizingMaskIntoConstraints = false
         rail.addSubview(column)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: rail.leadingAnchor),
-            column.widthAnchor.constraint(equalToConstant: Self.railColumnWidth),
-            column.topAnchor.constraint(equalTo: rail.topAnchor),
-            column.bottomAnchor.constraint(lessThanOrEqualTo: rail.bottomAnchor),
+            column.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: HelmMetrics.s3),
+            column.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -HelmMetrics.s3),
+            column.topAnchor.constraint(equalTo: rail.topAnchor, constant: HelmMetrics.s3),
+            column.bottomAnchor.constraint(equalTo: rail.bottomAnchor, constant: -HelmMetrics.s3),
+            outlineCard.widthAnchor.constraint(equalTo: column.widthAnchor),
             backlinksCard.widthAnchor.constraint(equalTo: column.widthAnchor),
             inspectorCard.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
     }
 
-    private let backlinksTitleLabel = NSTextField(labelWithString: "Backlinks")
+    private let backlinksTitleLabel = NSTextField(labelWithString: "Linked from")
 
     // MARK: Modes
 
@@ -653,24 +667,38 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         }
         // UXP-11: a notebook with no page open has nothing to preview, so the
         // preview card stands down and the editor's empty state is the one
-        // thing on the page. Preview mode still shows the editor then, or the
-        // page would be empty.
+        // thing on the page.
         let hasPage = currentID != nil
-        let showEditor = mode != .preview || !hasPage
-        let showPreview = mode != .edit && hasPage
+        let showWrite = mode == .write && hasPage
+        let showEditor = !showWrite
+        let showPreview = mode == .split && hasPage
+        // Leaving Write hands its words to Monaco, and entering it takes
+        // Monaco's: each editor is ahead of the other by at most a debounce.
+        if showWrite != !writeCard.isHidden {
+            if showWrite {
+                flushPendingEdits()
+                if let currentID { writeView.show(id: currentID, content: currentContent) }
+            } else {
+                writeView.flush()
+                if webView.isReady, let currentID {
+                    webView.call("openSnippet", payload: ["id": currentID, "language": "markdown", "content": currentContent])
+                }
+                refreshPreview()
+            }
+        }
+        writeCard.isHidden = !showWrite
         editorCard.isHidden = !showEditor
+        // In Write the preview stands behind the Write card, sized but
+        // hidden, so the card has the two cards' room to span.
         previewCard.isHidden = !showPreview
-        rail.isHidden = !railVisible
-        railCollapse.isActive = !railVisible
         // Full review #3's PF1 in miniature: a hidden view still participates
         // fully in Auto Layout, so the *tie* between the two cards has to go
         // with the hidden card, not merely its visibility.
         editorWidthTie.isActive = showEditor && showPreview
-        // Exactly one of the two carries the leading edge and one the
-        // trailing, whichever are showing.
         hiddenCardCollapse(editorCard, collapsed: !showEditor, stored: &editorCollapse)
-        hiddenCardCollapse(previewCard, collapsed: !showPreview, stored: &previewCollapse)
+        hiddenCardCollapse(previewCard, collapsed: !showPreview && !showWrite, stored: &previewCollapse)
         view.layoutSubtreeIfNeeded()
+        if showWrite, view.window != nil, view.window?.firstResponder === view.window { view.window?.makeFirstResponder(writeView.textView) }
     }
 
     private var editorCollapse: NSLayoutConstraint?
@@ -773,6 +801,8 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         currentID = page.id
         currentContent = page.content
         editorTitleLabel.stringValue = "\(page.slug).md"
+        writeTitleLabel.stringValue = "\(page.slug).md"
+        writeView.show(id: page.id, content: page.content)
         if !hadPage { applyMode() }
         sidebar.select(page.id)
         // Only once the page is live. Before that the bridge answers "the
@@ -944,15 +974,85 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     }
 
     private func refreshRail() {
+        refreshOutline()
         refreshBacklinks()
         refreshInspector()
+    }
+
+    /// UX-12: the page's headings, set in by level. A click takes the Write
+    /// pane (or Source) to that heading.
+    static func outline(of content: String) -> [(level: Int, title: String, line: Int)] {
+        var out: [(Int, String, Int)] = []
+        var inFence = false
+        for (n, line) in content.components(separatedBy: "\n").enumerated() {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") { inFence.toggle(); continue }
+            guard !inFence else { continue }
+            let hashes = line.prefix { $0 == "#" }.count
+            guard (1...6).contains(hashes), line.dropFirst(hashes).first == " " else { continue }
+            let title = line.dropFirst(hashes + 1).trimmingCharacters(in: .whitespaces)
+            if !title.isEmpty { out.append((hashes, title, n)) }
+        }
+        return out
+    }
+
+    private func refreshOutline() {
+        outlineStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        outlineSleeves.removeAll()
+        let entries = Self.outline(of: currentContent)
+        guard !entries.isEmpty else {
+            let empty = NSTextField(wrappingLabelWithString: "No headings yet. A line starting with # becomes one.")
+            empty.font = HelmType.caption()
+            empty.textColor = HelmTheme.mutedInk(theme)
+            outlineStack.addArrangedSubview(empty)
+            empty.widthAnchor.constraint(equalTo: outlineStack.widthAnchor).isActive = true
+            return
+        }
+        let top = entries.map(\.level).min() ?? 1
+        for entry in entries.prefix(40) {
+            let row = HoverHighlightView()
+            row.cornerRadius = HelmMetrics.rControl
+            row.hoverColor = HelmPageSidebar.rowPalette(theme).hoverFill
+            let label = NSTextField(labelWithString: entry.title)
+            label.font = entry.level == top ? .systemFont(ofSize: HelmType.caption().pointSize, weight: .semibold) : HelmType.caption()
+            label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+            label.lineBreakMode = .byTruncatingTail
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            row.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: row.leadingAnchor,
+                                               constant: HelmMetrics.s1 + CGFloat(entry.level - top) * HelmMetrics.s3),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -HelmMetrics.s1),
+                label.topAnchor.constraint(equalTo: row.topAnchor, constant: 3),
+                label.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -3),
+            ])
+            let line = entry.line
+            let sleeve = ClosureSleeve { [weak self] in self?.revealOutlineLine(line) }
+            outlineSleeves.append(sleeve)
+            row.addGestureRecognizer(NSClickGestureRecognizer(target: sleeve, action: #selector(ClosureSleeve.invoke)))
+            row.toolTip = "Go to \u{201C}\(entry.title)\u{201D}"
+            outlineStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: outlineStack.widthAnchor).isActive = true
+        }
+    }
+
+    /// Scrolls the Write pane to a heading's line and puts the caret there.
+    private func revealOutlineLine(_ line: Int) {
+        guard mode == .write else { return }
+        let lines = writeView.textView.string.components(separatedBy: "\n")
+        guard line < lines.count else { return }
+        let location = lines.prefix(line).reduce(0) { $0 + ($1 as NSString).length + 1 }
+        let range = NSRange(location: location, length: 0)
+        view.window?.makeFirstResponder(writeView.textView)
+        writeView.textView.setSelectedRange(range)
+        writeView.textView.scrollRangeToVisible(range)
     }
 
     private func refreshBacklinks() {
         backlinksStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         backlinkSleeves.removeAll()
         let links = currentID.map { index.backlinks(to: $0) } ?? []
-        backlinksTitleLabel.stringValue = links.isEmpty ? "Backlinks" : "Backlinks \u{00B7} \(links.count)"
+        backlinksTitleLabel.stringValue = links.isEmpty ? "Linked from" : "Linked from \u{00B7} \(links.count)"
         guard !links.isEmpty else {
             let empty = NSTextField(wrappingLabelWithString:
                 "Nothing links here yet. Write [[\(currentTitle)]] on another page.")
@@ -1238,12 +1338,32 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
     @objc private func toggleRail() {
         railVisible.toggle()
-        applyMode()
+        refreshRail()
+        onInspectorContentChanged?()
+        if railVisible { onShowInspector?() }
+    }
+
+    /// A `[[link]]` clicked in the Write pane: the page it names, or a new
+    /// page by that name, exactly as the preview's links do.
+    private func openLinkTarget(_ target: String) {
+        if let id = resolver.resolve(target, from: currentID) {
+            open(pageID: id)
+        } else {
+            createMissingPage(named: target)
+        }
     }
 
     /// The Edit menu's ⌘F while this destination is showing - Monaco's own
     /// find widget, exactly as Code Preview routes it.
-    @objc func showFind() { webView.call("find") }
+    @objc func showFind() {
+        guard mode == .write else { return webView.call("find") }
+        // UX-12: the Write pane's own find bar.
+        writeView.textView.usesFindBar = true
+        let item = NSMenuItem()
+        item.tag = NSTextFinder.Action.showFindInterface.rawValue
+        view.window?.makeFirstResponder(writeView.textView)
+        writeView.textView.performTextFinderAction(item)
+    }
 
     // MARK: Editor plumbing
 
@@ -1347,6 +1467,10 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         editorOverlay.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         backlinksCard.applyTheme(theme)
         inspectorCard.applyTheme(theme)
+        outlineCard.applyTheme(theme)
+        writeCard.applyTheme(theme)
+        writeView.applyTheme(theme)
+        writeTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         editorOverlayState?.applyTheme(theme)
         editorTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         previewTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
@@ -1372,7 +1496,10 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     var debugInspectorRowCount: Int { inspectorStack.arrangedSubviews.count }
     var debugEditorCardHidden: Bool { editorCard.isHidden }
     var debugPreviewCardHidden: Bool { previewCard.isHidden }
-    var debugRailHidden: Bool { rail.isHidden }
+    var debugRailHidden: Bool { !railVisible || inspectorContent == nil }
+    var debugWriteCard: NSView { writeCard }
+    var debugWriteCardHidden: Bool { writeCard.isHidden }
+    var debugOutlineRowCount: Int { outlineStack.arrangedSubviews.filter { $0 is HoverHighlightView }.count }
     var debugEditorCard: NSView { editorCard }
     var debugPreviewCard: NSView { previewCard }
     var debugRail: NSView { rail }
@@ -1448,3 +1575,35 @@ extension NotebookController {
     var debugMode: ViewMode { mode }
 }
 #endif
+
+// MARK: - UX-12: the page's details in the shell's inspector
+
+extension NotebookController: WorkspaceInspectorSource {
+    /// The outline, the pages that link here and the page's facts, once the
+    /// captain asks for them (the toolbar's inspector button, or Show Page
+    /// Details). Never before: a page with details is a page the shell makes
+    /// room for.
+    var inspectorContent: WorkspaceInspectorContent? {
+        guard isViewLoaded, railVisible, currentID != nil else { return nil }
+        return WorkspaceInspectorContent(title: "Page details", view: rail)
+    }
+
+    var inspectorEmptyText: (title: String, body: String) {
+        ("No page open", "Open a page to see its outline and the pages that link to it.")
+    }
+
+    func inspectorShouldClose() -> Bool {
+        railVisible = false
+        return true
+    }
+
+    func inspectorWillOpen() {
+        guard !railVisible else { return }
+        railVisible = true
+        refreshRail()
+        // The shell is mid-way through opening the pane, so it hears about
+        // the details on the next turn rather than from inside its own call.
+        DispatchQueue.main.async { [weak self] in self?.onInspectorContentChanged?() }
+    }
+}
+

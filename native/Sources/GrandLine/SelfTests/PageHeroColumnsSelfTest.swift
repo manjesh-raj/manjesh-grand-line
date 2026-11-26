@@ -139,12 +139,28 @@ enum PageHeroColumnsSelfTest {
             entry(.scheduledAutomations),
         ])
         let failing = HealthHeroWords.make(summary, canRetry: { $0 != .backgroundSignals }, relative: relative)
-        check(failing.tone == .failing, "Health: a failing service leaves the column \(failing.tone), not red", &ok)
+        // UX-18: one service failing of four is not an outage. The column
+        // keeps the accent, and the ring's arc and a pill say it instead.
+        check(failing.tone == .accent && failing.ringState == .bad
+                && failing.status == .init(text: "1 failing", state: .failing),
+              "UX-18: one failing service paints the column \(failing.tone) with a \(failing.ringState) arc "
+                + "and \(String(describing: failing.status))", &ok)
         check(failing.headline == "Dotfiles auto-sync has failed 3 runs in a row.",
               "Health: the failing headline reads \"\(failing.headline)\"", &ok)
         check(failing.body == "Last error 2 minutes ago: git push was rejected.",
               "Health: the failing body reads \"\(failing.body)\"", &ok)
-        check(failing.ringState == .ok, "Health: a red column's ring arc is \(failing.ringState), not the ink", &ok)
+        // Most services failing is an outage: the red column, its arc in the ink.
+        let outage = HealthHeroWords.make(ServiceHealthSummary([
+            entry(.backgroundSignals, success: 900, failures: 3, detail: "a"),
+            entry(.dotfilesAutoSync, success: 900, failures: 3, detail: "b"),
+            entry(.docsSync, success: 900, failures: 3, detail: "c"),
+            entry(.fleetTasks, success: 30),
+        ]), canRetry: { _ in true }, relative: relative)
+        check(outage.tone == .failing && outage.ringState == .ok && outage.status?.text == "3 failing",
+              "UX-18: three of four failing is \(outage.tone) with a \(outage.ringState) arc", &ok)
+        check(!HealthHeroWords.isOutage(failing: 2, total: 4) && HealthHeroWords.isOutage(failing: 3, total: 5)
+                && !HealthHeroWords.isOutage(failing: 0, total: 0),
+              "UX-18: the outage line is not more than half", &ok)
         check(failing.buckets.map(\.count) == [1, 1, 1, 1], "Health: the buckets count \(failing.buckets.map(\.count))", &ok)
         check(failing.retryable == [.dotfilesAutoSync] && failing.offersDiagnostics,
               "Health: the foot offers \(failing.retryable) and diagnostics \(failing.offersDiagnostics)", &ok)
@@ -154,6 +170,8 @@ enum PageHeroColumnsSelfTest {
         let degraded = HealthHeroWords.make(ServiceHealthSummary([entry(.docsSync, success: 600, failures: 1),
                                                                   entry(.fleetTasks, success: 30)]),
                                             canRetry: { _ in false }, relative: relative)
+        check(degraded.status == .init(text: "1 recent failure", state: .degraded),
+              "UX-18: a recent failure's pill reads \(String(describing: degraded.status))", &ok)
         check(degraded.tone == .accent && degraded.ringState == .warn,
               "Health: a recent failure is \(degraded.tone) with a \(degraded.ringState) arc, not the accent with amber", &ok)
         check(degraded.headline == "Docs & runbooks sync failed its last run.",
@@ -491,6 +509,16 @@ enum PageHeroColumnsSelfTest {
                 && band.figures.map(\.opensReview) == [false, true, false, false, false, false],
               "CR-1: In flight's figures are \(band.figures)", &ok)
         check(band.status == .init(text: "Watcher healthy", state: .good), "CR-1: the watcher pill is \(String(describing: band.status))", &ok)
+        // UX-06: the door follows the decision, not the words.
+        check(!band.opensNeedsYou, "UX-06: In flight offers Open Needs you with nothing waiting on the captain", &ok)
+        var deciding = read
+        deciding.needingCaptain = 2
+        check(CrewHeroWords.inFlight(deciding, day: "Tue 24 Nov", time: crewTime).opensNeedsYou,
+              "UX-06: In flight's headline is about two decisions and offers no Open Needs you", &ok)
+        var blindDeciding = deciding
+        blindDeciding.tasksRead = false
+        check(!CrewHeroWords.inFlight(blindDeciding, day: "Tue 24 Nov", time: crewTime).opensNeedsYou,
+              "UX-06: an unread task list still offers Open Needs you", &ok)
 
         var scanning = read
         scanning.ready = .scanning
@@ -551,9 +579,10 @@ enum PageHeroColumnsSelfTest {
                                            body: "Body", ring: nil, status: .init(text: "Watcher healthy", tint: .good))
         column.configure(header: header, sections: [], foot: [strip], tone: .init(colour: .themeAccent),
                          bandViews: [row, tiles], footRule: true)
-        // A column draws none of the band's options.
-        check(column.debugStatusPill == nil && column.debugFootRule == nil && row.superview == nil && tiles.superview == nil,
-              "1.5.0: a `.column` drew the band's status pill, foot rule or band views", &ok)
+        // A column draws none of the band's other options. Since 1.8.0 it
+        // draws the status, as a pill under its kicker (UX-18).
+        check(column.debugStatusPill != nil && column.debugFootRule == nil && row.superview == nil && tiles.superview == nil,
+              "1.8.0: a `.column` drew the band's foot rule or band views, or no status pill", &ok)
         column.setArrangement(.band)
         let palette = HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: theme)
         let ink = HelmContrast.color(palette.ink)
@@ -754,13 +783,15 @@ enum PageHeroColumnsSelfTest {
                 && typical.tone == .accent && typical.symbol == CrewHeroWords.logSymbol && typical.figures.isEmpty
                 && !typical.offersSetup && typical.status == nil && typical.ring == nil,
               "CR-1: Log's typical band is \(typical)", &ok)
-        check(typical.filter.map(\.label) == ["All\u{2002}10", "Merges\u{2002}3", "Tasks\u{2002}3", "Sync\u{2002}1",
+        // UX-07: Today leads, beside All, so each count says its scope.
+        check(typical.filter.map(\.label) == ["Today\u{2002}5", "All\u{2002}10", "Merges\u{2002}3", "Tasks\u{2002}3", "Sync\u{2002}1",
                                               "Investigations\u{2002}1", "Incidents\u{2002}2"]
-                && typical.filter.map(\.kind) == [nil, .merge, .task, .sync, .investigation, .incident],
+                && typical.filter.map(\.kind) == [nil, nil, .merge, .task, .sync, .investigation, .incident]
+                && typical.filter.map(\.isToday) == [true, false, false, false, false, false, false],
               "CR-1: Log's filter is \(typical.filter.map(\.label))", &ok)
         // The band's segments are the floating bar's, in its order.
         check(typical.filter.map(\.title) == FleetLogListView.filterItems.map(\.title)
-                && typical.filter.map { $0.kind?.rawValue ?? FleetLogListView.allFilterID }
+                && typical.filter.map { $0.isToday ? FleetLogListView.todayFilterID : $0.kind?.rawValue ?? FleetLogListView.allFilterID }
                     == FleetLogListView.filterItems.map(\.id),
               "CR-1: the band's segments are not the floating bar's", &ok)
 
@@ -785,7 +816,8 @@ enum PageHeroColumnsSelfTest {
         // Nothing today: when the last event was, said as the feed says the day.
         let quiet = CrewHeroWords.log(read(Array(board.events.dropFirst(5))), day: "Tue 24 Nov", time: logClock)
         check(quiet.headline == "Quiet so far today" && quiet.body == "The last event was yesterday at 6:18 PM."
-                && quiet.tone == .accent && quiet.filter.first?.label == "All\u{2002}5",
+                && quiet.tone == .accent && quiet.filter.first?.label == "Today\u{2002}0"
+                && quiet.filter.dropFirst().first?.label == "All\u{2002}5",
               "CR-1: a quiet day reads \(quiet.headline) / \(quiet.body ?? "-")", &ok)
         let older = CrewHeroWords.log(read(Array(board.events.suffix(2))), day: "Tue 24 Nov", time: logClock)
         let label = FleetLogFeed.dayLabel(for: at(-3, 11, 20), reference: board.readAt)
@@ -809,14 +841,14 @@ enum PageHeroColumnsSelfTest {
         check(partly.tone == .dimmed && partly.headline == "Couldn\u{2019}t read all of the log at 11:24 AM"
                 && partly.body == "Showing the 3 events that could be read, 1 today. "
                     + "Merges, sync fixes, investigations and incidents could not be read, so they are not counted."
-                && partly.filter.map(\.count) == [nil, nil, 3, nil, nil, nil]
-                && partly.filter.map(\.label) == ["All", "Merges", "Tasks\u{2002}3", "Sync", "Investigations", "Incidents"],
+                && partly.filter.map(\.count) == [nil, nil, nil, 3, nil, nil, nil]
+                && partly.filter.map(\.label) == ["Today", "All", "Merges", "Tasks\u{2002}3", "Sync", "Investigations", "Incidents"],
               "CR-1: an unreadable log file over Shift's tasks is \(partly)", &ok)
         let noTasks = CrewHeroWords.log(read(board.events.filter { $0.kind != .task }, activity: true),
                                         day: "Tue 24 Nov", time: logClock)
         check(noTasks.tone == .dimmed && noTasks.headline == "Couldn\u{2019}t read all of the log at 11:24 AM"
                 && (noTasks.body ?? "").hasSuffix("Some task updates could not be read, so they are not counted.")
-                && noTasks.filter.map(\.count) == [nil, 3, nil, 1, 1, 2],
+                && noTasks.filter.map(\.count) == [nil, nil, 3, nil, 1, 1, 2],
               "CR-1: a month of activity that could not be read is \(noTasks)", &ok)
         let both = CrewHeroWords.log(read([FleetLogEvent(date: at(-1, 9, 0), kind: .merge, title: "m")],
                                           log: true, activity: true), day: "Tue 24 Nov", time: logClock)
@@ -881,14 +913,15 @@ enum PageHeroColumnsSelfTest {
                 && fleet.collapsesEmptyHeaderLine && !fleet.drawsSubtitleOnHeaderLine
                 && logBand.debugFootViews.first === tabs && tabs.heroInk == logBand.ink,
               "CR-1: Log on a real page reads \(logBand.debugHeadline) / \(logBand.debugBody ?? "-")", &ok)
-        check(titles() == ["All\u{2002}3", "Merges\u{2002}1", "Tasks\u{2002}2", "Sync\u{2002}0",
+        check(titles() == ["Today\u{2002}3", "All\u{2002}3", "Merges\u{2002}1", "Tasks\u{2002}2", "Sync\u{2002}0",
                            "Investigations\u{2002}0", "Incidents\u{2002}0"],
               "CR-1: the real filter reads \(titles())", &ok)
         // The filter on the band filters the feed under it, as it always did.
-        check(fleet.debugLogList.debugRowCount == 4 && fleet.debugLogListShowing,
+        // UX-07: the day, its hour, and the three events.
+        check(fleet.debugLogList.debugRowCount == 5 && fleet.debugLogListShowing,
               "CR-1: the feed under the band has \(fleet.debugLogList.debugRowCount) rows", &ok)
         tabs.debugClickTab(id: "merge")
-        check(fleet.debugLogList.debugRowCount == 2 && tabs.selected == "merge" && fleet.debugCrewBand === logBand
+        check(fleet.debugLogList.debugRowCount == 3 && tabs.selected == "merge" && fleet.debugCrewBand === logBand
                 && logBand.debugHeadline == "3 events today",
               "CR-1: Merges on the band left \(fleet.debugLogList.debugRowCount) rows", &ok)
         tabs.debugClickTab(id: "all")
@@ -910,8 +943,9 @@ enum PageHeroColumnsSelfTest {
         let dimmed = HelmHeroColumn.palette(for: .init(colour: .themeAccent, isDimmed: true), in: ThemeManager.shared.theme)
         check(logBand.debugPalette == dimmed && logBand.debugHeadline.hasPrefix("Couldn\u{2019}t read all of the log at ")
                 && (logBand.debugBody ?? "").hasPrefix("Showing the 3 events that could be read, 3 today. ")
-                && titles() == ["All", "Merges\u{2002}1", "Tasks", "Sync\u{2002}0", "Investigations\u{2002}0", "Incidents\u{2002}0"]
-                && fleet.debugLogList.debugRowCount == 4,
+                && titles() == ["Today", "All", "Merges\u{2002}1", "Tasks", "Sync\u{2002}0", "Investigations\u{2002}0",
+                                "Incidents\u{2002}0"]
+                && fleet.debugLogList.debugRowCount == 5,
               "CR-1: an unreadable month drew \(logBand.debugHeadline) with \(titles()), "
                 + "dimmed \(logBand.debugPalette == dimmed)", &ok)
         try? FileManager.default.removeItem(at: activity.appendingPathComponent("\(lastMonth).yaml"))
@@ -1393,7 +1427,8 @@ enum PageHeroColumnsSelfTest {
                     if logged.debugPalette == palette, filter.heroInk != nil {
                         let colors = filter.debugPillLabelColors
                         let fills = filter.debugPillFills
-                        for index in [0, 2] where colors.indices.contains(index) && fills.indices.contains(index) {
+                        // UX-07: Today and All lead, so Merges (chosen) is third.
+                        for index in [0, 3] where colors.indices.contains(index) && fills.indices.contains(index) {
                             floor("filter words \(index)", colors[index], on: composite(fills[index], over: stop),
                                   HelmContrast.textTarget)
                         }
@@ -1402,8 +1437,8 @@ enum PageHeroColumnsSelfTest {
                     }
                 }
                 // The chosen segment's words on the solid ink.
-                if let ink = filter.heroInk, filter.debugPillLabelColors.indices.contains(1) {
-                    floor("chosen filter words", filter.debugPillLabelColors[1], on: HelmContrast.components(ink),
+                if let ink = filter.heroInk, filter.debugPillLabelColors.indices.contains(2) {
+                    floor("chosen filter words", filter.debugPillLabelColors[2], on: HelmContrast.components(ink),
                           HelmContrast.textTarget)
                 }
             }
