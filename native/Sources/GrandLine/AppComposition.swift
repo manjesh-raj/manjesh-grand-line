@@ -14,6 +14,7 @@
 // the delegate's wiring reads all of them.
 
 import AppKit
+import CoreSpotlight
 import SwiftTerm
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -357,6 +358,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.onCompactModeSettingsChanged = { [weak self] in
             self?.compactMode.refresh()
         }
+    }
+
+    /// F-04: tasks, notes, links, sticky notes and runbooks in Spotlight.
+    /// Reads the live stores this delegate and the shell already hold (GL-23).
+    lazy var spotlightIndexer: SpotlightIndexer = {
+        let workspace = appShell.workspace
+        let indexer = SpotlightIndexer(
+            inMemory: { [weak self] in
+                guard let self else { return SpotlightIndex.Sources() }
+                return SpotlightIndex.Sources(tasks: self.shiftStore.activeTasks,
+                                              followUps: self.shiftStore.followUps,
+                                              projects: self.shiftStore.projects,
+                                              links: workspace.readingListStore.links,
+                                              stickies: workspace.stickyBoardStore.notes)
+            },
+            onDisk: { [docsRunbookStore, notebookStore = workspace.notebookStore] in
+                (notebookStore.listPages(), docsRunbookStore.listRunbooks())
+            })
+        indexer.open = { [weak self] kind, id in
+            guard let navigator = self?.appShell.workspace.navigator else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            switch kind {
+            case .task: navigator.openShiftTask(id: id)
+            case .followUp: navigator.openShiftFollowUp(id: id)
+            case .note: navigator.openNotebookPage(id: id)
+            case .link: navigator.openReadingListLink(id: id)
+            case .sticky: navigator.openStickyNote(id: id)
+            case .runbook: navigator.openRunbook(id: id)
+            }
+        }
+        indexer.showPendingOnLock = { [weak workspace] text in workspace?.lock.showPendingOpen(text) }
+        AppLockGate.shared.observe { [weak indexer] locked in
+            guard !locked else { return }
+            DispatchQueue.main.async { indexer?.openPendingIfUnlocked() }
+        }
+        return indexer
+    }()
+
+    /// F-04: Spotlight hands a chosen result back as an activity.
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void) -> Bool {
+        guard userActivity.activityType == CSSearchableItemActionType,
+              let identifier = userActivity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return false }
+        return spotlightIndexer.handle(identifier: identifier)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -999,6 +1044,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The DevOps Hub row used to open the last project shown. It opens
         // the project cards now, so the stored project is removed.
         LocalProjectRegistry.forgetRetiredPreferences()
+        // F-04: Spotlight. The first rebuild runs a few seconds after launch,
+        // off the launch path (GL-12).
+        spotlightIndexer.start()
+        GrandLineServices.shared.spotlightIndexer = spotlightIndexer
     }
 
     /// Review #3's UX13: the first-run welcome sheet.

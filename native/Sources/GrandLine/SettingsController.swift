@@ -2228,6 +2228,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             SettingsSection(heading: "App lock", group: SettingsGroup(rows: lockRows),
                             foot: "Anything that runs while the main window is not frontmost and shows or writes your data consults the same lock (GL-09)."),
             SettingsSection(heading: "Poneglyph vault", group: SettingsGroup(rows: vaultRows)),
+            // F-04: what Spotlight may index and show.
+            buildSpotlightSection(),
             SettingsSection(heading: "System", group: SettingsGroup(custom: securityStackHost,
                                                                     insets: NSEdgeInsets())),
             SettingsSection(heading: "Power", group: SettingsGroup(rows: [buildLidClosedRow()]),

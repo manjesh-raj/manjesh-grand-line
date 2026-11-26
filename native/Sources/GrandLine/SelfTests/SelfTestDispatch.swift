@@ -2200,6 +2200,13 @@ enum SelfTestDispatch {
             exit(ExpiryReminderSelfTest.run() ? 0 : 1)
         }
 
+        // F-04 of full review 4: what goes into Spotlight, titles only while
+        // locked, and a result chosen while locked opening after the unlock.
+        // Headless, with a recording sink in place of Core Spotlight.
+        if ProcessInfo.processInfo.environment["FM_RUN_SPOTLIGHT_INDEX_TESTS"] == "1" {
+            exit(SpotlightIndexSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }

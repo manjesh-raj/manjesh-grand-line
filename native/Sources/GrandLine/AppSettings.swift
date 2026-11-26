@@ -24,6 +24,9 @@ final class AppSettings {
 
     private enum Keys {
         static let expiryLeadDays = "fm.expiry.leadDays"
+        static let spotlightEnabled = "fm.spotlight.enabled"
+        static let spotlightDisabledKinds = "fm.spotlight.disabledKinds"
+        static let spotlightLockedMode = "fm.spotlight.lockedMode"
         static let expiryChecksTLS = "fm.expiry.checksTLS"
         static let expiryProjectID = "fm.expiry.projectID"
         static let fontSize = "fm.fontSize"
@@ -406,6 +409,26 @@ final class AppSettings {
     /// default: the grid is one flat run of cards, the way the Keys grid is,
     /// and each card names its group. An unset key reads as off, so nothing
     /// a captain saved before this existed changes what they see.
+    /// F-04: write tasks, notes, links, sticky notes and runbooks to the
+    /// system's Spotlight index. On by default; unset reads as on.
+    var spotlightEnabled: Bool {
+        get { defaults.object(forKey: Keys.spotlightEnabled) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Keys.spotlightEnabled) }
+    }
+
+    /// F-04: the kinds the captain turned off in Settings.
+    var spotlightDisabledKinds: Set<SpotlightEntry.Kind> {
+        get { Set((defaults.stringArray(forKey: Keys.spotlightDisabledKinds) ?? []).compactMap(SpotlightEntry.Kind.init)) }
+        set { defaults.set(newValue.map(\.rawValue).sorted(), forKey: Keys.spotlightDisabledKinds) }
+    }
+
+    /// F-04: what Spotlight may show while the app is locked. Titles only by
+    /// default (the captain's product call).
+    var spotlightLockedMode: SpotlightIndex.LockedMode {
+        get { defaults.string(forKey: Keys.spotlightLockedMode).flatMap(SpotlightIndex.LockedMode.init) ?? .titlesOnly }
+        set { defaults.set(newValue.rawValue, forKey: Keys.spotlightLockedMode) }
+    }
+
     /// D-03: how many days before an expiry its task is filed. Unset reads
     /// as 0, which the monitor treats as the default 14.
     var expiryLeadDays: Int {

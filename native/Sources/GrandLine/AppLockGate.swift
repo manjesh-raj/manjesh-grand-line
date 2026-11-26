@@ -301,6 +301,9 @@ enum AppLockedSurface {
     /// sheet would otherwise open over the lock screen. Its own case, per
     /// this file's header rule: nothing else gates on it.
     case devopsHubSiteDialog
+    /// F-04: a Spotlight result chosen while the app is locked. It opens a
+    /// task, note, link, sticky note or runbook, so it waits for the unlock.
+    case spotlightResult
 }
 
 final class AppLockGate {

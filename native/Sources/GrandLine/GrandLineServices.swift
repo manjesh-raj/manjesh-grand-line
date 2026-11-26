@@ -57,6 +57,9 @@ final class GrandLineServices {
     /// D-05: the Log Analyzer's one store, so an incident export can quote a
     /// saved investigation's findings without building a second store.
     private(set) weak var logAnalyzerStore: LogAnalyzerStore?
+    /// F-04: the Spotlight indexer, so Settings can show its counts and
+    /// rebuild or empty the index. Set by the app delegate at launch.
+    weak var spotlightIndexer: SpotlightIndexer?
 
     /// Registered once, from `AppShellController.init`, with the instances it
     /// has just built. `weak` throughout: this registry must never be the

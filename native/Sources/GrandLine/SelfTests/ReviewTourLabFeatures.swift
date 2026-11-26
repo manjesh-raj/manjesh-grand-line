@@ -10,6 +10,7 @@
 //     ux expiry seed                  D-03: certificates on the demo keys and a check
 //                                     against fake TLS answers (run `demo hosts` first)
 //     ux expiry panel <name>          D-03: the reminder settings popover
+//     ux spotlight <name>             F-04: Settings' "Show in Spotlight" section, alone
 //
 // GL-27: debug builds only.
 
@@ -19,7 +20,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -30,6 +31,23 @@ extension ReviewTourLab {
         }
         guard let name = rest.first else { return "ux \(verb) FAILED - want a name" }
         switch verb {
+        case "spotlight":
+            guard let settings = shell.debugSlotController(.settings) as? SettingsController else {
+                return "ux spotlight FAILED - goto settings first"
+            }
+            let section = settings.buildSpotlightSection()
+            section.applyTheme(ThemeManager.shared.theme)
+            let width: CGFloat = 720
+            section.widthAnchor.constraint(equalToConstant: width).isActive = true
+            section.layoutSubtreeIfNeeded()
+            let size = NSSize(width: width + 48, height: section.fittingSize.height + 48)
+            let host = NSView(frame: NSRect(origin: .zero, size: size))
+            host.wantsLayer = true
+            host.layer?.backgroundColor = HelmTheme.nsColor(ThemeManager.shared.theme.backgroundHex).cgColor
+            host.addSubview(section)
+            NSLayoutConstraint.activate([section.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 24),
+                                         section.topAnchor.constraint(equalTo: host.topAnchor, constant: 24)])
+            return done(renderFixed(host, size: size, to: url(name)), name)
         case "expiry" where name == "seed":
             return seedExpiry(shell.workspace)
         case "expiry" where name == "panel":

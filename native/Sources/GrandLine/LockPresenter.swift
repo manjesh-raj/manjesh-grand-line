@@ -254,6 +254,13 @@ final class LockPresenter {
         }
     }
 
+    /// F-04: the lock screen says what is waiting to open (a Spotlight
+    /// result chosen while locked). A no-op when the app is not locked.
+    func showPendingOpen(_ text: String) {
+        guard AppLockGate.shared.isLocked else { return }
+        lockScreen.apply(.locked(subtitle: text))
+    }
+
     private static func lockedSubtitle(for reason: AppLockReason) -> String {
         reason == .sessionExpired ? "Your session expired - please log in again." : "Grand Line is locked."
     }
