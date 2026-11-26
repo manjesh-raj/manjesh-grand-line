@@ -148,9 +148,7 @@ final class DecorativeMotionGate {
     static var windowVisibleOverrideForTests: Bool?
     static var lowPowerOverrideForTests: Bool?
 
-    private static let isSelfTestProcess: Bool = ProcessInfo.processInfo.environment.keys.contains {
-        $0.hasPrefix("FM_RUN_")
-    }
+    private static var isSelfTestProcess: Bool { ProcessMode.current == .selfTest }
 
     static func resetOverridesForTests() {
         appActiveOverrideForTests = nil

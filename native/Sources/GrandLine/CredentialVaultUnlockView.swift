@@ -464,7 +464,7 @@ final class CredentialVaultUnlockView: NSView {
             attachMotionGate()
             enterGate()
         } else if !openStyle {
-            motionGate.detach()
+            motionGate?.detach()
             setLit(true)
         }
         updateKeyMonitor()
@@ -986,7 +986,7 @@ final class CredentialVaultUnlockView: NSView {
         super.viewDidMoveToWindow()
         updateKeyMonitor()
         if window == nil {
-            motionGate.detach()
+            motionGate?.detach()
             chest.stopLoops()
         } else if openStyle {
             attachMotionGate()
@@ -999,7 +999,7 @@ final class CredentialVaultUnlockView: NSView {
     /// something is typed in it.
     override func viewDidHide() {
         super.viewDidHide()
-        motionGate.detach()
+        motionGate?.detach()
         chest.stopLoops()
     }
 
@@ -1013,12 +1013,16 @@ final class CredentialVaultUnlockView: NSView {
     /// PF-01 (full review 4): the chest's loops also stop while the app is
     /// inactive, the window is occluded or Low Power Mode is on, through the
     /// same gate the lock screen's lighthouse uses.
-    private lazy var motionGate = DecorativeMotionGate { [weak self] still in self?.chest.setHoldsStill(still) }
+    /// Made on first attach, never by a detach, for the reason
+    /// `LockScreenController.motionGate` gives.
+    private var motionGate: DecorativeMotionGate?
 
     private func attachMotionGate() {
         guard let window, !isHiddenOrHasHiddenAncestor else { return }
-        motionGate.attach(to: window)
-        chest.setHoldsStill(motionGate.holdsStill)
+        let gate = motionGate ?? DecorativeMotionGate { [weak self] still in self?.chest.setHoldsStill(still) }
+        motionGate = gate
+        gate.attach(to: window)
+        chest.setHoldsStill(gate.holdsStill)
     }
 
     // MARK: The form's entrance

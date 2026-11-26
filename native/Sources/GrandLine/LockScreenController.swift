@@ -1130,7 +1130,18 @@ final class LockScreenController: NSViewController {
     /// PF-01 (full review 4): holds the scene still while nobody is looking -
     /// the app inactive, the window occluded, Low Power Mode - as well as
     /// under Reduce Motion. See `DecorativeMotionGate`'s header.
-    private lazy var motionGate = DecorativeMotionGate { [weak self] _ in self?.applyMotionPreference() }
+    ///
+    /// Made on first attach, never by a read or a detach. A lazy property
+    /// read from `deinit` would build the gate there, and its `[weak self]`
+    /// closure then forms a weak reference to an object mid-deallocation,
+    /// which the runtime aborts on (measured: three CI suites, exit 134).
+    private var motionGate: DecorativeMotionGate?
+
+    private func attachMotionGate(to window: NSWindow) {
+        let gate = motionGate ?? DecorativeMotionGate { [weak self] _ in self?.applyMotionPreference() }
+        motionGate = gate
+        gate.attach(to: window)
+    }
 
     /// GL-16: the two animations below (the boat's bob and the wave's drift)
     /// loop forever, and this screen is *mandatory* - a captain who has turned
@@ -1150,7 +1161,7 @@ final class LockScreenController: NSViewController {
     /// picture is drawn while the app is inactive, the window is occluded or
     /// Low Power Mode is on, and the loops come back when all of that clears.
     private var prefersReducedMotion: Bool {
-        HelmMotion.isReduced || motionGate.holdsStill
+        HelmMotion.isReduced || (motionGate?.holdsStill ?? false)
     }
 
     /// E4 (`data/grand-line-e2e-audit/report.md`): stop the looping
@@ -1171,7 +1182,7 @@ final class LockScreenController: NSViewController {
     /// animations that happened to still be attached.
     func stopAnimations() {
         removeKeyMonitor()
-        motionGate.detach()
+        motionGate?.detach()
         lighthouse.stopAll()
         guard animationsStarted else { return }
         animationsStarted = false
@@ -1205,7 +1216,7 @@ final class LockScreenController: NSViewController {
         // covering the window while the lock screen is up takes effect at
         // once. The gate registers Reduce Motion on `NSWorkspace`'s
         // notification center (P7: on the default center it never fired).
-        if let window = view.window { motionGate.attach(to: window) }
+        if let window = view.window { attachMotionGate(to: window) }
 
         installKeyMonitor()
         // Draws the moving scene, or the still one if the gate says so -
@@ -1299,9 +1310,7 @@ final class LockScreenController: NSViewController {
     }
     #endif
 
-    deinit {
-        motionGate.detach()
-    }
+    // No `deinit`: the gate detaches itself when it goes with this controller.
 
     // MARK: - Content
 
