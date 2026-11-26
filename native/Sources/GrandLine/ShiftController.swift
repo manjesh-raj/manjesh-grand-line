@@ -118,6 +118,22 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private static let reviewViewID = "review"
     var onModuleTabChanged: (() -> Void)?
 
+    // MARK: UX-04 - the task in the inspector
+
+    /// The task whose details fill the inspector, or `nil`. Set by a click
+    /// on a card or a List row; cleared when the inspector closes or the
+    /// task leaves the active list.
+    var inspectedTaskID: String?
+    /// The selected task's view, built once and refilled.
+    lazy var taskInspector: ShiftTaskInspectorView = makeTaskInspector()
+    /// The activity lines for the task they were read for. Read from disk on
+    /// a new selection only (GL-35), not on every save.
+    var inspectedActivity: (id: String, lines: [String])?
+    var onInspectorContentChanged: (() -> Void)?
+    var onShowInspector: (() -> Void)?
+    /// The When panel opened from the inspector's date chip.
+    var inspectorSchedulePopover: ShiftSchedulePopover?
+
     // MARK: The Calendar view (tasks-calendar plan PR 4)
 
     /// Tasks' Calendar view, built the first time it shows
@@ -928,6 +944,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         }
         render()
         onModuleTabChanged?()
+        onInspectorContentChanged?()
         if wasCalendar != (view == .calendar) { onDrillActionsChanged?() }
     }
 
@@ -1095,9 +1112,14 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// deliberately only touches `active.yaml`, so editing one from the Done
     /// column would silently save nothing - reopening it is the honest path,
     /// and saying so beats a sheet whose Save does nothing.
+    /// UX-04: the card whose task fills the inspector keeps its selected
+    /// edge while the keyboard is in the inspector.
+    func markInspectedCard(_ id: String?) { boardView.inspectedTaskID = id }
+
     private func openBoardTask(id: String) {
-        if let task = store.activeTasks.first(where: { $0.id == id }) {
-            presentTaskEditor(for: task)
+        // UX-04: a live task opens in the inspector, beside the board.
+        if store.activeTasks.contains(where: { $0.id == id }) {
+            inspectTask(id: id)
             return
         }
         guard let done = store.allCompletedTasks().first(where: { $0.id == id }) else { return }
@@ -1266,6 +1288,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         applyCalendarVisibility()
         applyTheme()
         onModuleTabChanged?()
+        onInspectorContentChanged?()
     }
 
     /// The Shift menu / search palette's entry point into Weekly Review -
@@ -1449,7 +1472,13 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     func openTask(id: String) {
         showDashboard()
         guard let task = store.activeTasks.first(where: { $0.id == id }) else { return }
-        presentTaskEditor(for: task)
+        // UX-04: in the inspector beside the board or the list. The
+        // calendar fills the page, so it keeps the sheet.
+        if tasksView == .calendar || isProjectDetailFullPage {
+            presentTaskEditor(for: task)
+        } else {
+            inspectTask(id: id)
+        }
     }
 
     func openFollowUp(id: String) {
@@ -1530,6 +1559,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         renderWorkspaceChrome()
         // The calendar redraws only while it shows; switching to it renders it.
         if isShowingCalendar { calendar.render() }
+        refreshTaskInspector()
 
         applyTheme()
     }
@@ -1544,6 +1574,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private func applyProjectDetailFullPage(_ isDetail: Bool) {
         isProjectDetailFullPage = isDetail
         applyTasksViewVisibility()
+        onInspectorContentChanged?()
     }
 
     /// Whether the project detail currently owns the whole page - the board
@@ -2075,7 +2106,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// prefilled task as `task` would silently make the promotion overwrite a
     /// task that does not exist yet.
     /// The sheet itself is `ShiftRecordSheets`', shared with the Calendar.
-    private func presentTaskEditor(for task: ShiftTask?,
+    func presentTaskEditor(for task: ShiftTask?,
                                    prefill: ShiftTask? = nil,
                                    defaultProjectID: String? = nil,
                                    defaultStatus: ShiftTaskStatus? = nil) {

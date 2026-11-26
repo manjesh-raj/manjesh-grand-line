@@ -28,6 +28,7 @@ enum ReviewFourUXSelfTest {
         checkTheCrewLogIsATimeline(&ok)
         checkAskTheCrewStartsWithThingsToAsk(&ok)
         checkTheConsoleStartPage(&ok)
+        checkTheTaskInspectorWords(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -357,6 +358,59 @@ enum ReviewFourUXSelfTest {
             }
             check(did == ["host", "snippet Disk usage", "shell"], "UX-11: the start page did \(did)", &ok)
         }
+    }
+
+    // MARK: UX-04
+
+    /// The inspector's chips and activity, against a pinned local noon.
+    private static func checkTheTaskInspectorWords(_ ok: inout Bool) {
+        let calendar = Calendar.current
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0,
+                                 of: calendar.date(from: DateComponents(year: 2026, month: 11, day: 26)) ?? Date()) ?? Date()
+        func day(_ offset: Int) -> String {
+            let parts = calendar.dateComponents([.year, .month, .day], from: calendar.date(byAdding: .day, value: offset, to: noon) ?? noon)
+            return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+        }
+        var task = ShiftTask.fresh(now: noon)
+        task.dueDate = day(0)
+        task.dueTime = "15:00"
+        let today = TaskInspectorWords.dueChip(task, now: noon, calendar: calendar)
+        check(today.text == "Today " + ShiftDateFormatting.clock("15:00") && today.tint == .warn,
+              "UX-04: a task due later today reads \(today.text) in \(String(describing: today.tint))", &ok)
+        task.dueDate = day(-2)
+        task.dueTime = nil
+        let late = TaskInspectorWords.dueChip(task, now: noon, calendar: calendar)
+        check(late.text == "Overdue 2 days" && late.tint == .critical, "UX-04: two days late reads \(late.text)", &ok)
+        task.dueDate = day(1)
+        check(TaskInspectorWords.dueChip(task, now: noon, calendar: calendar).text == "Tomorrow",
+              "UX-04: tomorrow does not read Tomorrow", &ok)
+        task.dueDate = nil
+        check(TaskInspectorWords.dueChip(task, now: noon, calendar: calendar) .text == "No date",
+              "UX-04: no date does not say so", &ok)
+        check(TaskInspectorWords.priorityChip(.high).tint == .critical && TaskInspectorWords.priorityChip(.normal).tint == nil,
+              "UX-04: only High carries a hue", &ok)
+        check(TaskInspectorWords.checklistKicker([]) == "Checklist"
+                && TaskInspectorWords.checklistKicker([.init(id: "a", title: "a", done: true),
+                                                      .init(id: "b", title: "b", done: false)]) == "Checklist \u{00B7} 1 of 2",
+              "UX-04: the checklist kicker does not count", &ok)
+
+        task.createdAt = ShiftStore.iso8601(calendar.date(byAdding: .day, value: -3, to: noon) ?? noon)
+        func entry(_ kind: String, _ offset: Int, seconds: Int? = nil, target: String? = nil) -> ShiftActivityEntry {
+            ShiftActivityEntry(id: UUID().uuidString,
+                               timestamp: ShiftStore.iso8601(calendar.date(byAdding: .day, value: offset, to: noon) ?? noon),
+                               kind: kind, summary: "", targetID: target ?? task.id, durationSeconds: seconds)
+        }
+        let entries = [entry(FocusActivityLog.kind, -1, seconds: 1800), entry(FocusActivityLog.kind, 0, seconds: 2400),
+                       entry("task_due_date_changed", -1), entry("task_due_date_changed", -2),
+                       entry(FocusActivityLog.kind, 0, seconds: 9000, target: "someone-else")]
+        let created = ShiftRecurrence.shortWeekdayName(calendar.component(.weekday, from: calendar.date(byAdding: .day, value: -3, to: noon) ?? noon))
+        let lines = TaskInspectorWords.activityLines(task: task, entries: entries, unreadable: false, now: noon, calendar: calendar)
+        check(lines == ["Focused 1h 10m \u{00B7} today", "Pushed back 2 times", "Created \u{00B7} \(created)"],
+              "UX-04: the activity reads \(lines)", &ok)
+        // GL-14: an unreadable month is said, never read as no focus time.
+        let unread = TaskInspectorWords.activityLines(task: task, entries: [], unreadable: true, now: noon, calendar: calendar)
+        check(unread.count == 2 && unread.last?.contains("could not be read") == true,
+              "UX-04: an unreadable activity log reads \(unread)", &ok)
     }
 }
 

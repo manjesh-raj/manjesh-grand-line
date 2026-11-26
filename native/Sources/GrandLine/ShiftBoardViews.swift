@@ -268,6 +268,16 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
     private(set) var taskID: String = ""
     private var currentColumn: ShiftBoardColumn = .backlog
 
+    /// UX-04: this card's task fills the inspector, so it stays drawn as
+    /// selected while the keyboard is over there.
+    var isInspected = false {
+        didSet {
+            guard isInspected != oldValue, window?.firstResponder !== self else { return }
+            row.isRowSelected = isInspected
+            if usesWorkspaceStyle { workspaceCard.isSelected = isInspected }
+        }
+    }
+
     /// A single click with no drag.
     var onOpen: (() -> Void)?
     /// A move requested from the context menu or an accessibility action -
@@ -402,8 +412,8 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
     }
 
     override func resignFirstResponder() -> Bool {
-        row.isRowSelected = false
-        if usesWorkspaceStyle { workspaceCard.isSelected = false }
+        row.isRowSelected = isInspected
+        if usesWorkspaceStyle { workspaceCard.isSelected = isInspected }
         noteFocusRingMaskChanged()
         return super.resignFirstResponder()
     }
@@ -1479,6 +1489,13 @@ final class ShiftBoardColumnView: NSView {
     var onOpenTask: ((String) -> Void)?
     var onMoveTask: ((String, ShiftBoardColumn) -> Void)?
     var onDeleteTask: ((String) -> Void)?
+    /// UX-04: the task the inspector shows, whose card stays selected.
+    var inspectedTaskID: String? {
+        didSet {
+            guard inspectedTaskID != oldValue else { return }
+            for card in cardViews { card.isInspected = card.taskID == inspectedTaskID }
+        }
+    }
     /// UX7's reschedule gesture, forwarded up with the task's id like every
     /// other card verb here.
     var onPushTaskDue: ((String, ShiftDuePush) -> Void)?
@@ -1836,6 +1853,7 @@ final class ShiftBoardColumnView: NSView {
                                project: task.projectID.flatMap { projects[$0] },
                                column: self.column,
                                theme: theme)
+            cardView.isInspected = task.id == self.inspectedTaskID
         })
         cardViews = cardRows.orderedRows.compactMap { $0 as? ShiftBoardCardView }
 
@@ -2030,6 +2048,13 @@ final class ShiftBoardView: NSView {
     var onOpenTask: ((String) -> Void)?
     var onMoveTask: ((String, ShiftBoardColumn) -> Void)?
     var onDeleteTask: ((String) -> Void)?
+    /// UX-04: the task the inspector shows, whose card stays selected.
+    var inspectedTaskID: String? {
+        didSet {
+            guard inspectedTaskID != oldValue else { return }
+            for column in columnViews { column.inspectedTaskID = inspectedTaskID }
+        }
+    }
     /// UX7's reschedule gesture, forwarded up with the task's id like every
     /// other card verb here.
     var onPushTaskDue: ((String, ShiftDuePush) -> Void)?

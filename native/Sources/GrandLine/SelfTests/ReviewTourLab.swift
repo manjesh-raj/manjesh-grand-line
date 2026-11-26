@@ -1100,6 +1100,18 @@ enum ReviewTourLab {
             shell.view.window?.makeFirstResponder(all[index])
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             return "ux boardfocus"
+        // UX-04: open a board card the way a click does, so its task fills
+        // the inspector.
+        case "boardopen":
+            func cards(in view: NSView) -> [ShiftBoardCardView] {
+                view.subviews.flatMap { ($0 as? ShiftBoardCardView).map { [$0] } ?? cards(in: $0) }
+            }
+            let index = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            let all = cards(in: shell.view).filter { !$0.isHiddenOrHasHiddenAncestor }
+            guard all.indices.contains(index) else { return "ux boardopen FAILED - \(all.count) cards" }
+            all[index].onOpen?()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+            return "ux boardopen \(all[index].taskID)"
         // UX-26: the Add Host sheet, rendered on its own.
         case "hostsheet":
             guard parts.count == 2 else { return "ux hostsheet FAILED - want hostsheet <name>" }
@@ -1783,7 +1795,14 @@ enum ReviewTourLab {
             return t
         }
         _ = task("Renew the staging TLS certificate", .todo, .high, due: -2, project: infra, tags: ["infra"])
-        _ = task("Rotate the CI deploy key", .todo, .high, due: 0, project: infra, tags: ["security"])
+        var key = task("Rotate the CI deploy key", .todo, .high, due: 0, project: infra, tags: ["security"])
+        // UX-04: the inspector's checklist and notes have something to show.
+        key.dueTime = "09:30"
+        key.description = "Old key expires on the 30th."
+        key.subtasks = [ShiftSubtask(id: "key-1", title: "Generate the new key", done: true),
+                        ShiftSubtask(id: "key-2", title: "Add it to the CI secrets", done: false),
+                        ShiftSubtask(id: "key-3", title: "Remove the old key from the repo", done: false)]
+        store.updateTask(key)
         _ = task("Write the 4.20 release notes", .inProgress, .normal, due: 1, project: release)
         _ = task("Cut the 4.20 release branch", .todo, .normal, due: 3, project: release, tags: ["release"])
         _ = task("Review the on-call runbook", .inProgress, .low, due: nil, project: nil)

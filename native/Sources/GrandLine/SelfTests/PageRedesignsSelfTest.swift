@@ -81,7 +81,8 @@ enum PageRedesignsSelfTest {
                               checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkReplyQuestionHead,
                               checkInFlightBand, checkReviewBand, checkLogBand,
                               checkDevOpsHub,
-                              ConnectionFormsWindowChecks.checkForms, ConsoleFixesWindowChecks.checkConsole] {
+                              ConnectionFormsWindowChecks.checkForms, ConsoleFixesWindowChecks.checkConsole,
+                              ReviewFourWindowChecks.checkTasks] {
                     var ok = true
                     check(shell, window, scratch, &ok)
                     allOK = allOK && ok

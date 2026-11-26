@@ -385,7 +385,7 @@ final class TaskCalendarController: NSViewController {
 
     /// `current` with the schedule `previous` had: the fields the When panel
     /// writes, so anything else edited since is kept.
-    private static func restoringSchedule(of previous: ShiftTask, into current: ShiftTask) -> ShiftTask {
+    static func restoringSchedule(of previous: ShiftTask, into current: ShiftTask) -> ShiftTask {
         var restored = current
         restored.dueDate = previous.dueDate
         restored.dueTime = previous.dueTime
