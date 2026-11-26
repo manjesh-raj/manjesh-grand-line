@@ -82,9 +82,11 @@ protocol WorkspaceHeaderAccessoryProviding: AnyObject {
 
 /// A page whose own first content sits directly under the window toolbar
 /// when the header line has nothing to say, rather than under S03's empty
-/// 32pt slot. Console is the one (`fm/grandline-console-fixes`): it draws no
-/// header line at all, so the slot was only ever dead space above its band,
-/// which the captain asked to remove. The line still shows the moment it
+/// 32pt slot. Console was the first (`fm/grandline-console-fixes`): it draws
+/// no header line at all, so the slot was only ever dead space above its
+/// band, which the captain asked to remove. Every page that opens on a hero
+/// adopts it now (UI-01 and UI-12 of full review 4,
+/// `WorkspaceHeroPagesHeaderLine.swift`). The line still shows the moment it
 /// carries a subtitle or a control.
 protocol WorkspaceHeaderLineCollapsing: AnyObject {
     var collapsesEmptyHeaderLine: Bool { get }

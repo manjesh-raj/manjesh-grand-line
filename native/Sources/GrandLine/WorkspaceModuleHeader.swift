@@ -95,7 +95,8 @@ final class WorkspaceModuleHeader: NSView {
     var hasSubtitle: Bool { !subtitleLabel.isHidden }
 
     /// Whether an empty line gives up its slot (`WorkspaceHeaderLineCollapsing`)
-    /// rather than keeping S03's height. Off for every page but Console.
+    /// rather than keeping S03's height. On for Console and for every page
+    /// that opens on a hero (UI-01 of full review 4).
     var collapsesWhenEmpty = false {
         didSet { refreshCollapse() }
     }
