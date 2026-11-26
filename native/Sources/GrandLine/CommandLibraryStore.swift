@@ -341,14 +341,26 @@ final class CommandLibraryStore {
     /// command's detail pane, per the phase-2 brief. Moves `id` to the front
     /// rather than re-sorting by timestamp, so ordering is correct even when
     /// two uses land in the same second.
-    func recordUsage(_ id: String) {
+    func recordUsage(_ id: String, via: String? = nil, now: Date = Date()) {
         recentUsage.removeAll { $0.id == id }
-        recentUsage.insert(CommandLibraryUsageEntry(id: id, usedAt: Date()), at: 0)
+        recentUsage.insert(CommandLibraryUsageEntry(id: id, usedAt: now, via: via), at: 0)
         if recentUsage.count > Self.maxRecentUsageEntries {
             recentUsage.removeLast(recentUsage.count - Self.maxRecentUsageEntries)
         }
         persist(what: "recently used commands", path: recentUsagePath) { try CommandLibraryYaml.writeRecentUsage(recentUsage, path: recentUsagePath) }
         gitSync?.markDirty()
+    }
+
+    /// UX-10: when and where `id` was last sent, or `nil` for never.
+    func lastUsage(of id: String) -> CommandLibraryUsageEntry? {
+        recentUsage.first { $0.id == id }
+    }
+
+    /// GL-14: `recent.yaml` is there and could not be read, so "never sent"
+    /// is unknown rather than true.
+    var recentUsageUnreadable: Bool {
+        ensureLoaded()
+        return unwritablePaths.contains(recentUsagePath)
     }
 
     /// Most-recent-first, skipping any id whose command no longer exists
@@ -376,7 +388,7 @@ final class CommandLibraryStore {
         recentUsage = recentUsage.map { entry in
             guard entry.id == oldID else { return entry }
             changedUsage = true
-            return CommandLibraryUsageEntry(id: newID, usedAt: entry.usedAt)
+            return CommandLibraryUsageEntry(id: newID, usedAt: entry.usedAt, via: entry.via)
         }
         if changedUsage {
             persist(what: "recently used commands", path: recentUsagePath) { try CommandLibraryYaml.writeRecentUsage(recentUsage, path: recentUsagePath) }

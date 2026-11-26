@@ -30,6 +30,7 @@ enum ReviewFourUXSelfTest {
         checkTheConsoleStartPage(&ok)
         checkTheTaskInspectorWords(&ok)
         checkTheWeeklyReviewWords(&ok)
+        checkTheCommandsPage(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -459,6 +460,90 @@ enum ReviewFourUXSelfTest {
               "UX-05: the summary reads \(ShiftReviewWords.summary(done: 1, moved: 2, dropped: 1, skipped: 0, nextWeek: 3))", &ok)
         check(ShiftReviewWords.kicker(now: noon, calendar: calendar).hasPrefix("Weekly review \u{00B7} "),
               "UX-05: the kicker reads \(ShiftReviewWords.kicker(now: noon, calendar: calendar))", &ok)
+    }
+
+    // MARK: UX-10
+
+    /// Commands: categories as chips above the list, favourites and recents
+    /// first with when they were sent, the risk in words, the filled
+    /// preview, and where the command was last sent.
+    private static func checkTheCommandsPage(_ ok: inout Bool) {
+        let now = Date()
+        check(CommandLibraryWords.riskWords(.readOnly) == "Read-only \u{00B7} changes nothing"
+                && CommandLibraryWords.riskWords(.destructive).hasPrefix("Destructive"),
+              "UX-10: the risk words are \(CommandLibraryWords.riskWords(.readOnly))", &ok)
+        check(CommandLibraryWords.sentTo(hosts: ["DEV Bastion", "a", "b"]) == "To DEV Bastion and 2 more hosts",
+              "UX-10: three hosts read \(CommandLibraryWords.sentTo(hosts: ["DEV Bastion", "a", "b"]))", &ok)
+        check(CommandLibraryWords.sentAgo(now.addingTimeInterval(-7_300), now: now).hasPrefix("sent 2 hours ago")
+                || !Calendar.current.isDate(now.addingTimeInterval(-7_300), inSameDayAs: now),
+              "UX-10: two hours ago reads \(CommandLibraryWords.sentAgo(now.addingTimeInterval(-7_300), now: now))", &ok)
+        check(CommandLibraryWords.lastSent(nil, unreadable: false, now: now) == "Not sent from here yet."
+                && CommandLibraryWords.lastSent(nil, unreadable: true, now: now).hasPrefix("Couldn\u{2019}t read"),
+              "UX-10: an unknown last send reads as never sent", &ok)
+        let categories = (1...8).map { (id: "c\($0)", name: "Cat\($0)", count: $0) }
+        let chips = CommandLibraryWords.chips(categories: categories, total: 36, selected: "c7", expanded: false)
+        check(chips.map(\.title) == ["All", "Cat1 1", "Cat2 2", "Cat3 3", "Cat4 4", "Cat7 7", "+3"],
+              "UX-10: the chips read \(chips.map(\.title))", &ok)
+        check(CommandLibraryWords.chips(categories: categories, total: 36, selected: nil, expanded: true).last?.title == "Fewer",
+              "UX-10: the expanded chips end without Fewer", &ok)
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("review4-commands-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // `via` round-trips, and a file written before it existed still
+        // reads (GL-01).
+        let recent = dir.appendingPathComponent("recent-roundtrip.yaml").path
+        try? CommandLibraryYaml.writeRecentUsage([CommandLibraryUsageEntry(id: "a", usedAt: now, via: "Copied"),
+                                                  CommandLibraryUsageEntry(id: "b", usedAt: now)], path: recent)
+        let back = CommandLibraryYaml.readRecentUsage(path: recent)
+        check(!back.failed && back.value.map(\.via) == ["Copied", nil],
+              "UX-10: recent.yaml read back \(back.value.map(\.via)), failed \(back.failed)", &ok)
+        let previous = ProcessInfo.processInfo.environment["FM_COMMAND_LIBRARY_DIR"]
+        setenv("FM_COMMAND_LIBRARY_DIR", dir.path, 1)
+        defer { if let previous { setenv("FM_COMMAND_LIBRARY_DIR", previous, 1) } else { unsetenv("FM_COMMAND_LIBRARY_DIR") } }
+        autoreleasepool {
+            let store = CommandLibraryStore()
+            guard let describe = store.commands.first(where: { $0.name == "Describe Pod" }) else {
+                return fail("UX-10: the seeded library has no Describe Pod", &ok)
+            }
+            store.recordUsage(describe.id, via: "To DEV Bastion", now: now.addingTimeInterval(-120))
+            // The seam: the page gives up the empty header line, so its band
+            // starts right under the toolbar.
+            let controller: AnyObject = CommandLibraryController(store: store)
+            check((controller as? WorkspaceHeaderLineCollapsing).map { $0.collapsesEmptyHeaderLine && !$0.drawsSubtitleOnHeaderLine } == true,
+                  "UX-10: Commands still keeps an empty header line over its band", &ok)
+            let page = CommandLibraryPageView(store: store)
+            page.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 900)
+            page.reloadAndRender()
+            page.view.layoutSubtreeIfNeeded()
+            let lines = page.debugLeftPanelContents().lines
+            check(page.debugChips?.debugTitles.first == "All" && !lines.contains("CATEGORIES"),
+                  "UX-10: the categories are not chips: \(lines.prefix(4))", &ok)
+            check(lines.firstIndex(of: "FAVOURITES AND RECENT") ?? 99 < lines.firstIndex(of: "ALL COMMANDS") ?? 0
+                    && lines.contains { $0.contains("Describe Pod") && $0.contains("sent 2 minutes ago") },
+                  "UX-10: the recent command does not lead the list: \(lines.prefix(6))", &ok)
+            check(page.debugSearchPlaceholder == "Search \(store.commands.count) commands\u{2026}",
+                  "UX-10: the search says \(page.debugSearchPlaceholder)", &ok)
+            page.openCommand(id: describe.id)
+            page.debugSetParameter("pod", to: "checkout-worker-7d9")
+            check(page.debugPreview.hasSuffix("checkout-worker-7d9") && !page.debugPreview.contains("{{"),
+                  "UX-10: the preview reads \(page.debugPreview)", &ok)
+            check(page.debugRiskWords == "Read-only \u{00B7} changes nothing",
+                  "UX-10: the risk pill reads \(page.debugRiskWords)", &ok)
+            check(page.debugLastSentShowing && page.debugLastSent.hasPrefix("To DEV Bastion \u{00B7} today"),
+                  "UX-10: the last send reads \(page.debugLastSent)", &ok)
+            // A category chip, pressed through its own click recognizer,
+            // narrows the list to that category.
+            if let chip = page.debugChips?.chipIDs.dropFirst().first {
+                page.debugChips?.debugPress(chip)
+                page.view.layoutSubtreeIfNeeded()
+                let narrowed = page.debugLeftPanelContents()
+                let inCategory = store.commands.filter { $0.category == chip }.count
+                check(!narrowed.lines.contains("ALL COMMANDS")
+                        && narrowed.commandRowCount == inCategory + (describe.category == chip ? 1 : 0),
+                      "UX-10: the \(chip) chip shows \(narrowed.commandRowCount) rows, want \(inCategory)", &ok)
+            }
+        }
     }
 }
 

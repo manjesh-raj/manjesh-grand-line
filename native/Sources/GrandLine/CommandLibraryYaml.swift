@@ -205,7 +205,10 @@ enum CommandLibraryYaml {
             guard let dict = entry.dictionary, let id = optString(dict[str("id")] ?? .null) else { return nil }
             let usedAtString = reqString(dict[str("used_at")] ?? .null)
             let usedAt = usageDateFormatter.date(from: usedAtString) ?? ISO8601DateFormatter().date(from: usedAtString) ?? Date(timeIntervalSince1970: 0)
-            return CommandLibraryUsageEntry(id: id, usedAt: usedAt)
+            // UX-10: `via` is optional, so a file written before it existed
+            // still reads (GL-01).
+            let via = optString(dict[str("via")] ?? .null)
+            return CommandLibraryUsageEntry(id: id, usedAt: usedAt, via: via)
         }, failed: false)
     }
 
@@ -215,6 +218,7 @@ enum CommandLibraryYaml {
             var e = YamlOrderedMap()
             e[str("id")] = str(entry.id)
             e[str("used_at")] = str(usageDateFormatter.string(from: entry.usedAt))
+            if let via = entry.via { e[str("via")] = str(via) }
             return .dictionary(e)
         })
         let text = YamlBeautify.dump([.dictionary(m)])

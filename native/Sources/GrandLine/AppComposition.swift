@@ -1512,7 +1512,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             if !outcome.sent.isEmpty {
-                self.commandLibraryStore.recordUsage(command.id)
+                let names = hosts.filter { outcome.sent.contains($0.id) }.map(\.label)
+                self.commandLibraryStore.recordUsage(command.id, via: CommandLibraryWords.sentTo(hosts: names))
                 // Land on the first host that actually received it, so the
                 // captain sees a real result rather than whichever page was
                 // connected last.
@@ -1662,7 +1663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self else { return }
                 CommandRiskConfirmation.confirm(command: command, generatedText: generated,
                                                 actionVerb: "send to the terminal") {
-                    self.commandLibraryStore.recordUsage(command.id)
+                    self.commandLibraryStore.recordUsage(command.id, via: "To the terminal, from \u{2318}K")
                     self.appShell.workspace.navigator.sendCommandToConsole(generated)
                     self.appShell.showToast("Sent to terminal")
                 }

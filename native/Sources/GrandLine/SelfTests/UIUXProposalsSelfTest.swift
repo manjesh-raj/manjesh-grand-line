@@ -384,9 +384,11 @@ enum UIUXProposalsSelfTest {
         // Health left this list with H-4 of the page-redesign board: its
         // summary is the hero column's four buckets (`HealthHeroWords`).
         // Setup's five figures are still a boxed strip, as the hero tiles of
-        // Sup-1's hero (`SetupHeroRow`).
+        // Sup-1's hero (`SetupHeroRow`). Weekly review left it with UX-05 of
+        // full review 4: its figures are the review band's
+        // (`ShiftReviewHeroBand`), beside the verdict and Start review.
         for page in ["FleetController.swift", "ReviewController.swift", "SetupHeroRow.swift",
-                     "LogAnalyzerController.swift", "ShiftController.swift"] {
+                     "LogAnalyzerController.swift"] {
             check(source(page).contains("HelmKPIStrip(density: .boxed)"), "S14: \(page) draws its summary row boxed", &ok)
         }
     }

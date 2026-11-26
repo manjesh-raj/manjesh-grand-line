@@ -1100,6 +1100,21 @@ enum ReviewTourLab {
             shell.view.window?.makeFirstResponder(all[index])
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             return "ux boardfocus"
+        // UX-10: a favourite, three recent sends and a filled pod name on
+        // Describe Pod, so the Commands page shows its lead rows and its
+        // filled preview.
+        case "cmdfill":
+            let store = shell.workspace.commandLibraryStore
+            let find: (String) -> DevOpsCommand? = { name in store.commands.first { $0.name == name } }
+            guard let describe = find("Describe Pod") else { return "ux cmdfill FAILED - no Describe Pod" }
+            if let logs = find("Get Pod Logs") { store.recordUsage(logs.id, via: "To the terminal", now: Date().addingTimeInterval(-86_400)) }
+            if let restart = find("Restart Deployment") { store.recordUsage(restart.id, via: "Copied", now: Date().addingTimeInterval(-3 * 86_400)) }
+            store.recordUsage(describe.id, via: "To DEV Bastion", now: Date().addingTimeInterval(-7_200))
+            let page = shell.workspace.commandLibrary.debugPage
+            page?.reloadAndRender()
+            page?.openCommand(id: describe.id)
+            page?.debugSetParameter("pod", to: "checkout-worker-7d9")
+            return "ux cmdfill \(page?.debugPreview ?? "-")"
         // UX-05: Weekly review's Start review, then optionally Skip N times.
         case "reviewstart":
             let shift = shell.workspace.shift
