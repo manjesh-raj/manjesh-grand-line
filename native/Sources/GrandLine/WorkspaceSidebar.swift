@@ -196,10 +196,11 @@ enum WorkspaceSidebarMetrics {
     static let moduleTextSize: CGFloat = 15
     static let sessionTextSize: CGFloat = 14
     static let labelWeight: NSFont.Weight = .medium
-    /// Sb-4's group titles are the hero column's small-caps kicker, with the
-    /// group's row count at the trailing edge.
+    /// Sb-4's group titles are the hero column's small-caps kicker. A
+    /// collapsed group carries what is waiting inside it at the trailing
+    /// edge, in a pill that fits the 18pt heading row (UI-02).
     static let sectionTextSize: CGFloat = 11
-    static let sectionCountSize: CGFloat = 11.5
+    static let sectionBadgeHeight: CGFloat = 16
     /// The lit row's pill and a hovered row's fill: `HelmHeroNavRow`'s radius.
     static let pillRadius: CGFloat = 8
     /// The icon's box, and the symbol drawn in it at the Medium symbol scale.
@@ -410,6 +411,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             let view = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
             (view as? WorkspaceSidebarPageCell)?.setBadge(badge(for: .devopsHub), theme: theme)
         }
+        refreshSectionBadges()
     }
 
     /// The sessions changed: rebuild the rows, keeping what the captain
@@ -448,7 +450,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         return signals.badge(for: module, sessionsUnder: WorkspaceSidebarModel.sessionsParent(hidden: hidden))
     }
 
-    /// The signals changed: repaint each module row's badge in place.
+    /// The signals changed: repaint each module row's badge in place, and
+    /// each folded section's sum of them.
     func setSignals(_ signals: WorkspaceSignals) {
         self.signals = signals
         guard isViewLoaded else { return }
@@ -458,6 +461,63 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
                   let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? WorkspaceSidebarPageCell
             else { continue }
             cell.setBadge(badge(for: module), theme: theme)
+        }
+        refreshSectionBadges()
+    }
+
+    /// UI-02 of full review 4: a section's title carries a number only when
+    /// it is folded, and then it is what is waiting in the rows it hides.
+    /// It used to be the section's row count, drawn where the rows draw
+    /// their attention counts, so "WORK 8" read as eight things waiting.
+    private func sectionBadge(for item: WorkspaceSidebarItem) -> WorkspaceBadge? {
+        guard case .section(let title) = item.entry else { return nil }
+        let folded = isViewLoaded && outlineView.row(forItem: item) >= 0 && !outlineView.isItemExpanded(item)
+        let badges = item.children.compactMap { child -> WorkspaceBadge? in
+            guard case .module(let module) = child.entry else { return nil }
+            return badge(for: module)
+        }
+        return Self.sectionBadge(title: title, folded: folded, rows: badges)
+    }
+
+    /// What a section's title draws: nothing while it is open, and the sum
+    /// of its rows' waiting counts, as a pill, while it is folded. A
+    /// folded section with nothing waiting draws nothing either.
+    static func sectionBadge(title: String, folded: Bool, rows: [WorkspaceBadge]) -> WorkspaceBadge? {
+        guard folded else { return nil }
+        let waiting = rows.filter { $0.waiting > 0 }
+        let total = waiting.reduce(0) { $0 + $1.waiting }
+        guard total > 0 else { return nil }
+        let tone: WorkspaceBadge.Tone = waiting.contains { $0.tone == .alarm } ? .alarm : .attention
+        let words = waiting.map(\.description).joined(separator: "; ")
+        return WorkspaceBadge(mark: .count("\(total)"), tone: tone,
+                              description: "\(total) waiting in \(title): \(words)", waiting: total)
+    }
+
+    /// Where the rows' badges end, in the list's own coordinates: a module
+    /// cell's trailing edge less the badge's inset. Home, the first row, is
+    /// a module row. A section title lines its badge up with it.
+    private func rowBadgeEnd() -> CGFloat {
+        // The drawn cell when there is one: `frameOfCell` does not narrow
+        // for a legacy scroller's track, and the drawn cell does.
+        if outlineView.numberOfRows > 0, let cell = outlineView.view(atColumn: 0, row: 0, makeIfNecessary: false) {
+            return cell.convert(cell.bounds, to: outlineView).maxX - HelmMetrics.s2
+        }
+        let rowEnd = outlineView.numberOfRows > 0 ? outlineView.frameOfCell(atColumn: 0, row: 0).maxX
+            : outlineView.bounds.width
+        return rowEnd - HelmMetrics.s2
+    }
+
+    /// Repaint every section title's badge in place - after a fold, an
+    /// unfold, or a change to the rows' own badges.
+    private func refreshSectionBadges() {
+        guard isViewLoaded else { return }
+        let theme = ThemeManager.shared.theme
+        for row in 0..<outlineView.numberOfRows {
+            guard let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem, case .section(let title) = item.entry,
+                  let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? WorkspaceSidebarSectionCell
+            else { continue }
+            cell.configure(title: title, badge: sectionBadge(for: item), theme: theme)
+            cell.badgeEndInList = { [weak self] in self?.rowBadgeEnd() }
         }
     }
 
@@ -631,14 +691,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         switch item.entry {
         case .section(let title):
             let cell = WorkspaceSidebarSectionCell()
-            cell.configure(title: title, count: item.children.count, theme: theme)
-            // A group row's cell spans the whole row, and a module row's cell
-            // stops short of it (16pt at the default width, measured), so the
-            // count is pulled in by the difference to end where the rows'
-            // badges do. Home, the first row, is a module row.
-            let rowEnd = outlineView.numberOfRows > 0 ? outlineView.frameOfCell(atColumn: 0, row: 0).maxX
-                : outlineView.bounds.width
-            cell.trailingInset = HelmMetrics.s2 + max(0, outlineView.bounds.width - rowEnd)
+            cell.configure(title: title, badge: sectionBadge(for: item), theme: theme)
+            cell.badgeEndInList = { [weak self] in self?.rowBadgeEnd() }
             return cell
         case .module(let module):
             let cell = WorkspaceSidebarPageCell()
@@ -713,7 +767,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         refreshRules()
         guard let item = notification.userInfo?["NSObject"] as? WorkspaceSidebarItem else { return }
         switch item.entry {
-        case .section(let title): collapsedSections.insert(title)
+        case .section(let title):
+            collapsedSections.insert(title)
+            refreshSectionBadges()
         // A rebuild's own collapse of a folded module is not a fold by hand.
         case .module(let module) where !isApplyingSelection: collapsedModules.insert(module)
         default: break
@@ -724,7 +780,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         refreshRules()
         guard let item = notification.userInfo?["NSObject"] as? WorkspaceSidebarItem else { return }
         switch item.entry {
-        case .section(let title): collapsedSections.remove(title)
+        case .section(let title):
+            collapsedSections.remove(title)
+            refreshSectionBadges()
         case .module(let module) where !isApplyingSelection: collapsedModules.remove(module)
         default: break
         }
@@ -883,7 +941,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             let cell = rowView.numberOfColumns > 0 ? rowView.view(atColumn: 0) : nil
             switch item.entry {
             case .section(let title):
-                (cell as? WorkspaceSidebarSectionCell)?.configure(title: title, count: item.children.count, theme: theme)
+                (cell as? WorkspaceSidebarSectionCell)?.configure(title: title, badge: sectionBadge(for: item),
+                                                                  theme: theme)
             case .module(let module):
                 (cell as? WorkspaceSidebarPageCell)?.repaint(badge: badge(for: module), lit: row == selected,
                                                              theme: theme)
@@ -1297,17 +1356,35 @@ final class WorkspaceSidebarRowView: NSTableRowView {
 }
 
 /// A section header: "WORK", "OBSERVE", ... Sb-4 draws it as the hero
-/// column's section title: small caps in the quiet ink, with the group's row
-/// count at the trailing edge.
+/// column's section title: small caps in the quiet ink. UI-02: while the
+/// section is folded, what is waiting in its rows sits at the trailing edge
+/// in the rows' own badge pill. An open section draws no number, because its
+/// rows say it themselves.
 final class WorkspaceSidebarSectionCell: NSTableCellView {
     private let label = NSTextField(labelWithString: "")
-    private let count = NSTextField(labelWithString: "")
+    private let badgeView = WorkspaceSidebarBadgeView(height: WorkspaceSidebarMetrics.sectionBadgeHeight)
     private var title = ""
-    private var countTrailing: NSLayoutConstraint!
+    private var badgeTrailing: NSLayoutConstraint!
+    private var pointerInside = false
 
-    /// How far the count ends from the cell's trailing edge.
-    var trailingInset: CGFloat = HelmMetrics.s2 {
-        didSet { countTrailing.constant = -trailingInset }
+    /// Where the rows' badges end, in the list's coordinates, so the badge
+    /// ends there too. A group row's cell spans a different width from a
+    /// module row's (16pt wider at the default width, measured), and the
+    /// outline's own frame for it is the module rows' - read from it, the
+    /// pill ended 14pt off - so the cell places itself once it is laid out.
+    /// Asked at every layout rather than stored: a scroller that appears
+    /// ("Show scroll bars: Always", every CI runner) narrows the rows after
+    /// the cell was built, and a stored end left the pill 15pt short.
+    var badgeEndInList: (() -> CGFloat?)? {
+        didSet { needsLayout = true }
+    }
+
+    override func layout() {
+        if let end = badgeEndInList?(), let list = superview?.superview {
+            let inset = max(0, bounds.maxX - convert(NSPoint(x: end, y: 0), from: list).x)
+            if abs(badgeTrailing.constant + inset) > 0.25 { badgeTrailing.constant = -inset }
+        }
+        super.layout()
     }
 
     override init(frame frameRect: NSRect) {
@@ -1315,34 +1392,26 @@ final class WorkspaceSidebarSectionCell: NSTableCellView {
         label.translatesAutoresizingMaskIntoConstraints = false
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        count.translatesAutoresizingMaskIntoConstraints = false
-        count.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(WorkspaceSidebarMetrics.sectionCountSize),
-                                                weight: .semibold)
-        count.alignment = .right
-        count.setContentHuggingPriority(.required, for: .horizontal)
-        count.setContentCompressionResistancePriority(.required, for: .horizontal)
-        // The title carries the words; the count is the picture of how many
-        // rows a collapsed group holds.
-        count.setAccessibilityElement(false)
+        badgeView.translatesAutoresizingMaskIntoConstraints = false
         // Not the cell's `textField`: a source list restyles a group row's
         // text field in the system's own grey, over the quiet ink (measured
         // in Sb-4's suite).
         addSubview(label)
-        addSubview(count)
+        addSubview(badgeView)
         NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
             // A 2pt foot, so the heading's own height fits the 18pt row.
             label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s0),
-            count.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s2),
-            count.firstBaselineAnchor.constraint(equalTo: label.firstBaselineAnchor),
+            badgeView.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s2),
+            badgeView.centerYAnchor.constraint(equalTo: label.centerYAnchor),
         ])
-        countTrailing = count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -trailingInset)
-        countTrailing.isActive = true
+        badgeTrailing = badgeView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2)
+        badgeTrailing.isActive = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func configure(title: String, count rows: Int, theme: HelmTheme) {
+    func configure(title: String, badge: WorkspaceBadge?, theme: HelmTheme) {
         self.title = title
         let quiet = WorkspaceSidebarInk.of(theme).quiet
         label.attributedStringValue = NSAttributedString(
@@ -1350,21 +1419,24 @@ final class WorkspaceSidebarSectionCell: NSTableCellView {
             attributes: [.font: NSFont.systemFont(ofSize: HelmType.scaled(WorkspaceSidebarMetrics.sectionTextSize),
                                                   weight: .bold),
                          .kern: HelmType.kickerKern, .foregroundColor: quiet])
-        count.stringValue = "\(rows)"
-        count.textColor = quiet
-        setAccessibilityLabel(title)
+        badgeView.configure(badge, theme: theme)
+        badgeView.isHidden = badge == nil || pointerInside
+        // The badge is not an element of its own, so the title says it.
+        setAccessibilityLabel(badge.map { "\(title), \($0.description)" } ?? title)
     }
 
     /// The outline view's disclosure chevron takes the row's trailing edge
-    /// while the pointer is over the title, so the count steps aside for it.
+    /// while the pointer is over the title, so the badge steps aside for it.
     func setPointerInside(_ inside: Bool) {
-        count.isHidden = inside
+        pointerInside = inside
+        badgeView.isHidden = badgeView.badge == nil || inside
     }
 
     #if FM_SELFTESTS
     var debugTitle: String { label.stringValue }
-    var debugCount: String? { count.isHidden ? nil : count.stringValue }
-    var debugCountLabel: NSTextField { count }
+    /// The number the title shows, or nil when it shows none.
+    var debugCount: String? { badgeView.isHidden ? nil : badgeView.debugText }
+    var debugBadgeView: WorkspaceSidebarBadgeView { badgeView }
     var debugTitleColor: NSColor? {
         label.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
     }
@@ -1467,6 +1539,8 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
 /// say - an empty pill reads as a zero (GL-14).
 final class WorkspaceSidebarBadgeView: NSView {
     static let height: CGFloat = WorkspaceSidebarMetrics.badgeHeight
+    /// This badge's own height: a row's, or a section title's smaller pill.
+    private let pillHeight: CGFloat
 
     private let label = NSTextField(labelWithString: "")
     private let symbol = NSImageView()
@@ -1474,10 +1548,18 @@ final class WorkspaceSidebarBadgeView: NSView {
     private var labelInset: [NSLayoutConstraint] = []
     private(set) var badge: WorkspaceBadge?
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    convenience init() { self.init(height: Self.height) }
+
+    override convenience init(frame frameRect: NSRect) {
+        self.init(height: Self.height)
+        frame = frameRect
+    }
+
+    init(height: CGFloat) {
+        pillHeight = height
+        super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = Self.height / 2
+        layer?.cornerRadius = height / 2
         label.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(WorkspaceSidebarMetrics.badgeTextSize),
                                                 weight: .regular)
         label.alignment = .center
@@ -1493,7 +1575,7 @@ final class WorkspaceSidebarBadgeView: NSView {
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 0),
         ]
         NSLayoutConstraint.activate(labelInset + [
-            heightAnchor.constraint(equalToConstant: Self.height),
+            heightAnchor.constraint(equalToConstant: pillHeight),
             widthAnchor.constraint(greaterThanOrEqualToConstant: WorkspaceSidebarSessionCell.dotSide),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             symbol.centerXAnchor.constraint(equalTo: centerXAnchor),

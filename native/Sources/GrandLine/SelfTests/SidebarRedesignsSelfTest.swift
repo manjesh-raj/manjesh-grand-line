@@ -341,21 +341,13 @@ enum SidebarRedesignsSelfTest {
         settle(shell)
         let ink = WorkspaceSidebarInk.of(HelmTheme.dusk)
 
-        // Group titles carry their row counts; the session nests under
-        // Connections with its chord.
+        // An open group's title carries no number (UI-02 of full review 4:
+        // it used to be the group's row count, which read as eight things
+        // waiting); the session nests under Connections with its chord.
         let outline = sidebar.outlineView
         if let work = sidebar.debugCell(for: .section("Work")) as? WorkspaceSidebarSectionCell {
-            let rows = WorkspaceSidebarModel.modules(in: .work, hidden: AppSettings.shared.hiddenModules).count
-            check(work.debugTitle == "WORK" && work.debugCount == "\(rows)",
-                  "Sb-4: the Work title reads \"\(work.debugTitle)\" \(work.debugCount ?? "-"), want WORK \(rows)", &ok)
-            // The disclosure chevron takes the trailing edge under the
-            // pointer, so the count steps aside for it.
-            if let row = sidebar.debugRowView(for: .section("Work")) {
-                row.mouseEntered(with: NSEvent())
-                check(work.debugCount == nil, "Sb-4: the Work count stays under the disclosure chevron", &ok)
-                row.mouseExited(with: NSEvent())
-                check(work.debugCount != nil, "Sb-4: the Work count did not come back", &ok)
-            }
+            check(work.debugTitle == "WORK" && work.debugCount == nil,
+                  "UI-02: the open Work title reads \"\(work.debugTitle)\" \(work.debugCount ?? "-"), want WORK alone", &ok)
         } else {
             fail("Sb-4: no Work title", &ok)
         }
@@ -411,16 +403,10 @@ enum SidebarRedesignsSelfTest {
         shell.workspace.navigator.show(.shift)
         settle(shell)
 
-        // A group's count lines up with the rows' badges.
-        if let title = sidebar.debugCell(for: .section("Work")) as? WorkspaceSidebarSectionCell,
-           let tasks = sidebar.debugCell(for: .module(.tasks)) as? WorkspaceSidebarPageCell, !tasks.badgeView.isHidden {
-            let count = title.debugCountLabel.convert(title.debugCountLabel.bounds, to: outline)
-            let badge = tasks.badgeView.convert(tasks.badgeView.bounds, to: outline)
-            check(abs(count.maxX - badge.maxX) < 1,
-                  "Sb-4: the Work count ends at \(count.maxX) and Tasks' badge at \(badge.maxX)", &ok)
-        } else {
-            fail("Sb-4: fixture: no Work title or no badge on Tasks to line the count up with", &ok)
-        }
+        // UI-02: a folded group says what is waiting in the rows it hides -
+        // the sum of their waiting counts, in the rows' own pill, lined up
+        // with the rows' badges - and nothing when nothing waits.
+        checkAFoldedGroupSaysWhatIsWaiting(sidebar, shell, &ok)
 
         // The focus ring on the pill: inside it, in the pill's words colour.
         HelmFocusVisibility.overrideForTests = true
@@ -443,9 +429,6 @@ enum SidebarRedesignsSelfTest {
         settle(shell)
         check(outline.numberOfRows < before && sidebar.debugVisibleEntries.contains(.section("Observe")),
               "Sb-4: collapsing Observe did not fold its rows", &ok)
-        if let observe = sidebar.debugCell(for: .section("Observe")) as? WorkspaceSidebarSectionCell {
-            check(observe.debugCount != nil, "Sb-4: a collapsed group lost its count", &ok)
-        }
         sidebar.debugSetSection("Observe", expanded: true)
         settle(shell)
         check(outline.numberOfRows == before, "Sb-4: Observe did not open again", &ok)
@@ -453,6 +436,81 @@ enum SidebarRedesignsSelfTest {
             sidebar.menuNeedsUpdate(menu)
             check(menu.appearance?.name == .darkAqua, "Sb-4: the context menu is not in Dusk's own mode", &ok)
         }
+    }
+
+    /// UI-02: the number on a group's title. Signals are set on the sidebar
+    /// directly, through the same `setSignals` the shell calls.
+    private static func checkAFoldedGroupSaysWhatIsWaiting(_ sidebar: WorkspaceSidebarController,
+                                                          _ shell: MainSplitShellController, _ ok: inout Bool) {
+        let outline = sidebar.outlineView
+        var signals = WorkspaceSignals()
+        signals.tasksDue = .read(.init(today: 2, overdue: 1), at: Date())
+        signals.crew = .read(2, at: Date())
+        signals.liveSessions = 1
+        sidebar.setSignals(signals)
+        settle(shell)
+        let work = WorkspaceSidebarModel.modules(in: .work, hidden: AppSettings.shared.hiddenModules)
+        // The fixture can fail: Work holds both counted rows and the
+        // sessions row, whose count is not a queue.
+        guard work.contains(.tasks), work.contains(.crew), work.contains(.connections) else {
+            fail("UI-02: fixture: Work does not hold Tasks, Crew and Connections (\(work))", &ok)
+            return
+        }
+        guard let tasks = sidebar.debugCell(for: .module(.tasks)) as? WorkspaceSidebarPageCell,
+              !tasks.badgeView.isHidden else {
+            fail("UI-02: fixture: Tasks draws no badge to line the group's number up with", &ok)
+            return
+        }
+        if let open = sidebar.debugCell(for: .section("Work")) as? WorkspaceSidebarSectionCell {
+            check(open.debugCount == nil, "UI-02: the open Work title draws \(open.debugCount ?? "-")", &ok)
+        }
+        // Folded from Home, so the lit row is not one the fold hides.
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        sidebar.debugSetSection("Work", expanded: false)
+        settle(shell)
+        defer {
+            sidebar.debugSetSection("Work", expanded: true)
+            sidebar.setSignals(WorkspaceSignals())
+            shell.workspace.navigator.show(.shift)
+            settle(shell)
+        }
+        // Where a row's badge ends, read off a row still in sight: the
+        // module cell's trailing edge less the badge's inset.
+        guard let home = sidebar.debugCell(for: .module(.home)) else {
+            fail("UI-02: fixture: no Home row to line the group's number up with", &ok)
+            return
+        }
+        let rowBadgeEnd = home.convert(home.bounds, to: outline).maxX - HelmMetrics.s2
+        guard let folded = sidebar.debugCell(for: .section("Work")) as? WorkspaceSidebarSectionCell else {
+            fail("UI-02: no Work title once folded", &ok)
+            return
+        }
+        // 3 tasks due plus 2 decisions; the live session is not waiting.
+        check(folded.debugCount == "5",
+              "UI-02: the folded Work title draws \(folded.debugCount ?? "nothing"), want the 5 waiting inside", &ok)
+        let pill = folded.debugBadgeView
+        check(pill.layer?.backgroundColor != nil, "UI-02: the folded Work number is not in the badge pill", &ok)
+        let end = pill.convert(pill.bounds, to: outline).maxX
+        check(abs(end - rowBadgeEnd) < 1, "UI-02: the Work number ends at \(end) and the rows' badges at \(rowBadgeEnd)", &ok)
+        check(pill.frame.height <= (sidebar.debugRowHeight(for: .section("Work")) ?? 0),
+              "UI-02: the Work pill (\(pill.frame.height)pt) is taller than its row", &ok)
+        // The disclosure chevron takes the trailing edge under the pointer,
+        // so the number steps aside for it, and comes back.
+        if let row = sidebar.debugRowView(for: .section("Work")) {
+            row.mouseEntered(with: NSEvent())
+            check(folded.debugCount == nil, "UI-02: the Work number stays under the disclosure chevron", &ok)
+            row.mouseExited(with: NSEvent())
+            check(folded.debugCount == "5", "UI-02: the Work number did not come back", &ok)
+        }
+        // Nothing waiting: a folded group draws nothing, not a zero, and
+        // the live session alone is not counted.
+        var quiet = WorkspaceSignals()
+        quiet.liveSessions = 1
+        sidebar.setSignals(quiet)
+        settle(shell)
+        check(folded.debugCount == nil,
+              "UI-02: a folded Work with nothing waiting draws \(folded.debugCount ?? "-")", &ok)
     }
 
     /// Whether `color` is `expected`, components and alpha.

@@ -493,10 +493,13 @@ enum KubernetesDestinationSelfTest {
         guard harness.controller.debugFeedCardVisible else { return "the feed card was not offered" }
         guard !harness.controller.debugWorkAreaVisible else { return "the work area opened with no feed chosen" }
         guard harness.fake.sentCommands.isEmpty else { return "a command was typed before a feed was chosen" }
-        // The status has to explain the one manual beat, not just sit blank.
-        let status = harness.controller.debugFeedStatusText.lowercased()
-        guard status.contains("kubectl"), status.contains("log") else {
-            return "the feed card did not explain the manual login: \(harness.controller.debugFeedStatusText)"
+        // The page has to explain the one manual beat, not just sit blank.
+        // UI-11 of full review 4: it is the second of the setup steps under
+        // the card, ticked off as the page can see them happen.
+        guard let steps = harness.controller.debugSetupSteps,
+              let login = steps.steps.first(where: { $0.number == 2 }),
+              login.title.contains("kubectl"), login.title.lowercased().contains("log in"), !login.isDone else {
+            return "the page did not explain the manual login: \(String(describing: harness.controller.debugSetupSteps))"
         }
         return nil
     }

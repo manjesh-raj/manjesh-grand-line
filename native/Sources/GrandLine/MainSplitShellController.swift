@@ -657,7 +657,15 @@ final class MainSplitShellController: WorkspaceShellController {
         guard let window = view.window, sidebarItem != nil else { return }
         let width = window.contentRect(forFrameRect: window.frame).width
         guard width > 0 else { return }
-        toolbar.setCompact(width < WorkspaceToolbar.compactWidth(scale: ChromeTextScale.shared.scale))
+        // UI-08 of full review 4: an open inspector takes its width out of
+        // the window toolbar's room too. Measured at 1512pt with the Add Host
+        // form open, the full toolbar did not fit beside it, and AppKit
+        // clipped the crumb at its leading edge ("rk › Connections") rather
+        // than shortening anything. The compact toolbar is the fixed order
+        // things give way in: the crumb's group first, Search to its glyph.
+        let inspectorTakes = inspectorItem.isCollapsed ? 0 : WorkspaceInspectorController.width
+        let compactWidth = WorkspaceToolbar.compactWidth(scale: ChromeTextScale.shared.scale)
+        toolbar.setCompact(width - inspectorTakes < compactWidth, byInspector: width >= compactWidth)
         defer { toolbar.setSidebarShown(!sidebarItem.isCollapsed) }
         // R2-UX-10: a narrower window with the sidebar still showing - which
         // the per-page floors made the usual case at laptop widths - needs

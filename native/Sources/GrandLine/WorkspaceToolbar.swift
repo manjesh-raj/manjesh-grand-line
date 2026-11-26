@@ -756,10 +756,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         applyCrumb(ThemeManager.shared.theme)
     }
 
-    /// Narrow or not, from the window's width.
-    func setCompact(_ compact: Bool) {
-        guard compact != isCompact else { return }
+    /// Narrow or not, from the window's width less an open inspector's.
+    /// `byInspector`: the window alone is wide enough, and only the open
+    /// inspector makes the room short (UI-08 of full review 4).
+    func setCompact(_ compact: Bool, byInspector: Bool = false) {
+        let byInspector = compact && byInspector
+        guard compact != isCompact || byInspector != compactByInspector else { return }
         isCompact = compact
+        compactByInspector = byInspector
         for item in toolbar.items where Group.open.contains(item.itemIdentifier) {
             item.visibilityPriority = quickConnectPriorityNow
         }
@@ -1062,8 +1066,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     static let crumbSidebarShownPriority = NSToolbarItem.VisibilityPriority(rawValue: -1200)
 
     private var sidebarShown = true
+    /// The toolbar is compact only because an open inspector takes its room.
+    /// R2-UX-10's trade was measured on a narrow window; beside the
+    /// inspector at 1512 there is room for the page's name once Quick
+    /// Connect and the module's action have gone, so the crumb keeps its
+    /// place and gives up only its group (UI-08).
+    private var compactByInspector = false
     private var crumbPriorityNow: NSToolbarItem.VisibilityPriority {
-        sidebarShown && isCompact ? Self.crumbSidebarShownPriority : Self.crumbPriority
+        sidebarShown && isCompact && !compactByInspector ? Self.crumbSidebarShownPriority : Self.crumbPriority
     }
 
     /// Whether the window's sidebar is showing (R2-UX-10).

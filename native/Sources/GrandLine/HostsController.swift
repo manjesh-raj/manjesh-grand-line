@@ -355,6 +355,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// F12's switch, as a plain row over the Snippets table (stage 6: no
     /// card).
     private lazy var expansionStrip = SnippetExpansionPanel()
+    private lazy var snippetsTableUnderStrip = snippetsTable.card.topAnchor.constraint(
+        equalTo: expansionStrip.bottomAnchor, constant: HelmMetrics.s3)
+    private lazy var snippetsTableAtTop = snippetsTable.card.topAnchor.constraint(equalTo: snippetsTabView.topAnchor)
     /// The prototype's All / Online filter over the hosts, with each count.
     /// There is no Problems segment: nothing records a host's reachability
     /// (the later page work's decision).
@@ -552,6 +555,24 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             ?? (enabled: false, trusted: false, armed: false, triggerCount: 0)
         expansionStrip.setState(enabled: state.enabled, trusted: state.trusted,
                                 armed: state.armed, triggerCount: state.triggerCount)
+        // UI-10: the column carries the same switch while Snippets shows.
+        if activeTab == .snippets, heroColumn != nil { renderHeroColumn() }
+    }
+
+    /// UI-10: the switch lives in the hero column while the column shows,
+    /// and the strip over the table comes back whenever it is put away (a
+    /// narrow page, Toggle Sidebar), so it is never out of reach.
+    func refreshExpansionStripPlacement() {
+        let inColumn = heroColumnShowing
+        guard expansionStrip.isHidden != inColumn || snippetsTableAtTop.isActive != inColumn else { return }
+        expansionStrip.isHidden = inColumn
+        if inColumn {
+            snippetsTableUnderStrip.isActive = false
+            snippetsTableAtTop.isActive = true
+        } else {
+            snippetsTableAtTop.isActive = false
+            snippetsTableUnderStrip.isActive = true
+        }
     }
 
     /// "All 7" and "Online 5": the saved hosts, and those the app's one
@@ -1590,7 +1611,7 @@ extension HostsController: WorkspaceInspectorSource, WorkspacePrimaryActionProvi
             expansionStrip.leadingAnchor.constraint(equalTo: snippetsTabView.leadingAnchor),
             expansionStrip.trailingAnchor.constraint(equalTo: snippetsTabView.trailingAnchor),
             expansionStrip.topAnchor.constraint(equalTo: snippetsTabView.topAnchor),
-            snippetsTable.card.topAnchor.constraint(equalTo: expansionStrip.bottomAnchor, constant: HelmMetrics.s3),
+            snippetsTableUnderStrip,
         ])
         hostsTable.accessibilityName = "Hosts"
         adoptHostsGrid()

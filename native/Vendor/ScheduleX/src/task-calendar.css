@@ -362,9 +362,34 @@ html:not([data-view='month-grid']) .gl-weekdays {
   font-size: 13px;
   font-weight: 500;
   box-shadow: var(--gl-shadow-chip);
+  gap: 5px;
+  min-width: 0;
+}
+
+/* UI-03: a one-day chip is as wide as its day. Schedule-X draws it 9px
+ * narrower than its column (`calc(100% + 1px - 10px)`), which with the
+ * day's own padding left the chips about 30px short of the cell. A chip
+ * that spans days keeps Schedule-X's width. WebKit keeps the inline style
+ * in its simplified form, `calc(100% - 9px)`, so both spellings match. */
+.sx__month-grid-event[style*="calc(100% + 1px - 10px)"],
+.sx__month-grid-event[style*="calc(100% - 9px)"] {
+  width: 100% !important;
+}
+
+/* UI-03: the time is a short leading label in the quiet ink, and the title
+ * takes the rest of the chip. */
+.sx__month-grid-event-time {
+  flex: none;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-muted);
 }
 
 .sx__month-grid-event-title {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -163,9 +163,14 @@ enum DictationDataSelfTest {
         let failed = heroWords(.ready, model: .failed("offline"))
         check(failed.ring.state == .warn && failed.ring.label == "!", "Dic-1: a failed download's ring is \(failed.ring)", &ok)
         let engineOff = heroWords(.ready, whisper: false, cleanup: false)
-        check(engineOff.ring.isDimmed && engineOff.ring.label == "Off" && engineOff.ring.caption == "Apple Speech",
-              "Dic-1: the engine off is \(engineOff.ring)", &ok)
-        check(engineOff.body.hasPrefix("Apple’s on-device Speech, cleanup off."), "Dic-1: the engine off says \"\(engineOff.body)\"", &ok)
+        // UI-09 of full review 4: the ring names the engine that listens -
+        // a microphone and "Apple Speech" - rather than "Off", and the line
+        // under the headline says the local model is off.
+        check(!engineOff.ring.isDimmed && engineOff.ring.symbol == "mic.fill" && engineOff.ring.fraction == 1
+                && engineOff.ring.caption == "Apple Speech" && engineOff.ring.label != "Off",
+              "UI-09: the engine off is \(engineOff.ring)", &ok)
+        check(engineOff.body.hasPrefix("Listening with Apple Speech, cleanup off. The local Whisper model is off."),
+              "UI-09: the engine off says \"\(engineOff.body)\"", &ok)
 
         // The library line: singulars and the empty library.
         check(DictationHeroWords.libraryLine(words: 1, dictations: 1) == "1 word in your vocabulary, 1 dictation kept here.",

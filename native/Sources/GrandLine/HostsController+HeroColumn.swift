@@ -193,6 +193,7 @@ extension HostsController {
     /// follows, and Recent moves between the column and the grid.
     func heroColumnVisibilityChanged() {
         refreshContentLeading()
+        refreshExpansionStripPlacement()
         applyHostFilter(searchField.stringValue)
         reloadKeysForSearch()
         refreshFindOrConnectButton()
@@ -204,8 +205,13 @@ extension HostsController {
     /// every reload that can change what it says.
     func renderHeroColumn() {
         guard let column = heroColumn else { return }
+        refreshExpansionStripPlacement()
         if activeTab == .keys {
             renderKeysHeroColumn(column)
+            return
+        }
+        if activeTab == .snippets {
+            renderSnippetsHeroColumn(column)
             return
         }
         let hosts = hostStore.hosts

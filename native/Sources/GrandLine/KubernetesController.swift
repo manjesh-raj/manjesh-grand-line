@@ -249,11 +249,15 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var feedStatusLabel: NSTextField!
     var retryFeedButton: HelmButton!
     var workArea: NSView!
-    /// S23: until a feed tab exists, the table the page will fill, in its
-    /// skeleton state, so the page has its shape and a bottom rather than one
-    /// card over an empty window.
+    /// S23: until a feed tab exists, the table the page will fill, so the
+    /// page has its shape rather than one card over an empty window. UI-11
+    /// of full review 4: it no longer shimmers - skeleton rows say "this is
+    /// loading", and nothing was. It says when the pods appear, under the
+    /// setup steps that get them there.
     var pendingTablePreview: HelmCard!
     var pendingTableSubtitle: NSTextField!
+    /// UI-11: "Read your cluster", the three steps, ticked as they happen.
+    var setupSteps: KubeSetupStepsCard!
     var pageTabs: HelmSegmentedTabs!
     var clusterContainer: NSView!
     var tailContainer: NSView!
@@ -362,7 +366,12 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         // the table genuinely fill the page: the card above it sizes to its
         // content, and everything left over is the table's.
         buildPendingTablePreview()
-        for child in [sessionCard!, workArea!, pendingTablePreview!, scopeEmptyState!] { container.addSubview(child) }
+        setupSteps = KubeSetupStepsCard()
+        setupSteps.onOpenInConsole = { [weak self] in self?.revealHostTapped() }
+        setupSteps.isHidden = true
+        for child in [sessionCard!, workArea!, setupSteps!, pendingTablePreview!, scopeEmptyState!] {
+            container.addSubview(child)
+        }
         NSLayoutConstraint.activate([
             scopeEmptyState.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             scopeEmptyState.centerYAnchor.constraint(equalTo: container.centerYAnchor),
@@ -380,9 +389,13 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             workArea.topAnchor.constraint(equalTo: sessionCard.bottomAnchor, constant: HelmMetrics.s4),
             workArea.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.s4),
 
+            setupSteps.leadingAnchor.constraint(equalTo: workArea.leadingAnchor),
+            setupSteps.trailingAnchor.constraint(equalTo: workArea.trailingAnchor),
+            setupSteps.topAnchor.constraint(equalTo: workArea.topAnchor),
+
             pendingTablePreview.leadingAnchor.constraint(equalTo: workArea.leadingAnchor),
             pendingTablePreview.trailingAnchor.constraint(equalTo: workArea.trailingAnchor),
-            pendingTablePreview.topAnchor.constraint(equalTo: workArea.topAnchor),
+            pendingTablePreview.topAnchor.constraint(equalTo: setupSteps.bottomAnchor, constant: HelmMetrics.s3),
         ])
         // A placeholder must never be a height floor on the window (gotcha
         // (13)): below 500 it yields, and a short window clips the skeleton
@@ -392,6 +405,12 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
                                                                       constant: -HelmMetrics.s4)
         previewFits.priority = NSLayoutConstraint.Priority(490)
         previewFits.isActive = true
+        // UI-11: the card is its header alone now, and nothing else ties its
+        // height - left free, the engine stretched it to the window's foot.
+        // A hug at the bottom of gotcha (13)'s band holds it to its header.
+        let previewHugs = pendingTablePreview.heightAnchor.constraint(equalToConstant: 0)
+        previewHugs.priority = NSLayoutConstraint.Priority(250)
+        previewHugs.isActive = true
 
         refreshButton.target = self
         refreshButton.action = #selector(refreshTapped)
@@ -438,7 +457,8 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             + "3. Come back here and pick that session. Nothing else holds a cluster credential."
     }
 
-    /// S23: the Pods table's header, naming the namespace, over skeleton rows.
+    /// S23: the Pods table's header, naming the namespace. UI-11: the
+    /// header alone, saying when the pods appear - no skeleton rows.
     func buildPendingTablePreview() {
         pendingTablePreview = HelmCard()
         pendingTablePreview.translatesAutoresizingMaskIntoConstraints = false
@@ -446,9 +466,7 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         _ = pendingTablePreview.setHeader(symbol: "shippingbox", tint: .info,
                                           titleLabel: NSTextField(labelWithString: "Pods"),
                                           subtitleLabel: pendingTableSubtitle)
-        let rows = HelmSkeletonList(rows: 4)
-        pendingTablePreview.setBody(rows, insets: HelmCard.contentInsets)
-        pendingTablePreview.setAccessibilityLabel("Pods, appears once a feed tab is logged in")
+        pendingTablePreview.setAccessibilityLabel("Pods, after the setup steps")
         pendingTablePreview.isHidden = true
     }
 

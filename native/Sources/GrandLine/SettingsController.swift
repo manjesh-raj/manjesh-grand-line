@@ -1708,6 +1708,16 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // A control, not text: a required width would be a window floor
         // (gotcha (13)), so this is a cap.
         cwdControls.widthAnchor.constraint(lessThanOrEqualToConstant: 320).isActive = true
+        // UI-06: and a preference, so the row's slack goes to the words. An
+        // editable field has no intrinsic width, so its low hugging above
+        // says nothing (gotcha (12)), and the field and the description tied
+        // for the slack: measured on the split card, the field took 320pt
+        // and cut "Where new Shell and Firstmate tabs start." to its first
+        // four words. Above the description's 250 hug, inside gotcha (13)'s
+        // 251-499 band.
+        let cwdPreferred = shellCwdField.widthAnchor.constraint(equalToConstant: 150)
+        cwdPreferred.priority = NSLayoutConstraint.Priority(260)
+        cwdPreferred.isActive = true
 
         let sizes = [12, 13, 14, 16]
         let presetButtons = sizes.map { size -> HelmButton in

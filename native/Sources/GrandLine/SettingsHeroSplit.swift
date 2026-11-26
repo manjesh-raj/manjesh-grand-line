@@ -283,10 +283,12 @@ final class SettingsHeroSplitView: NSView {
     private var lastFill: (words: SettingsHeroWords, pills: [ObjectIdentifier], preview: SettingsThemePreviewTile.Content?,
                            theme: String)?
 
-    /// Lines a description on the card shows, the rest in its hover text -
-    /// the prototype's one-line descriptions, with room for a second so a
-    /// row's point still reads beside a wide control.
-    static let descriptionLines = 2
+    /// Lines a description on the card shows: as many as it needs. UI-06 of
+    /// full review 4: it was two, with the rest in the hover text, and the
+    /// description is the setting's only explanation - Window layout and
+    /// Profile ended mid-sentence on Appearance. The row grows with its
+    /// text, and the panel beside the rows stretches to match.
+    static let descriptionLines = 0
 
     /// A card whose detail is `rows`.
     convenience init(symbol: String, kicker: String, rows: [SettingsRow], notes: [String]) {
@@ -294,8 +296,7 @@ final class SettingsHeroSplitView: NSView {
             guard let label = row.descriptionLabel else { continue }
             label.maximumNumberOfLines = Self.descriptionLines
             label.lineBreakMode = .byWordWrapping
-            label.cell?.truncatesLastVisibleLine = true
-            label.toolTip = label.stringValue
+            label.cell?.truncatesLastVisibleLine = false
         }
         let list = SettingsRowList(rows: rows)
         self.init(symbol: symbol, kicker: kicker, detail: list, list: list, title: nil, notes: notes)

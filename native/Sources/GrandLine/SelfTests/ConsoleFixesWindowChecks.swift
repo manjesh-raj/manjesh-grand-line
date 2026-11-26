@@ -45,11 +45,12 @@ enum ConsoleFixesWindowChecks {
         let tabFrame = console.tabBar.convert(console.tabBar.bounds, to: console.view)
         let between = console.view.isFlipped ? tabFrame.minY - bandFrame.maxY : bandFrame.minY - tabFrame.maxY
         check(abs(between) < 0.5, "the tab strip starts \(between)pt under the band, want 0", &ok)
-        // The fixture can fail: another page still keeps the slot.
-        shell.workspace.navigator.show(.health)
+        // The fixture can fail: another page still keeps the slot. Not a
+        // hero page - since UI-01 of full review 4 they give it up too.
+        shell.workspace.navigator.show(.logAnalyzer)
         settle(shell)
         check(!header.isHiddenOrHasHiddenAncestor && abs(header.frame.height - HelmMetrics.pageHeaderLine) < 0.5,
-              "Health lost its header line (\(header.frame)) - only Console gives it up", &ok)
+              "Log Analyzer lost its header line (\(header.frame)) - only Console and the hero pages give it up", &ok)
         shell.workspace.navigator.show(.console)
         settle(shell)
     }

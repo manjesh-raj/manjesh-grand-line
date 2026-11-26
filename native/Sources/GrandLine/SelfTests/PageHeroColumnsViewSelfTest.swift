@@ -67,7 +67,7 @@ enum PageHeroColumnsViewSelfTest {
                 checkHealthColumn, checkHealthTone, checkHealthRetry, checkHealthBand,
                 checkConnectionsColumn, checkConnectionsRecent, checkConnectionsQuickConnect,
                 checkConnectionsCards, checkConnectionsCollapse, checkKeysColumn, checkKeysCards,
-                checkKeysCollapse, writeRenders,
+                checkKeysCollapse, checkSnippetsColumn, writeRenders,
             ]
             for check in checks {
                 var ok = true
@@ -180,6 +180,7 @@ enum PageHeroColumnsViewSelfTest {
         check(tableFrame.minX > columnFrame.maxX + HelmMetrics.s4 - 0.5,
               "H-4: the table (\(tableFrame.minX)) does not start past the column (\(columnFrame.maxX))", &ok)
         let counts = ServiceHealthRegistry.shared.summary()
+        checkHealthColumnsHug(card.debugServicesTable, &ok)
         check(card.debugHeroBucketFigures == ["\(counts.total)", "0", "0", "0"],
               "H-4: an all-healthy column reads \(card.debugHeroBucketFigures)", &ok)
         check(column.debugHeadline.contains("healthy"), "H-4: the headline reads \(column.debugHeadline)", &ok)
@@ -191,6 +192,38 @@ enum PageHeroColumnsViewSelfTest {
         }
         // The column takes Toggle Sidebar like any split page's column.
         check((health as HelmSplitPageHosting).splitPage === split, "H-4: Toggle Sidebar cannot reach the column", &ok)
+    }
+
+    /// UI-07 of full review 4: Status, Last run and Recent runs are as wide
+    /// as what they hold, the service takes the rest, and a description
+    /// wraps to two lines before it is cut. The three columns sat at 150,
+    /// 150 and 110pt holding a few characters, and seven of eight
+    /// descriptions were cut at one line.
+    private static func checkHealthColumnsHug(_ table: HelmDataTable, _ ok: inout Bool) {
+        for (id, cap) in [("status", 150), ("lastRun", 150), ("runs", 110)] as [(String, CGFloat)] {
+            guard let width = table.debugColumnWidth(id) else {
+                fail("UI-07: the \(id) column is not shown at 1512", &ok)
+                continue
+            }
+            check(width < cap - 10, "UI-07: the \(id) column is \(width)pt, as wide as its old fixed \(cap)", &ok)
+        }
+        var wrapped = 0
+        for row in 0..<table.debugRows.count {
+            guard let label = table.debugSubtitleLabel(row: row), !label.isHidden, label.frame.width > 0,
+                  let font = label.font else { continue }
+            let probe = NSTextField(wrappingLabelWithString: label.stringValue)
+            probe.font = font
+            probe.maximumNumberOfLines = 0
+            let whole = probe.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: label.frame.width, height: 10_000)).height ?? 0
+            let line = (font.ascender - font.descender + font.leading).rounded(.up)
+            let needed = min(whole, 2 * line)
+            if whole > line * 1.5 { wrapped += 1 }
+            check(label.frame.height + 1 >= needed,
+                  "UI-07: \"\(label.stringValue)\" draws \(label.frame.height)pt of the \(needed)pt two lines give it", &ok)
+            check(label.maximumNumberOfLines == 2, "UI-07: a description may take \(label.maximumNumberOfLines) lines", &ok)
+        }
+        // The fixture can fail: some description really needs a second line.
+        check(wrapped > 0, "UI-07: fixture: no service description needs a second line at 1512", &ok)
     }
 
     private static func checkHealthTone(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
@@ -498,6 +531,54 @@ enum PageHeroColumnsViewSelfTest {
         settle(shell)
         check(column.debugKicker == "Connections" && column.debugSectionTitles == ["Recent", "Quick connect"],
               "Keys: back on Hosts the column reads \(column.debugKicker) with \(column.debugSectionTitles)", &ok)
+    }
+
+    /// UI-10 of full review 4: on Snippets the column speaks for snippets
+    /// and holds the trigger switch, which leaves the page body while the
+    /// column shows and comes back when the column is put away. It wore the
+    /// Hosts words: "No live session", a ring of hosts online, Quick connect.
+    private static func checkSnippetsColumn(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        hosts.selectModuleTab(named: "Snippets")
+        settle(shell)
+        defer { hosts.selectModuleTab(named: "Hosts"); resize(window, width: 1512, shell); settle(shell) }
+        guard let column = hosts.heroColumn else {
+            fail("UI-10: Connections has no hero column", &ok)
+            return
+        }
+        check(hosts.heroColumnShowing, "UI-10: fixture: the column is not showing at 1512", &ok)
+        check(column.debugKicker == "Snippets" && column.debugSectionTitles == ["Expand while I type", "Triggers"]
+                && column.debugRing == nil,
+              "UI-10: the column reads \(column.debugKicker) with \(column.debugSectionTitles)", &ok)
+        let store = shell.workspace.snippetStore
+        check(column.debugHeadline.hasPrefix(store.snippets.count == 1 ? "1 snippet" : "\(store.snippets.count) snippets"),
+              "UI-10: the headline reads \(column.debugHeadline)", &ok)
+        check(hosts.debugExpansionStrip.isHiddenOrHasHiddenAncestor,
+              "UI-10: the trigger switch is in the page body as well as the column", &ok)
+
+        // The column's switch runs the page's own handler.
+        func tabs(in view: NSView) -> [HelmSegmentedTabs] {
+            (view as? HelmSegmentedTabs).map { [$0] } ?? view.subviews.flatMap(tabs)
+        }
+        let saved = hosts.onSnippetExpansionToggled
+        var flipped: [Bool] = []
+        hosts.onSnippetExpansionToggled = { flipped.append($0) }
+        defer { hosts.onSnippetExpansionToggled = saved }
+        if let toggle = tabs(in: column).first {
+            check(isInk(toggle.heroInk, column.ink), "UI-10: the switch is not in the hero's ink", &ok)
+            toggle.debugClickTab(id: toggle.selected == "on" ? "off" : "on")
+            check(flipped.count == 1, "UI-10: the column's switch did not reach the page's handler (\(flipped))", &ok)
+        } else {
+            fail("UI-10: the column holds no switch", &ok)
+        }
+
+        // Put away, the column takes the switch with it, so the strip is back.
+        resize(window, width: 1000, shell)
+        settle(shell)
+        check(!hosts.heroColumnShowing, "UI-10: fixture: the column still shows at 1000", &ok)
+        check(!hosts.debugExpansionStrip.isHiddenOrHasHiddenAncestor && hosts.debugExpansionStrip.window != nil,
+              "UI-10: with the column put away the trigger switch is nowhere", &ok)
     }
 
     private static func checkKeysCards(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

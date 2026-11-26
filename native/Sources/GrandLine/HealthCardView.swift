@@ -87,13 +87,20 @@ final class HealthCardView: NSObject {
     private var heroRetryRuns: [() -> Void] = []
     private lazy var crashHost = NSStackView()
     private lazy var servicesTable: HelmDataTable = {
+        // UI-07 of full review 4: the three short columns hug what they
+        // hold (their widths are caps now), the service takes the rest, and
+        // its description wraps to two lines before it is cut. Seven of
+        // eight descriptions were cut beside columns holding a few
+        // characters in about 140pt each.
         let table = HelmDataTable(columns: [
             .init(id: "service", title: "Service", width: 320, minWidth: 220, flexible: true),
-            .init(id: "status", title: "Status", width: 150),
-            .init(id: "lastRun", title: "Last run", width: 150, hiddenBelow: 600),
-            .init(id: "runs", title: "Recent runs", width: 110, hiddenBelow: HealthCardView.allColumnsWidth),
+            .init(id: "status", title: "Status", width: 150, fitsContent: true),
+            .init(id: "lastRun", title: "Last run", width: 150, hiddenBelow: 600, fitsContent: true),
+            .init(id: "runs", title: "Recent runs", width: 110, hiddenBelow: HealthCardView.allColumnsWidth,
+                  fitsContent: true),
         ], actionsWidth: 110)
         table.sizesToFitRows = true
+        table.subtitleLines = 2
         // The prototype shows Retry on the failing row at rest.
         table.actionsAlwaysVisible = true
         table.accessibilityName = "Background services"

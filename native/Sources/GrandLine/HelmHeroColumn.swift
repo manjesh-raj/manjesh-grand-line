@@ -115,6 +115,9 @@ final class HelmHeroColumn: NSView {
         /// 1.2.0: the whole ring at the quiet ink, for a reading that is
         /// absent rather than low - a model not downloaded, an engine off.
         var isDimmed: Bool = false
+        /// 1.7.0: an SF Symbol in the ring's centre in place of `label`, for
+        /// a ring that names what is in use (Dictation's microphone, UI-09).
+        var symbol: String? = nil
     }
 
     /// The column's own words, at its top.
@@ -287,7 +290,11 @@ final class HelmHeroColumn: NSView {
             rebuild()
             return
         }
-        ringGauge.configure(fraction: ring.fraction, text: ring.label)
+        if let symbol = ring.symbol {
+            ringGauge.configure(fraction: ring.fraction, symbol: symbol)
+        } else {
+            ringGauge.configure(fraction: ring.fraction, text: ring.label)
+        }
         ringGauge.setSpokenLabel(ring.spoken)
         ringCaption.stringValue = ring.caption ?? ""
         applyTheme(theme)
@@ -559,7 +566,11 @@ final class HelmHeroColumn: NSView {
         case .column: side = Self.ringSide
         }
         if ringGauge.diameter != side { ringGauge = HelmRingGauge(side: side) }
-        ringGauge.configure(fraction: ring.fraction, text: ring.label)
+        if let symbol = ring.symbol {
+            ringGauge.configure(fraction: ring.fraction, symbol: symbol)
+        } else {
+            ringGauge.configure(fraction: ring.fraction, text: ring.label)
+        }
         ringGauge.setSpokenLabel(ring.spoken)
         ringCaption.stringValue = ring.caption ?? ""
         ringCaption.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)

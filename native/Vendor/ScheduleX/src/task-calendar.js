@@ -217,6 +217,78 @@ function decorateChecks() {
   }
 }
 
+// MARK: The month chips (UI-03 of full review 4)
+//
+// A timed chip read "9:30 AM R...": the time took the chip and the title,
+// which is what tells tasks apart, was gone. Schedule-X writes the time with
+// the locale's hour and minute, so a twelve-hour locale gets its "AM" and
+// "PM" back on every render. The chip keeps the short form ("9:30") as a
+// leading label in the quiet ink (the stylesheet's), and the title has the
+// rest. A twenty-four-hour locale's time is short already and is left alone.
+
+const twelveHour = /^(\d{1,2}[:.]\d{2})\s*[AaPp]\.?\s?[Mm]\.?$/
+
+function shortTime(text) {
+  const match = twelveHour.exec(text.trim())
+  return match ? match[1] : null
+}
+
+// A day's overflow drew Schedule-X's untranslated template, "+ {{n}}
+// events": its count never reached the words. It is what is left to see, so
+// it says "+2 more", counted here from the events the page was handed, and
+// VoiceOver keeps Schedule-X's own label on the same element.
+const eventsByDay = new Map()
+
+function countEventsByDay(events) {
+  eventsByDay.clear()
+  for (const event of events) {
+    const day = String(event.start).slice(0, 10)
+    eventsByDay.set(day, (eventsByDay.get(day) || 0) + 1)
+  }
+}
+
+function decorateMonthChips() {
+  for (const time of document.querySelectorAll('.sx__month-grid-event-time')) {
+    const short = shortTime(time.textContent)
+    if (short && time.textContent !== short) {
+      time.title = time.textContent
+      time.textContent = short
+    }
+  }
+  for (const more of document.querySelectorAll('.sx__month-grid-day__events-more')) {
+    const day = more.closest('.sx__month-grid-day')
+    if (!day || !day.dataset.date) continue
+    const shown = day.querySelectorAll('.sx__month-grid-event').length
+    const hidden = (eventsByDay.get(day.dataset.date) || 0) - shown
+    const words = hidden > 0 ? '+' + hidden + ' more' : 'More'
+    if (more.textContent !== words) more.textContent = words
+  }
+}
+
+// How many chips a month day shows before "+N more": as many as its cell
+// holds at the window's height, and never fewer than one. Schedule-X takes
+// one fixed number, and at four the fourth chip and the "+N more" under it
+// ran out of the bottom of a day at a laptop's height, where they could not
+// be seen or clicked. Measured from a real day: its height, less its date
+// and the "+N more" line, over one chip and the gap after it.
+const chipHeight = 24
+const chipGap = 5
+const moreLine = 18
+
+function fitChipsPerDay() {
+  const app = controls.$app
+  const day = document.querySelector('.sx__month-grid-day')
+  if (!app || !day) return
+  const header = day.querySelector('.sx__month-grid-day__header')
+  const style = getComputedStyle(day)
+  const room = day.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+    - (header ? header.getBoundingClientRect().height : 0) - moreLine
+  if (!(room > 0)) return
+  const fits = Math.max(1, Math.floor((room + chipGap) / (chipHeight + chipGap)))
+  const options = app.config.monthGridOptions.value
+  if (options.nEventsPerDay !== fits) app.config.monthGridOptions.value = { ...options, nEventsPerDay: fits }
+}
+
 // A microtask rather than an animation frame: WebKit stops animation frames
 // for a page nobody can see, and a chip finished from the Agenda must not
 // wait for the window to come forward before its neighbours get their checks.
@@ -228,6 +300,7 @@ function queueDecorate() {
   queueMicrotask(() => {
     decorateQueued = false
     decorateChecks()
+    decorateMonthChips()
   })
 }
 
@@ -350,12 +423,19 @@ function mount(config) {
   // Only the calendar's own subtree, and only structure and classes: the
   // check's own insertions settle in one more pass, because a decorated chip
   // is skipped.
+  // Text too: Schedule-X rewrites a chip's time and a day's "+N events" in
+  // place, and the short forms are put back on each. A pass that changes
+  // nothing changes no text, so it does not wake itself.
   new MutationObserver(queueDecorate).observe(root, {
     subtree: true,
     childList: true,
+    characterData: true,
     attributes: true,
     attributeFilter: ['class'],
   })
+  // The month's days grow and shrink with the window, and so does what
+  // they hold.
+  new ResizeObserver(() => fitChipsPerDay()).observe(root)
   wireHeader()
   renderWeekdays()
   refreshHeader()
@@ -1110,6 +1190,7 @@ window.GrandLineTaskCalendar = {
     menus.clear()
     const events = (payload.events || []).map(toCalendarEvent)
     if (payload.calendars) controls.setCalendars(payload.calendars)
+    countEventsByDay(events)
     calendar.events.set(events)
     // A chip Schedule-X keeps across the set keeps its element, so the
     // observer may see nothing change; the new refs still need checking.

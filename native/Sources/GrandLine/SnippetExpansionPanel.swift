@@ -48,7 +48,7 @@ final class SnippetExpansionPanel: NSView {
     private let statusLabel = NSTextField(labelWithString: "")
     /// Why expansion needs Accessibility: Grant access' tooltip, and the
     /// caption under the row while access is not granted.
-    private static let reason = "Expansion types into the frontmost app, so it needs the same one Accessibility "
+    static let reason = "Expansion types into the frontmost app, so it needs the same one Accessibility "
         + "permission Dictation uses. Grand Line watches only for a trigger it already knows."
     private let grantButton = HelmButton(title: "Grant access\u{2026}", variant: .secondary, size: .small,
                                          symbol: "lock.open", target: nil, action: nil)
@@ -161,25 +161,22 @@ final class SnippetExpansionPanel: NSView {
         inlineToggle.isOn = enabled
         grantButton.isHidden = trusted
         inlineWhy.isHidden = trusted
-        // GL-14: the four states read differently, and "off" is not drawn as
-        // "granted but idle". The armed case is the only one that claims the
-        // triggers will fire.
-        if !enabled {
-            statusOK = false
-            statusLabel.stringValue = "Turned off"
-        } else if !trusted {
-            statusOK = false
-            statusLabel.stringValue = "Accessibility access not granted"
-        } else if !armed {
-            statusOK = false
-            statusLabel.stringValue = "Granted \u{00b7} restart Grand Line to arm the triggers"
-        } else {
-            statusOK = true
-            statusLabel.stringValue = triggerCount == 1
-                ? "Granted \u{00b7} 1 trigger armed"
-                : "Granted \u{00b7} \(triggerCount) triggers armed"
-        }
+        let state = Self.status(enabled: enabled, trusted: trusted, armed: armed, triggerCount: triggerCount)
+        statusOK = state.ok
+        statusLabel.stringValue = state.text
         applyTheme(theme)
+    }
+
+    /// The switch's state in words, and whether the triggers will fire. One
+    /// copy, which Connections' hero column says too (UI-10). GL-14: the
+    /// four states read differently, and "off" is not drawn as "granted but
+    /// idle". The armed case is the only one that claims the triggers fire.
+    static func status(enabled: Bool, trusted: Bool, armed: Bool, triggerCount: Int) -> (text: String, ok: Bool) {
+        if !enabled { return ("Turned off", false) }
+        if !trusted { return ("Accessibility access not granted", false) }
+        if !armed { return ("Granted \u{00b7} restart Grand Line to arm the triggers", false) }
+        return (triggerCount == 1 ? "Granted \u{00b7} 1 trigger armed" : "Granted \u{00b7} \(triggerCount) triggers armed",
+                true)
     }
 
     func applyTheme(_ theme: HelmTheme) {

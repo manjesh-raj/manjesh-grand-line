@@ -85,7 +85,8 @@ enum WorkspaceSignalsSelfTest {
 
         let two = signals { $0.crew = .read(2, at: t0) }
         let badge = two.badge(for: .crew)
-        check(badge == WorkspaceBadge(mark: .count("2"), tone: .attention, description: "2 tasks are waiting on you"),
+        check(badge == WorkspaceBadge(mark: .count("2"), tone: .attention, description: "2 tasks are waiting on you",
+                                       waiting: 2),
               "two waiting drew \(String(describing: badge))", &ok)
 
         let clear = signals { $0.crew = .read(0, at: t0) }
@@ -122,8 +123,14 @@ enum WorkspaceSignalsSelfTest {
         print("\n-- Tasks: due today and overdue --")
         let none = signals { $0.tasksDue = .read(.init(today: 0, overdue: 0), at: t0) }
         check(none.badge(for: .tasks) == nil, "nothing due drew a badge", &ok)
+        // UI-02 of full review 4: a count that is a state, not a queue, says
+        // nothing is waiting, so a folded sidebar section never counts it.
+        let sessions = signals { $0.liveSessions = 2 }
+        check(sessions.badge(for: .connections)?.waiting == 0,
+              "live sessions count as waiting: \(String(describing: sessions.badge(for: .connections)))", &ok)
         let due = signals { $0.tasksDue = .read(.init(today: 2, overdue: 1), at: t0) }
-        check(due.badge(for: .tasks) == WorkspaceBadge(mark: .count("3"), tone: .neutral, description: "2 due today, 1 overdue"),
+        check(due.badge(for: .tasks) == WorkspaceBadge(mark: .count("3"), tone: .neutral, description: "2 due today, 1 overdue",
+                                                  waiting: 3),
               "two due and one overdue drew \(String(describing: due.badge(for: .tasks)))", &ok)
         let stale = signals { $0.tasksDue = .failed(last: .init(today: 1, overdue: 0), lastReadAt: t0, failedAt: t1) }
         check(stale.badge(for: .tasks)?.mark == .count("1")

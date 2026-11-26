@@ -23,8 +23,9 @@
 //     column), and this table lays its columns out itself anyway, so a strip
 //     of `HelmType` labels at the same x positions is the whole of it.
 //
-// **The table sizes its columns itself.** Fixed columns keep their width, the
-// one flexible column takes what is left, and a column marked `hiddenBelow`
+// **The table sizes its columns itself.** Fixed columns keep their width, a
+// column marked `fitsContent` is as wide as its widest cell (its `width` is
+// then a cap), the one flexible column takes what is left, and a column marked `hiddenBelow`
 // steps out when the table is narrower than that - the prototype's optional
 // columns, which go below its 1240pt breakpoint. So the table never scrolls
 // sideways, and never holds a width that could grow the window (AGENTS.md
@@ -52,15 +53,23 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         var flexible: Bool
         /// The column steps out while the table is narrower than this.
         var hiddenBelow: CGFloat?
+        /// 1.1.0: the column is as wide as its widest cell and its title,
+        /// never wider than `width`. For short facts (a status, a time, a
+        /// run of dots) beside a flexible column that needs the room: UI-07
+        /// of full review 4 measured Health's three such columns at about
+        /// 140pt each holding a few characters, while every service's
+        /// description was cut.
+        var fitsContent: Bool
 
         init(id: String, title: String, width: CGFloat, minWidth: CGFloat? = nil,
-             flexible: Bool = false, hiddenBelow: CGFloat? = nil) {
+             flexible: Bool = false, hiddenBelow: CGFloat? = nil, fitsContent: Bool = false) {
             self.id = id
             self.title = title
             self.width = width
             self.minWidth = minWidth ?? width
             self.flexible = flexible
             self.hiddenBelow = hiddenBelow
+            self.fitsContent = fitsContent
         }
     }
 
@@ -181,6 +190,16 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     var onReorder: ((_ draggedKey: String, _ beforeKey: String?) -> Void)?
     /// Show every row's actions at rest rather than on hover and selection.
     var actionsAlwaysVisible = false
+    /// 1.1.0: how many lines a title cell's second line may wrap to before
+    /// it is cut. One by default. A record row grows by a line for each
+    /// extra line its own second line takes at the column's width.
+    var subtitleLines = 1 {
+        didSet {
+            guard subtitleLines != oldValue else { return }
+            layoutColumns(force: true)
+            reloadKeepingSelection()
+        }
+    }
     /// What VoiceOver calls the table ("Hosts", "Credentials").
     var accessibilityName = "Table" {
         didSet { table.setAccessibilityLabel(accessibilityName) }
@@ -448,7 +467,17 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     /// page's thresholds can never be what makes the table overflow - the
     /// most optional one left (the highest `hiddenBelow`) keeps stepping out
     /// while the columns' own minimums still do not fit.
-    static func layout(_ columns: [Column], actionsWidth: CGFloat, width: CGFloat) -> [(id: String, width: CGFloat)] {
+    ///
+    /// `contentWidths` is what each `fitsContent` column's widest cell and
+    /// title need; such a column takes that, up to its own `width`.
+    static func layout(_ columns: [Column], actionsWidth: CGFloat, width: CGFloat,
+                       contentWidths: [String: CGFloat] = [:]) -> [(id: String, width: CGFloat)] {
+        let columns = columns.map { column -> Column in
+            guard column.fitsContent, !column.flexible, let content = contentWidths[column.id] else { return column }
+            var fitted = column
+            fitted.width = min(column.width, content.rounded(.up))
+            return fitted
+        }
         var shown = columns.filter { column in column.hiddenBelow.map { width >= $0 } ?? true }
         func minimumTotal(_ set: [Column]) -> CGFloat {
             set.reduce(0) { $0 + ($1.flexible ? $1.minWidth : $1.width) } + actionsWidth
@@ -471,7 +500,7 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         let width = scroll.contentView.bounds.width
         guard width > 0, force || abs(width - laidOutWidth) > 0.5 else { return }
         laidOutWidth = width
-        let plan = Self.layout(columns, actionsWidth: actionsWidth, width: width)
+        let plan = Self.layout(columns, actionsWidth: actionsWidth, width: width, contentWidths: contentWidths())
         let shown = Set(plan.map(\.id))
         for tableColumn in table.tableColumns {
             let id = tableColumn.identifier.rawValue
@@ -495,6 +524,83 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
             x += tableColumn.width
         }
         header.setColumns(frames, edgeInset: Self.edgeInset, cellInset: Self.cellInset)
+        // A wrapped second line's height follows its column's width.
+        if subtitleLines > 1, !rows.isEmpty {
+            table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<rows.count))
+            updateFittingHeight()
+        }
+    }
+
+    /// What each `fitsContent` column's widest cell and its title need,
+    /// insets included. Measured from the rows' own words, so it changes
+    /// only when the rows do.
+    private func contentWidths() -> [String: CGFloat] {
+        var widths: [String: CGFloat] = [:]
+        let firstShown = columns.first { column in
+            column.hiddenBelow.map { scroll.contentView.bounds.width >= $0 } ?? true
+        }?.id
+        for column in columns where column.fitsContent {
+            let leading = column.id == firstShown ? Self.edgeInset : Self.cellInset
+            var widest = HelmDataTableHeader.titleWidth(column.title)
+            for row in rows where row.isRecord {
+                guard let content = Self.contentWidth(of: row.cells[column.id] ?? .none) else {
+                    widest = column.width
+                    break
+                }
+                widest = max(widest, content)
+            }
+            widths[column.id] = leading + widest + Self.cellInset
+        }
+        return widths
+    }
+
+    /// The width one cell's content takes, or nil for a cell this table
+    /// cannot measure (a page's own view, tags), which keeps its column at
+    /// the column's `width`.
+    static func contentWidth(of cell: Cell) -> CGFloat? {
+        func text(_ string: String, _ font: NSFont) -> CGFloat {
+            (string as NSString).size(withAttributes: [.font: font]).width.rounded(.up) + 4
+        }
+        switch cell {
+        case .text(let string), .muted(let string): return text(string, HelmType.body())
+        case .code(let string): return text(string, HelmType.code())
+        case .none: return text("\u{2014}", HelmType.body())
+        case .runDots(let runs, _):
+            guard !runs.isEmpty else { return text("\u{2014}", HelmType.body()) }
+            let count = CGFloat(runs.count)
+            return count * HelmDataTableRunDotsCell.diameter + (count - 1) * HelmDataTableRunDotsCell.gap
+        case .status(let words, let tint):
+            let pill = HelmStatusPill(style: .dotWord)
+            pill.configure(text: words, tint: tint, theme: ThemeManager.shared.theme)
+            return pill.fittingSize.width.rounded(.up)
+        case .title, .tags, .view: return nil
+        }
+    }
+
+    /// The width a title cell's words wrap at in the column `id`: the
+    /// column's, less the cell's insets and tile. Measured from the column,
+    /// which these words do not decide (gotcha (22)).
+    private func titleTextWidth(column id: String, hasSymbol: Bool) -> CGFloat {
+        guard let tableColumn = table.tableColumns.first(where: { $0.identifier.rawValue == id }) else { return 0 }
+        let leading = shownColumnIDs.first == id ? Self.edgeInset : Self.cellInset
+        let tile = hasSymbol ? HelmDataTableTitleCell.tileSide + HelmMetrics.s3 : 0
+        return max(0, tableColumn.width - leading - tile - Self.cellInset)
+    }
+
+    /// How tall a record row is: one line of title and one of second line,
+    /// plus a line for each extra line the second line wraps to, up to
+    /// `subtitleLines`.
+    private func recordHeight(_ row: Row) -> CGFloat {
+        guard subtitleLines > 1 else { return Self.recordRowHeight }
+        for (id, cell) in row.cells {
+            guard case .title(_, let subtitle?, let isCode, let symbol, _, _) = cell, !subtitle.isEmpty else { continue }
+            let width = titleTextWidth(column: id, hasSymbol: symbol != nil)
+            guard width > 0 else { continue }
+            let lines = HelmDataTableTitleCell.subtitleLineCount(subtitle, isCode: isCode, width: width,
+                                                                 limit: subtitleLines)
+            return Self.recordRowHeight + CGFloat(lines - 1) * HelmDataTableTitleCell.subtitleLineHeight(isCode: isCode)
+        }
+        return Self.recordRowHeight
     }
 
     @objc private func clipViewResized() {
@@ -601,7 +707,7 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         guard row < rows.count else { return Self.recordRowHeight }
         switch rows[row].kind {
-        case .record: return Self.recordRowHeight
+        case .record: return recordHeight(rows[row])
         case .group: return Self.groupRowHeight
         case .empty where sizesToFitRows || hugsRows:
             return Self.fittedEmptyRowHeight
@@ -611,7 +717,7 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
             let others = rows.enumerated().reduce(CGFloat(0)) { total, pair in
                 guard pair.offset != row else { return total }
                 switch pair.element.kind {
-                case .record: return total + Self.recordRowHeight
+                case .record: return total + self.recordHeight(pair.element)
                 case .group: return total + Self.groupRowHeight
                 case .empty: return total
                 }
@@ -667,7 +773,9 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
             case .title(let title, let subtitle, let subtitleIsCode, let symbol, let tint, let tintHex):
                 let cell = reuse(HelmDataTableTitleCell.self, tableView)
                 cell.configure(title: title, subtitle: subtitle, subtitleIsCode: subtitleIsCode,
-                               symbol: symbol, tint: tint, tintHex: tintHex, leading: leading, theme: theme)
+                               symbol: symbol, tint: tint, tintHex: tintHex, leading: leading, theme: theme,
+                               lines: subtitleLines,
+                               wrapWidth: titleTextWidth(column: id, hasSymbol: symbol != nil))
                 return cell
             case .status(let text, let tint):
                 let cell = reuse(HelmDataTableStatusCell.self, tableView)
@@ -772,6 +880,15 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     var debugTable: NSTableView { table }
     var debugRows: [Row] { rows }
     var debugShownColumnIDs: [String] { shownColumnIDs }
+    /// The second line of the title cell drawn on `row`, if it has one.
+    func debugSubtitleLabel(row: Int) -> NSTextField? {
+        for column in 0..<table.numberOfColumns {
+            if let cell = table.view(atColumn: column, row: row, makeIfNecessary: false) as? HelmDataTableTitleCell {
+                return cell.debugSubtitle
+            }
+        }
+        return nil
+    }
     var debugHeaderTitles: [String] { header.debugTitles }
     func debugColumnWidth(_ id: String) -> CGFloat? {
         table.tableColumns.first { $0.identifier.rawValue == id && !$0.isHidden }?.width
@@ -890,6 +1007,13 @@ private final class HelmDataTableHeader: NSView {
 
     override var isFlipped: Bool { true }
 
+    static func font() -> NSFont { .systemFont(ofSize: HelmType.scaled(11.5), weight: .medium) }
+
+    /// The width a column's title takes in this strip.
+    static func titleWidth(_ title: String) -> CGFloat {
+        (title as NSString).size(withAttributes: [.font: font()]).width.rounded(.up) + 4
+    }
+
     func setColumns(_ frames: [(title: String, x: CGFloat, width: CGFloat)], edgeInset: CGFloat, cellInset: CGFloat) {
         self.frames = frames
         self.edgeInset = edgeInset
@@ -923,7 +1047,7 @@ private final class HelmDataTableHeader: NSView {
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         for label in labels {
-            label.font = .systemFont(ofSize: HelmType.scaled(11.5), weight: .medium)
+            label.font = Self.font()
             label.textColor = HelmTheme.mutedInk(theme)
         }
         needsLayout = true
@@ -1094,9 +1218,30 @@ final class HelmDataTableRunDotsCell: NSView {
 }
 
 private final class HelmDataTableTitleCell: NSView {
-    private let tile = IconTileView(size: 26, cornerRadius: HelmMetrics.rChip)
+    static let tileSide: CGFloat = 26
+    private let tile = IconTileView(size: HelmDataTableTitleCell.tileSide, cornerRadius: HelmMetrics.rChip)
     private let title = NSTextField(labelWithString: "")
+    /// A label whose cell wraps only when the table asks for more than one
+    /// line: a `labelWithString` cell never wraps, whatever its line count
+    /// says (gotcha (22)), and a one-line table keeps it exactly as it was.
     private let subtitle = NSTextField(labelWithString: "")
+
+    static func subtitleFont(isCode: Bool) -> NSFont { isCode ? HelmType.code() : HelmType.caption() }
+
+    static func subtitleLineHeight(isCode: Bool) -> CGFloat {
+        let font = subtitleFont(isCode: isCode)
+        return (font.ascender - font.descender + font.leading).rounded(.up)
+    }
+
+    /// How many lines `text` takes at `width`, at most `limit`.
+    static func subtitleLineCount(_ text: String, isCode: Bool, width: CGFloat, limit: Int) -> Int {
+        let probe = NSTextField(wrappingLabelWithString: text)
+        probe.font = subtitleFont(isCode: isCode)
+        probe.maximumNumberOfLines = 0
+        let height = probe.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 10_000)).height ?? 0
+        let lines = Int((height / subtitleLineHeight(isCode: isCode)).rounded())
+        return min(max(1, lines), max(1, limit))
+    }
     private var leadingConstraint: NSLayoutConstraint!
     private var titleToTile: NSLayoutConstraint!
     private var titleToEdge: NSLayoutConstraint!
@@ -1131,16 +1276,26 @@ private final class HelmDataTableTitleCell: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    /// `lines`: how many lines the second line may take; `wrapWidth`: the
+    /// width it wraps at, which the table measures from the column.
     func configure(title: String, subtitle: String?, subtitleIsCode: Bool, symbol: String?,
-                   tint: HelmTint, tintHex: String?, leading: CGFloat, theme: HelmTheme) {
+                   tint: HelmTint, tintHex: String?, leading: CGFloat, theme: HelmTheme,
+                   lines: Int = 1, wrapWidth: CGFloat = 0) {
         self.title.stringValue = title
         self.title.font = HelmType.rowTitle()
         self.title.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         self.subtitle.stringValue = subtitle ?? ""
         self.subtitle.isHidden = (subtitle ?? "").isEmpty
-        self.subtitle.font = subtitleIsCode ? HelmType.code() : HelmType.caption()
+        self.subtitle.font = Self.subtitleFont(isCode: subtitleIsCode)
         self.subtitle.textColor = HelmTheme.mutedInk(theme)
         self.subtitle.toolTip = (subtitle ?? "").count > 30 ? subtitle : nil
+        let wraps = lines > 1 && wrapWidth > 0
+        self.subtitle.cell?.wraps = wraps
+        self.subtitle.maximumNumberOfLines = wraps ? lines : 1
+        self.subtitle.lineBreakMode = wraps ? .byWordWrapping : .byTruncatingTail
+        self.subtitle.cell?.truncatesLastVisibleLine = true
+        self.subtitle.preferredMaxLayoutWidth = wraps ? floor(wrapWidth) : 0
+        self.subtitle.invalidateIntrinsicContentSize()
         if let symbol {
             tile.isHidden = false
             tile.configure(symbol: symbol, tint: tint, pointSize: HelmType.scaled(12))
@@ -1159,6 +1314,10 @@ private final class HelmDataTableTitleCell: NSView {
         setAccessibilityRole(.staticText)
         setAccessibilityLabel([title, subtitle].compactMap { $0 }.joined(separator: ", "))
     }
+
+    #if FM_SELFTESTS
+    var debugSubtitle: NSTextField { subtitle }
+    #endif
 }
 
 private final class HelmDataTableStatusCell: NSView {

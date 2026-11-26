@@ -67,6 +67,7 @@ enum PageHeroColumnsSelfTest {
             checkHealthWords,
             checkConnectionsWords,
             checkKeysWords,
+            checkSnippetsWords,
             checkTheColumnPaletteClearsTheFloor,
             checkTheGridColumnCap,
             checkTheFloorWidth,
@@ -201,6 +202,45 @@ enum PageHeroColumnsSelfTest {
     }
 
     // MARK: Keys
+
+    /// UI-10 of full review 4: the Snippets tab's column speaks for
+    /// snippets, never for hosts, and says the switch's state in the strip's
+    /// own words.
+    private static func checkSnippetsWords(_ ok: inout Bool) {
+        func snippet(_ label: String, _ trigger: String, _ scope: SnippetScope) -> Snippet {
+            var snippet = Snippet(label: label, command: "echo \(label)")
+            snippet.trigger = trigger
+            snippet.scope = scope
+            return snippet
+        }
+        let three = [snippet("Warm up sudo", "", .consoleOnly), snippet("Tail nginx errors", "nginxerr", .consoleOnly),
+                     snippet("Disk usage by folder", "duh", .systemWide)]
+        let words = SnippetsHeroWords.make(snippetsReadable: true, snippets: three, enabled: false, trusted: false,
+                                           armed: false)
+        check(words.headline == "3 snippets, 1 expands everywhere.", "UI-10: the headline reads \(words.headline)", &ok)
+        check(words.body == "Type a trigger such as ;duh in any app.", "UI-10: the body reads \(words.body)", &ok)
+        check(words.status == "Turned off" && !words.statusOK, "UI-10: an off switch reads \(words.status)", &ok)
+        for text in [words.headline, words.body] {
+            check(!text.lowercased().contains("host"), "UI-10: the Snippets column talks about hosts: \(text)", &ok)
+        }
+        let armed = SnippetsHeroWords.make(snippetsReadable: true, snippets: three, enabled: true, trusted: true,
+                                           armed: true)
+        check(armed.status == "Granted \u{00b7} 2 triggers armed" && armed.statusOK,
+              "UI-10: an armed switch reads \(armed.status)", &ok)
+        check(SnippetsHeroWords.listed(three, limit: 3).map(\.label) == ["Disk usage by folder", "Tail nginx errors"],
+              "UI-10: the column lists \(SnippetsHeroWords.listed(three, limit: 3).map(\.label))", &ok)
+        let consoleOnly = SnippetsHeroWords.make(snippetsReadable: true, snippets: Array(three.prefix(2)),
+                                                 enabled: true, trusted: true, armed: true)
+        check(consoleOnly.headline == "2 snippets, 1 with a trigger."
+                && consoleOnly.body == "Type a trigger such as ;nginxerr in the Console.",
+              "UI-10: Console-only triggers read \(consoleOnly.headline) / \(consoleOnly.body)", &ok)
+        let none = SnippetsHeroWords.make(snippetsReadable: true, snippets: [], enabled: false, trusted: true, armed: false)
+        check(none.headline == "No snippets yet." && !none.isDimmed, "UI-10: no snippets reads \(none.headline)", &ok)
+        let unreadable = SnippetsHeroWords.make(snippetsReadable: false, snippets: [], enabled: false, trusted: true,
+                                                armed: false)
+        check(unreadable.isDimmed && unreadable.headline != none.headline,
+              "UI-10: an unreadable file reads like an empty one (GL-14)", &ok)
+    }
 
     private static func checkKeysWords(_ ok: inout Bool) {
         typealias Key = KeysHeroWords.Key

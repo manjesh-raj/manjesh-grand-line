@@ -609,25 +609,15 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// fresh copy each time could not carry state (the property
     /// `DaylightDrillPageSlice4SelfTest` pins for Vault's own Refresh).
     var drillHeaderActions: [NSView] {
-        // R5-UX-04: the Calendar's toolbar carries Today while it shows,
-        // where the card leaves its own Today to it.
-        let today: [NSView] = tasksView == .calendar ? [calendarTodayButton] : []
-        return today + (store.gitSync == nil ? [newTaskButton] : [syncPill, newTaskButton])
+        // UI-05 of full review 4: the Calendar's Today is the head's, beside
+        // the arrows it belongs with. R5-UX-04 put a second one in the
+        // window toolbar, 120pt above it.
+        store.gitSync == nil ? [newTaskButton] : [syncPill, newTaskButton]
     }
 
     /// R5-UX-04: the page's actions changed - the Calendar view brings its
     /// Today button and takes it away again.
     var onDrillActionsChanged: (() -> Void)?
-
-    /// R5-UX-04: Today on the Calendar's toolbar, the card's own Today.
-    private lazy var calendarTodayButton: HelmButton = {
-        let button = HelmButton(title: "Today", variant: .secondary, size: .small,
-                                target: self, action: #selector(calendarTodayClicked))
-        button.toolTip = "Show today"
-        return button
-    }()
-
-    @objc private func calendarTodayClicked() { calendar.showToday() }
 
     /// `.primary` - the accent-filled pill. At most one per cluster, and this
     /// is the page's one primary action.

@@ -406,7 +406,9 @@ enum ModuleTable {
                          mountsEagerly: false, space: .operations, homeCards: [.kubernetes],
                          newAction: .task, module: .kubernetes, child: nil),
         ModuleDescriptor(route: .tools, title: "Tools", symbol: "wrench.and.screwdriver", hue: .slate,
-                         slot: .tools, subtitle: "Nine offline utilities",
+                         // UI-13 of full review 4: counted, not spelled - it said
+                         // "Nine" for a page with ten.
+                         slot: .tools, subtitle: "\(ToolKind.allCases.count) offline utilities",
                          mountsEagerly: false, space: .stores, homeCards: [.tools],
                          newAction: .task, module: .tools, child: nil),
         // Its symbol:

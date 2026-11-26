@@ -195,6 +195,26 @@ final class SettingsRow: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    /// The row's own resolved width, which its description does not decide
+    /// (gotcha (22)), as the last word on the wrap width. The page hands
+    /// every row an estimate from its column; with always-visible scroll
+    /// bars (every CI runner) that estimate was 8pt wider than the row, so a
+    /// split card's description was measured a line short and its last line
+    /// was cut (UI-06 of full review 4, at 1100pt). Only ever narrows: the
+    /// estimate stays in charge while the row has not been laid out.
+    override func layout() {
+        super.layout()
+        guard bounds.width > 0, let descriptionLabel else { return }
+        let estimate = descriptionLabel.preferredMaxLayoutWidth
+        let leading = Metrics.insetH + (isSubRow ? Metrics.subIndent : 0)
+        let leadWidth = lead.map { ceil($0.fittingSize.width) + Metrics.gap } ?? 0
+        let controlWidth = ceil(control.fittingSize.width) + Metrics.gap
+        let own = max(180, floor(bounds.width - leading - Metrics.insetH - leadWidth - controlWidth))
+        guard estimate > 0, own < estimate - 0.5 else { return }
+        descriptionLabel.preferredMaxLayoutWidth = own
+        descriptionLabel.invalidateIntrinsicContentSize()
+    }
+
     /// Where the separator above this row starts - `.row.icon`'s wider inset
     /// when the row carries a leading view, the plain one otherwise.
     var separatorInset: CGFloat {

@@ -207,7 +207,7 @@ enum ShiftCalendarViewSelfTest {
                 check(Double(projected ?? "") ?? 1 < 1, "a projection should be drawn faint, got \(projected ?? "nil")")
                 check(real == "1", "a real task is fully opaque, got \(real ?? "nil")")
             }
-            check(view.debugCaption.contains("repeat dates not yet created"),
+            check(view.debugCaption.contains("upcoming repeats"),
                   "a period carrying projections should say so, got \"\(view.debugCaption)\"")
 
             // MARK: A click opens the When panel, or the task
@@ -482,6 +482,7 @@ enum ShiftCalendarViewSelfTest {
         withScratchStore { store in checkWhenPanelUndo(store: store, check: check) }
         withScratchStore { store in checkDragAndQuickAdd(store: store, check: check) }
         withScratchStore { store in checkExceptions(store: store, check: check) }
+        withScratchStore { store in checkMonthChips(store: store, check: check) }
         withScratchStore { store in checkHeroHeads(store: store, check: check) }
 
         return report(failures)
@@ -575,6 +576,24 @@ enum ShiftCalendarViewSelfTest {
         let expected = ShiftCalendarHeroWords.title(scale: .month, focusedDay: todayDay, range: nil)
         check(head.debugTitle == expected, "the head should name the month, \"\(head.debugTitle)\"")
         check(head.debugKicker.hasPrefix("CALENDAR \u{00B7} "), "the kicker should be the calendar's, \(head.debugKicker)")
+        // UI-05 of full review 4: the period's repeats are the quiet line's,
+        // in plain words, and the kicker stays the page and the date. It
+        // read "... · 4 REPEAT DATES NOT YET CREATED" and wrapped.
+        let savedRepeats = head.repeatDates
+        let kickerAlone = head.debugKicker
+        head.repeatDates = 4
+        head.layoutSubtreeIfNeeded()
+        check(head.debugKicker == kickerAlone && !head.debugKicker.contains("REPEAT"),
+              "UI-05: the kicker carries the repeats: \"\(head.debugKicker)\"")
+        check(head.debugRepeatsLine == "4 upcoming repeats",
+              "UI-05: the quiet line reads \"\(head.debugRepeatsLine ?? "nothing")\", want 4 upcoming repeats")
+        check(head.accessibilityLabel()?.contains("4 upcoming repeats") == true,
+              "UI-05: VoiceOver's head does not say the repeats: \(head.accessibilityLabel() ?? "nil")")
+        head.repeatDates = 1
+        check(head.debugRepeatsLine == "1 upcoming repeat", "UI-05: one repeat reads \(head.debugRepeatsLine ?? "nothing")")
+        head.repeatDates = 0
+        check(head.debugRepeatsLine == nil, "UI-05: no repeats still draws \(head.debugRepeatsLine ?? "")")
+        head.repeatDates = savedRepeats
         check(trayHead.debugBand.debugCount == "2", "the tray's head should count 2, \(trayHead.debugBand.debugCount)")
 
         // MARK: The weekday names stand over the grid's own columns
@@ -1456,6 +1475,76 @@ enum ShiftCalendarViewSelfTest {
     ///
     /// The fixture is a daily task in the middle of next month, so every date
     /// it touches is a day of the month on screen whatever today is.
+    /// UI-03 of full review 4: a month chip's time is a short leading label
+    /// ("9:30", never "9:30 AM"), a one-day chip is as wide as its day, and
+    /// a day with more chips than it holds says "+N more" inside its cell.
+    /// Measured before: "9:30 AM R...", chips about 30px short of the cell,
+    /// and a fourth chip and the overflow line under the bottom of a day.
+    private static func checkMonthChips(store: ShiftStore, check: (Bool, String) -> Void) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let nextMonth = calendar.date(byAdding: .month, value: 1,
+                                      to: calendar.date(from: calendar.dateComponents([.year, .month], from: today)) ?? today)
+            ?? today
+        let quiet = ShiftDateFormatting.components(from: calendar.date(byAdding: .day, value: 9, to: nextMonth) ?? nextMonth).0
+        let busy = ShiftDateFormatting.components(from: calendar.date(byAdding: .day, value: 10, to: nextMonth) ?? nextMonth).0
+        let timed = seed(store, title: "Rotate the CI deploy key", due: quiet, time: "09:30", rule: nil)
+        for index in 1...7 { _ = seed(store, title: "Busy day task \(index)", due: busy, time: nil, rule: nil) }
+
+        let (controller, window) = mount(store: store)
+        defer { window.orderOut(nil) }
+        let view = controller.debugCalendarView
+        let web = view.debugWebView
+        controller.view.isHidden = false
+        controller.view.layoutSubtreeIfNeeded()
+        guard waitFor(timeout: 30, until: { web.isReady && view.debugIsConfigured }) else {
+            check(false, "UI-03: the month chips case's page never reported ready and configured")
+            return
+        }
+        _ = call(web, "showDate", ["date": quiet])
+        _ = waitFor(timeout: 5) { eventIn(web, id: timed, day: quiet) }
+        drain(turns: 10)
+
+        let time = js(web, "(() => { const t = document.querySelector('[data-event-id=\"\(timed)\"] .sx__month-grid-event-time');"
+                      + " return t ? t.textContent : 'missing' })()") as? String ?? "nil"
+        check(time.range(of: "^\\d{1,2}[:.]\\d{2}$", options: .regularExpression) != nil,
+              "UI-03: a timed chip's time reads \"\(time)\", want a short \"9:30\"")
+        let widths = js(web, "(() => { const c = document.querySelector('[data-event-id=\"\(timed)\"]');"
+                        + " const e = c && c.closest('.sx__month-grid-day__events');"
+                        + " return c && e ? [c.getBoundingClientRect().width, e.getBoundingClientRect().width] : [] })()")
+            as? [Double] ?? []
+        if widths.count == 2 {
+            // The day's events column, less its 2px side padding.
+            check(widths[0] >= widths[1] - 4 - 0.5,
+                  "UI-03: a one-day chip is \(widths[0])px in a \(widths[1])px day column")
+        } else {
+            check(false, "UI-03: the timed chip or its day was not found")
+        }
+
+        let crowd = js(web, "(() => { const d = document.querySelector('.sx__month-grid-day[data-date=\"\(busy)\"]');"
+                       + " if (!d) return null; const r = d.getBoundingClientRect();"
+                       + " const more = d.querySelector('.sx__month-grid-day__events-more');"
+                       + " const shown = Array.from(d.querySelectorAll('.sx__month-grid-event'))"
+                       + "   .filter(e => getComputedStyle(e).display !== 'none');"
+                       + " const bottoms = shown.map(e => e.getBoundingClientRect().bottom);"
+                       + " if (more) bottoms.push(more.getBoundingClientRect().bottom);"
+                       + " return { more: more ? more.textContent.trim() : '', shown: shown.length,"
+                       + "   lowest: Math.max(...bottoms), bottom: r.bottom } })()") as? [String: Any]
+        guard let crowd else {
+            check(false, "UI-03: the busy day is not on the month grid")
+            return
+        }
+        let more = crowd["more"] as? String ?? ""
+        let shown = crowd["shown"] as? Int ?? 0
+        check(more.range(of: "^\\+\\d+ more$", options: .regularExpression) != nil,
+              "UI-03: a crowded day says \"\(more)\", want \"+N more\"")
+        check(shown >= 1 && shown < 7, "UI-03: a crowded day shows \(shown) of its 7 chips")
+        if let lowest = crowd["lowest"] as? Double, let bottom = crowd["bottom"] as? Double {
+            check(lowest <= bottom + 0.5,
+                  "UI-03: a crowded day's chips and \"+N more\" run to \(lowest), past its bottom at \(bottom)")
+        }
+    }
+
     private static func checkExceptions(store: ShiftStore, check: (Bool, String) -> Void) {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())

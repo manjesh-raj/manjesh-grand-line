@@ -659,6 +659,35 @@ enum MainSplitShellNavigationSelfTest {
         check(items.first { $0.itemIdentifier == WorkspaceToolbar.ItemID.recents }?.menuFormRepresentation?.action != nil,
               "Recents does nothing from the overflow menu", &ok)
 
+        // UI-08 of full review 4: at 1512 an open inspector takes 320pt of
+        // the toolbar's room, and the full toolbar does not fit beside it -
+        // AppKit clipped the crumb at its leading edge ("rk › Connections").
+        // The toolbar goes compact instead: the crumb gives up its group,
+        // keeps the page's name whole, and outlasts Quick Connect and the
+        // module's action, since the window itself is not narrow.
+        shell.workspace.navigator.show(.hosts)
+        settle(shell)
+        check(shell.toolbar.debugCrumb.hasPrefix("Work"), "fixture: the crumb has no group to drop (\(shell.toolbar.debugCrumb))", &ok)
+        shell.setInspectorShown(true)
+        settle(shell)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed, "UI-08: fixture: the inspector did not open", &ok)
+        check(shell.toolbar.debugIsCompact, "UI-08: at 1512 beside the open inspector the toolbar is not compact", &ok)
+        check(shell.toolbar.debugCrumb == "Connections",
+              "UI-08: beside the inspector the crumb reads \"\(shell.toolbar.debugCrumb)\", want the page's name alone", &ok)
+        check(shell.toolbar.toolbar.items.first { $0.itemIdentifier == WorkspaceToolbar.ItemID.crumb }?.visibilityPriority
+                == WorkspaceToolbar.crumbPriority,
+              "UI-08: beside the inspector the crumb yields before Quick Connect", &ok)
+        shell.setInspectorShown(false)
+        settle(shell)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        settle(shell)
+        check(!shell.toolbar.debugIsCompact && shell.toolbar.debugCrumb.hasPrefix("Work"),
+              "UI-08: with the inspector closed the crumb reads \"\(shell.toolbar.debugCrumb)\"", &ok)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+
         // The light/dark toggle flips the theme within its family.
         let before = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(before) }
@@ -1281,7 +1310,8 @@ enum MainSplitShellNavigationSelfTest {
         // R5-BUG-05: the crumb and the header name the row the sidebar
         // lights, so the Calendar view reads "Work › Calendar" beside a lit
         // Calendar row. R5-UX-04: its tabs are its own periods, not Tasks'
-        // views, and its actions are Today and New task.
+        // views, and its action is New task. UI-05 of full review 4: Today
+        // is the head's alone, beside its arrows, not a second copy here.
         check(shell.currentModule == .tasks && shell.toolbar.debugCrumb.hasSuffix("Calendar"),
               "the calendar button drew \(shell.currentModule.title)'s chrome (\(shell.toolbar.debugCrumb)), "
               + "want a Work \u{203A} Calendar crumb", &ok)
@@ -1289,7 +1319,7 @@ enum MainSplitShellNavigationSelfTest {
                 && selectedTabName(shell) == tasks.calendar.scale.title,
               "the calendar button lit \(selectedTabName(shell) ?? "no tab") of \(shell.toolbar.debugTabNames)", &ok)
         let actionTitles = shell.toolbar.debugPageActions.compactMap { ($0 as? HelmButton)?.title }
-        check(actionTitles.contains("Today") && (shell.toolbar.debugPrimaryAction as? HelmButton)?.title == "New task",
+        check(!actionTitles.contains("Today") && (shell.toolbar.debugPrimaryAction as? HelmButton)?.title == "New task",
               "the Calendar's toolbar carries \(actionTitles) and \(String(describing: (shell.toolbar.debugPrimaryAction as? HelmButton)?.title))", &ok)
         // A period tab is the card's own pill: Week shows the week, and
         // ⌘⇧] steps on to Month.

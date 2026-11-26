@@ -84,7 +84,7 @@ enum HelmKit {
         Component("HelmConfirm", "1.0.0", file: "HelmConfirm.swift"),
         Component("HelmConfirmView", "1.0.0", file: "HelmConfirm.swift"),
         // HelmDataTable.swift
-        Component("HelmDataTable", "1.0.1", file: "HelmDataTable.swift"),
+        Component("HelmDataTable", "1.1.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableActionsCell", "1.0.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableRowView", "1.0.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableRunDotsCell", "1.0.0", file: "HelmDataTable.swift"),
@@ -133,7 +133,7 @@ enum HelmKit {
         Component("HelmHeroTile", "1.1.0", file: "HelmHeroCard.swift"),
         Component("HelmHeroTileGrid", "1.1.0", file: "HelmHeroCard.swift"),
         // HelmHeroColumn.swift
-        Component("HelmHeroColumn", "1.6.0", file: "HelmHeroColumn.swift"),
+        Component("HelmHeroColumn", "1.7.0", file: "HelmHeroColumn.swift"),
         Component("HelmHeroNavRow", "1.0.0", file: "HelmHeroColumn.swift"),
         Component("HelmHeroRow", "1.0.0", file: "HelmHeroColumn.swift"),
         // HelmHeroSplitCard.swift
@@ -174,7 +174,7 @@ enum HelmKit {
         Component("HelmModuleUsageSpend", "1.0.0", file: "HelmModuleCard.swift"),
         Component("HelmModuleUsageStatus", "1.0.0", file: "HelmModuleCard.swift"),
         Component("HelmProgressBar", "1.0.0", file: "HelmModuleCard.swift"),
-        Component("HelmRingGauge", "1.3.0", file: "HelmModuleCard.swift"),
+        Component("HelmRingGauge", "1.4.0", file: "HelmModuleCard.swift"),
         // HelmMotion.swift
         Component("HelmDisplayAccessibility", "1.0.0", file: "HelmMotion.swift"),
         Component("HelmMotion", "1.0.0", file: "HelmMotion.swift"),
