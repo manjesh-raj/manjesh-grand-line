@@ -983,6 +983,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         }
         builtTextScale = scale
         builtDensity = density
+        // UX-28: the foot's row is built at a scale too.
+        foot.rebuildForScale(theme: theme)
         // GL-32: a text-scale change re-fires the theme too, and that one
         // does rebuild: the row heights and every font follow the scale, and
         // a cell sets its fonts and sizes once, when it is built.
@@ -1931,8 +1933,9 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
 /// VoiceOver, draws a focus ring and takes Return and Space (GL-16).
 final class WorkspaceSidebarFoot: NSView {
     private let rule = NSView()
-    private let cell = WorkspaceSidebarPageCell()
+    private var cell = WorkspaceSidebarPageCell()
     let row = HoverHighlightView()
+    private var rowHeight: NSLayoutConstraint?
     private var isLit = false
     var onClick: (() -> Void)?
     private lazy var cellLeading = cell.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: HelmMetrics.s1)
@@ -1970,12 +1973,11 @@ final class WorkspaceSidebarFoot: NSView {
             row.leadingAnchor.constraint(equalTo: leadingAnchor),
             row.trailingAnchor.constraint(equalTo: trailingAnchor),
             row.bottomAnchor.constraint(equalTo: bottomAnchor),
-            cell.topAnchor.constraint(equalTo: row.topAnchor),
-            cell.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-            cellLeading,
-            cell.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            row.heightAnchor.constraint(equalToConstant: HelmType.scaledRowHeight(WorkspaceSidebarMetrics.moduleRowHeight)),
         ])
+        pinCell()
+        let height = row.heightAnchor.constraint(equalToConstant: HelmType.scaledRowHeight(WorkspaceSidebarMetrics.moduleRowHeight))
+        height.isActive = true
+        rowHeight = height
         // GL-16: the click recognizer is also what Return, Space and
         // VoiceOver's press reach, through `performPrimaryAction`.
         row.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
@@ -1984,6 +1986,30 @@ final class WorkspaceSidebarFoot: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     @objc private func clicked() { onClick?() }
+
+    private func pinCell() {
+        cellLeading = cell.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: cellLeading.constant)
+        NSLayoutConstraint.activate([
+            cell.topAnchor.constraint(equalTo: row.topAnchor),
+            cell.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            cellLeading,
+            cell.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+        ])
+    }
+
+    /// GL-32: a text-scale or density change rebuilds the row, as it
+    /// rebuilds the list's rows - a cell sets its fonts and sizes once.
+    func rebuildForScale(theme: HelmTheme) {
+        let module = WorkspaceSidebarModel.footModule
+        cell.removeFromSuperview()
+        cell = WorkspaceSidebarPageCell()
+        cell.translatesAutoresizingMaskIntoConstraints = false
+        cell.configure(symbol: module.symbol, title: module.title, badge: nil, theme: theme)
+        row.addSubview(cell)
+        pinCell()
+        rowHeight?.constant = HelmType.scaledRowHeight(WorkspaceSidebarMetrics.moduleRowHeight)
+        applyTheme(theme)
+    }
 
     func setLit(_ lit: Bool, theme: HelmTheme) {
         isLit = lit

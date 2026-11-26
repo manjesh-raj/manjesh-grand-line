@@ -21,6 +21,7 @@ enum ReviewFourUXSelfTest {
         var ok = true
         checkTheToolbarNamesItsShortcuts(&ok)
         checkSettingsStaysInReach(&ok)
+        checkHomeHealthIsAHeroCard(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -123,6 +124,52 @@ enum ReviewFourUXSelfTest {
             sidebar.onSelectModule = { opened = $0 }
             foot.row.performPrimaryAction()
             check(opened == .settings, "UX-28: the foot did not open Settings", &ok)
+        }
+    }
+
+    // MARK: UX-02
+
+    /// Home's Health card says one verdict, names each service that needs a
+    /// look, and is the short tile when nothing does.
+    private static func checkHomeHealthIsAHeroCard(_ ok: inout Bool) {
+        let now = Date()
+        func entry(_ service: HealthService, success: Bool = true, failures: Int = 0) -> ServiceHealthSummary.Entry {
+            var state = ServiceHealthState()
+            if success { state.lastSuccess = now.addingTimeInterval(-60) }
+            if failures > 0 {
+                state.consecutiveFailures = failures
+                state.lastFailure = now.addingTimeInterval(-30)
+                state.lastFailureDetail = "no"
+            }
+            return ServiceHealthSummary.Entry(service: service, state: state)
+        }
+        let failing = HomeCanvasController.healthHero(ServiceHealthSummary([
+            entry(.fleetTasks), entry(.persistence), entry(.dotfilesAutoSync, failures: 3),
+            entry(.docsSync, success: false),
+        ]))
+        check(failing.headline == "1 service needs a look" && failing.body == "2 healthy, 1 not run yet"
+                && failing.rows == [.init(service: .dotfilesAutoSync, detail: "failed 3 runs in a row")]
+                && failing.chip == .bad("1 failing") && failing.ring?.state == .bad && failing.ring?.label == "2/4",
+              "UX-02: a failing service reads \(failing)", &ok)
+        let healthy = HomeCanvasController.healthHero(ServiceHealthSummary([entry(.fleetTasks), entry(.persistence)]))
+        check(healthy.rows.isEmpty && healthy.headline == "All 2 services healthy" && healthy.body == nil
+                && healthy.chip == nil && healthy.ring?.state == .ok,
+              "UX-02: a healthy summary reads \(healthy)", &ok)
+        let unknown = HomeCanvasController.healthHero(ServiceHealthSummary())
+        check(unknown.isUnknown && unknown.ring == nil, "UX-02: nothing reported is not the dimmed tile (GL-14)", &ok)
+
+        // A hero with no figures draws no strip and no rule over nothing.
+        autoreleasepool {
+            let card = HelmModuleCard()
+            var content = HelmModuleCard.Content(title: "Health", subtitle: "", symbol: "heart",
+                                                 hue: .green, chip: nil, body: .heroSummary(.init(
+                headline: "All 2 services healthy", body: nil, ring: healthy.ring, items: [],
+                layout: .standard)))
+            content.hero = .init(colour: .themeAccent)
+            card.configure(content)
+            card.frame = NSRect(x: 0, y: 0, width: 380, height: 300)
+            card.layoutSubtreeIfNeeded()
+            check(card.debugKPIStrip?.superview == nil, "UX-02: the healthy tile still draws an empty strip", &ok)
         }
     }
 }

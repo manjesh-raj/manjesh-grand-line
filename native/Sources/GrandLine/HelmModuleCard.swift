@@ -2360,7 +2360,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             if let body = summary.body, !body.isEmpty {
                 stacked.append(heroLabel(body, size: 12.5, maxLines: 3) { $0 })
             }
-            stacked.append(strip)
+            // A hero with no figures draws no strip, and so no rule over
+            // nothing (UX-02's healthy Health card).
+            if !summary.items.isEmpty { stacked.append(strip) }
             return verticalStack(stacked, spacing: HelmMetrics.s2 + 2)
 
         case .standard:
@@ -2374,7 +2376,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             }
             let text = verticalStack(words, spacing: HelmMetrics.s1 + 2)
             let top = heroRow([text] + [ringColumn].compactMap { $0 }, alignment: .top, spacing: HelmMetrics.s4)
-            return verticalStack([top, strip], spacing: HelmMetrics.s3)
+            return verticalStack(summary.items.isEmpty ? [top] : [top, strip], spacing: HelmMetrics.s3)
 
         case .wide:
             let ringColumn = summary.ring.map { heroRingView($0, side: HelmRingGauge.heroSide, caption: .below,
@@ -2389,7 +2391,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             let cap = text.widthAnchor.constraint(equalToConstant: textWidth)
             cap.priority = HelmDaylightPriority.contentTie
             cap.isActive = true
-            let row = heroRow([text, strip] + [ringColumn].compactMap { $0 }, alignment: .centerY,
+            let row = heroRow([text] + (summary.items.isEmpty ? [] : [strip]) + [ringColumn].compactMap { $0 },
+                              alignment: .centerY,
                               spacing: HelmMetrics.s6)
             return verticalStack([row], spacing: 0)
         }

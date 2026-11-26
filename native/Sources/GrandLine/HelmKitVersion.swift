@@ -165,7 +165,7 @@ enum HelmKit {
         Component("HelmScrollEdgeHairline", "1.0.0", file: "HelmListMotion.swift"),
         // HelmModuleCard.swift
         Component("HelmDaylightPriority", "1.0.0", file: "HelmModuleCard.swift"),
-        Component("HelmModuleCard", "2.0.0", file: "HelmModuleCard.swift"),
+        Component("HelmModuleCard", "2.0.1", file: "HelmModuleCard.swift"),
         Component("HelmModuleChip", "1.0.0", file: "HelmModuleCard.swift"),
         Component("HelmModulePeekRow", "1.0.0", file: "HelmModuleCard.swift"),
         Component("HelmModuleRowState", "1.0.0", file: "HelmModuleCard.swift"),

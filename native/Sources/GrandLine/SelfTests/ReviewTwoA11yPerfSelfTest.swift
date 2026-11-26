@@ -207,7 +207,9 @@ enum ReviewTwoA11yPerfSelfTest {
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         settle(shell)
         let want = registry.summary().spoken
-        let ring = shell.debugHomeCanvas.cardForTests(.health)?.debugRingGauge
+        // UX-02: the card is a hero, and its ring is the hero's.
+        let card = shell.debugHomeCanvas.cardForTests(.health)
+        let ring = card?.debugRingGauge ?? card?.debugHeroRings.first
         check(ring != nil, "Home's Health card draws no ring", &ok)
         check(ring?.isAccessibilityElement() == true && ring?.accessibilityLabel() == want,
               "Home's Health ring reads \"\(ring?.accessibilityLabel() ?? "nil")\", want \"\(want)\"", &ok)

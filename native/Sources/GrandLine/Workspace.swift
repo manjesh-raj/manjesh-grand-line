@@ -465,6 +465,14 @@ final class Workspace {
     /// `fm/grandline-health-sidebar-move`: F1/GL-11's Health card, promoted
     /// off the Settings page onto its own rail destination - see
     /// `HealthController.swift`'s header.
+    /// Stage 6: the two services with a real "run now" of their own, for
+    /// Health's Retry and, since UX-02, Home's Health card. Both are the same
+    /// entry points their own pages' buttons use.
+    static let healthRetryActions: [HealthService: () -> Void] = [
+        .backgroundSignals: { BackgroundSignalsPoller.shared.checkNow() },
+        .dotfilesAutoSync: { DotfilesAutoSync.shared.syncNowFromUI() },
+    ]
+
     private(set) lazy var health: HealthController = {
         let health = HealthController()
         health.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
@@ -473,10 +481,7 @@ final class Workspace {
         // Stage 6: the two services with a real "run now" of their own, for
         // the sidebar layout's Retry. Both are the same entry points their
         // own pages' buttons use.
-        health.retryActions = [
-            .backgroundSignals: { BackgroundSignalsPoller.shared.checkNow() },
-            .dotfilesAutoSync: { DotfilesAutoSync.shared.syncNowFromUI() },
-        ]
+        health.retryActions = Self.healthRetryActions
         return built(.health, health)
     }()
 
@@ -1013,6 +1018,7 @@ final class Workspace {
         // so the hub adds no behaviour of its own, only a faster way to reach
         // it.
         homeCanvas.onOpenDestination = { [weak self] dest in self?.navigator.show(dest) }
+        homeCanvas.healthRetryActions = Self.healthRetryActions
         homeCanvas.onOpenCrewDecisions = { [weak self] in
             self?.navigator.show(.overview)
             self?.overview.revealNeedsYou()
