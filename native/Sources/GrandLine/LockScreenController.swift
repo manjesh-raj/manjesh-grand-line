@@ -244,9 +244,13 @@ final class LockScreenController: NSViewController {
     private let daySkyLayer = CAGradientLayer()
     private let daySunLayer = CALayer()
     /// The tower's tap target: light the lamp, or with the field empty, put it out.
-    private let lighthouseHotspot = SceneHotspotView()
+    private let lighthouseHotspot = SceneGateHotspotView()
     /// Whether the lamp is on, which is whether the gate's card is showing.
-    private(set) var isLit = true
+    private(set) var isLit = true {
+        // A-02: the tower is labelled by what pressing it does now.
+        didSet { lighthouseHotspot.label = Self.lampLabel(lit: isLit) }
+    }
+    private static func lampLabel(lit: Bool) -> String { lit ? "Put out the lamp" : "Light the lamp to sign in" }
     private var keyMonitor: Any?
     /// The colours the current scene resolved to, for the success flourish.
     private var currentScene: SceneColors?
@@ -419,6 +423,7 @@ final class LockScreenController: NSViewController {
         // scene in `layoutSceneLayers`.
         root.addSubview(lighthouseHotspot)
         lighthouseHotspot.onClick = { [weak self] in self?.toggleLamp() }
+        lighthouseHotspot.label = Self.lampLabel(lit: isLit)
 
         // Follow the app's active Helm theme, live - see `ThemeManager.swift`'s
         // header checklist. Registered last, after every view above exists, so
@@ -1122,7 +1127,21 @@ final class LockScreenController: NSViewController {
     }
 
     private var animationsStarted = false
-    private var reduceMotionObserver: NSObjectProtocol?
+    /// PF-01 (full review 4): holds the scene still while nobody is looking -
+    /// the app inactive, the window occluded, Low Power Mode - as well as
+    /// under Reduce Motion. See `DecorativeMotionGate`'s header.
+    ///
+    /// Made on first attach, never by a read or a detach. A lazy property
+    /// read from `deinit` would build the gate there, and its `[weak self]`
+    /// closure then forms a weak reference to an object mid-deallocation,
+    /// which the runtime aborts on (measured: three CI suites, exit 134).
+    private var motionGate: DecorativeMotionGate?
+
+    private func attachMotionGate(to window: NSWindow) {
+        let gate = motionGate ?? DecorativeMotionGate { [weak self] _ in self?.applyMotionPreference() }
+        motionGate = gate
+        gate.attach(to: window)
+    }
 
     /// GL-16: the two animations below (the boat's bob and the wave's drift)
     /// loop forever, and this screen is *mandatory* - a captain who has turned
@@ -1137,8 +1156,12 @@ final class LockScreenController: NSViewController {
     /// `CATransaction` completion block that actually unlocks the app - a
     /// change there risks a state where the password is accepted and the
     /// overlay never lifts.
-    private static var prefersReducedMotion: Bool {
-        HelmMotion.isReduced
+    ///
+    /// PF-01 widened "Reduce Motion" to the gate's whole rule: the same still
+    /// picture is drawn while the app is inactive, the window is occluded or
+    /// Low Power Mode is on, and the loops come back when all of that clears.
+    private var prefersReducedMotion: Bool {
+        HelmMotion.isReduced || (motionGate?.holdsStill ?? false)
     }
 
     /// E4 (`data/grand-line-e2e-audit/report.md`): stop the looping
@@ -1149,15 +1172,17 @@ final class LockScreenController: NSViewController {
     /// toggle could take them off - so after the first unlock they stayed
     /// attached to hidden layers for the rest of the session, costing
     /// render-server bookkeeping forever for something nobody can see. And
-    /// while the app *is* locked with the display awake (a Mac left locked
-    /// overnight), the scene composites continuously by design; that half is
-    /// the lock screen's job, but it must end the moment the overlay does.
+    /// while the app *is* locked, the scene moves only while someone can see
+    /// it: PF-01's `motionGate` holds it still while the app is inactive, the
+    /// window is occluded or Low Power Mode is on. All of that must end the
+    /// moment the overlay does.
     ///
     /// Clearing the latch is what makes `startAnimationsIfNeeded()` honest:
     /// the next `showLock` genuinely restarts them, rather than relying on
     /// animations that happened to still be attached.
     func stopAnimations() {
         removeKeyMonitor()
+        motionGate?.detach()
         lighthouse.stopAll()
         guard animationsStarted else { return }
         animationsStarted = false
@@ -1187,25 +1212,21 @@ final class LockScreenController: NSViewController {
         guard !animationsStarted, waveWidth > 0 else { return }
         animationsStarted = true
 
-        // Observe live changes so toggling Reduce Motion while the lock screen
-        // is up takes effect, rather than only on the next launch.
-        if reduceMotionObserver == nil {
-            // P7: on `NSWorkspace`'s notification center, which is where
-            // macOS posts this - registered on the default center it never
-            // fired.
-            reduceMotionObserver = HelmDisplayAccessibility.observeChanges { [weak self] in
-                self?.applyMotionPreference()
-            }
-        }
+        // Observe live changes so toggling Reduce Motion, switching apps or
+        // covering the window while the lock screen is up takes effect at
+        // once. The gate registers Reduce Motion on `NSWorkspace`'s
+        // notification center (P7: on the default center it never fired).
+        if let window = view.window { attachMotionGate(to: window) }
 
         installKeyMonitor()
-        guard !Self.prefersReducedMotion else { return }
-        addLoopingAnimations()
+        // Draws the moving scene, or the still one if the gate says so -
+        // including a lamp that was lit before the gate was attached.
+        applyMotionPreference()
     }
 
     /// Adds or removes the looping decoration to match the current setting.
     private func applyMotionPreference() {
-        if Self.prefersReducedMotion {
+        if prefersReducedMotion {
             boatImageView.layer?.removeAnimation(forKey: "bob")
             waveLayer.removeAnimation(forKey: "drift")
             backWaveLayer.removeAnimation(forKey: "drift")
@@ -1289,11 +1310,7 @@ final class LockScreenController: NSViewController {
     }
     #endif
 
-    deinit {
-        if let reduceMotionObserver {
-            HelmDisplayAccessibility.stopObserving(reduceMotionObserver)
-        }
-    }
+    // No `deinit`: the gate detaches itself when it goes with this controller.
 
     // MARK: - Content
 
@@ -1631,7 +1648,7 @@ final class LockScreenController: NSViewController {
         cardShadowHost.layer?.mask = nil
         cardShadowHost.alphaValue = lit ? 1 : 0
         cardShadowHost.isInert = !lit
-        if lit { lighthouse.showLit(reducedMotion: Self.prefersReducedMotion) } else { lighthouse.showUnlit() }
+        if lit { lighthouse.showLit(reducedMotion: prefersReducedMotion) } else { lighthouse.showUnlit() }
     }
 
     /// Lights the lamp. From the pointer the lens spins up and the first beam
@@ -1641,7 +1658,7 @@ final class LockScreenController: NSViewController {
         guard !isLit, openStyle else { return }
         isLit = true
         cardShadowHost.isInert = false
-        let reduced = Self.prefersReducedMotion
+        let reduced = prefersReducedMotion
         lighthouse.light(reducedMotion: reduced, spinUp: source == .pointer && !reduced,
                          fadeVeil: source == .key ? 0.3 : 0.9)
         if source == .pointer && !reduced {
@@ -1725,7 +1742,9 @@ final class LockScreenController: NSViewController {
 
     /// What a key in this window does: lights the lamp, unless the overlay is down.
     private func noteKeyDown() {
-        guard !view.isHiddenOrHasHiddenAncestor else { return }
+        // A-02: with the keyboard on the tower, Space and Return are the
+        // tower's, so the first-key rule stands aside.
+        guard !view.isHiddenOrHasHiddenAncestor, !SceneGateHotspotView.isFocused(in: view.window) else { return }
         light(.key)
     }
 
@@ -1847,25 +1866,6 @@ private final class GateHostView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { isInert ? nil : super.hitTest(point) }
 }
 
-/// The lighthouse's tap target. It never takes first responder, so a click on
-/// the tower leaves the password field focused.
-private final class SceneHotspotView: NSView {
-    var onClick: (() -> Void)?
-    override var acceptsFirstResponder: Bool { false }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
-    override func mouseDown(with event: NSEvent) {}
-    override func mouseUp(with event: NSEvent) {
-        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
-    }
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .button }
-    override func accessibilityLabel() -> String? { "Lighthouse" }
-    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
-    #if FM_SELFTESTS
-    func debugClick() { onClick?() }
-    #endif
-}
 
 /// C-4 Open sea's avatar: the app's mark as a round, ringed tile.
 private final class OpenSeaAvatarView: NSView {

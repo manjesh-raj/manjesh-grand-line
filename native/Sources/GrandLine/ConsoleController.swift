@@ -573,8 +573,14 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// gradient - a white sparkle tile, "SRE Lead", the host it reads and that
     /// it only runs read-only kubectl, then the status pill and the postmortem
     /// button as ghost controls on the gradient.
-    let sreLeadHero = PopoverHeroHeader(symbol: "sparkles", tileStyle: .white,
-                                        insets: NSEdgeInsets(top: 12, left: 12, bottom: 13, right: 12))
+    let sreLeadHero = ConsoleController.makeSRELeadHero()
+    /// The SRE Lead hero as the panel builds it. A factory, so the contrast
+    /// suite paints the same header without building a console.
+    static func makeSRELeadHero() -> PopoverHeroHeader {
+        PopoverHeroHeader(symbol: "sparkles", tileStyle: .white,
+                          insets: NSEdgeInsets(top: 12, left: 12, bottom: 13, right: 12),
+                          quietInk: HelmHeroColumn.quietInkAlpha)
+    }
     /// Live phase readout ("Starting…" / "Ready" / "Working" / "Failed"), a
     /// `HelmStatusPill` drawn on the hero (`heroInk`).
     let sreLeadStatusPill = HelmStatusPill()

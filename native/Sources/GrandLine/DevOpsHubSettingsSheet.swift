@@ -44,6 +44,14 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
                                          subtitle: "Start on the page opens the site here once it has loaded.")
     private let launchRow = HelmToggleRow(title: "Start when Grand Line opens",
                                           subtitle: "Once the window is up. Off by default.")
+    /// S-04 (full review 4). On by default.
+    private let confineRow = HelmToggleRow(title: "Keep the site to its own address",
+                                           subtitle: "Blocks requests to the internet and to other ports on this Mac. "
+                                               + "Turn off for a site that needs a CDN or an API.")
+    /// S-02 (full review 4).
+    private let browserRow = HelmToggleRow(title: "Allow my browser",
+                                           subtitle: "Off, only Grand Line\u{2019}s own view can read the site. On, your "
+                                               + "browser can too, and so can any other app on this Mac while it runs.")
 
     /// The sheet for an existing project. `takenPorts` are the other
     /// projects' ports.
@@ -101,9 +109,9 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         choose.setContentCompressionResistancePriority(.required, for: .horizontal)
         form.addField("Folder", folderRow)
         if mode == .add {
-            folderCheckLabel = form.addCaption("It needs an index.html at its top.")
+            folderCheckLabel = form.addCaption(Self.folderHint)
         } else {
-            form.addCaption("It needs an index.html at its top. The default is projects/\(project.id) in your firstmate home.")
+            form.addCaption("\(Self.folderHint) The default is projects/\(project.id) in your firstmate home.")
         }
 
         form.addSection("How it is served")
@@ -114,8 +122,12 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         portField.stringValue = "\(project.port)"
         portField.delegate = self
         form.addFieldColumns([("Address", address), ("Port", portField)])
-        form.addCaption(mode == .add ? "The next port no other project uses. Nothing on your network can reach it."
+        form.addCaption(mode == .add ? Self.addPortCaption
                                      : "The site saves your progress per address, so a new port starts it with no progress.")
+        browserRow.isOn = project.allowsBrowser
+        form.addRow(browserRow)
+        confineRow.isOn = project.confinesNetwork
+        form.addRow(confineRow)
 
         form.addSection("Starting")
         opensRow.isOn = project.opensWhenReady
@@ -150,6 +162,15 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         }
     }
 
+    /// Where the site's `index.html` may be (S-02).
+    static let folderHint = "It needs an index.html at its top, or in a dist, build or public folder, "
+        + "which is then the folder served."
+
+    /// S-02: the caption under Add Project's port. Loopback keeps the network
+    /// out, not the other software on this Mac.
+    static let addPortCaption = "The next port no other project uses. Nothing on your network can reach it, but "
+        + "other apps on this Mac can reach the port while it runs, and can read the site if you allow your browser."
+
     /// A name for a chosen folder: its own name, or its parent's when the
     /// folder is a build output (`dist`, `build`, `public`, `out`, `site`).
     static func suggestedName(for folder: URL) -> String {
@@ -167,24 +188,27 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         guard text != checkedFolder else { return }
         checkedFolder = text
         guard !text.isEmpty else {
-            label.stringValue = "It needs an index.html at its top."
+            label.stringValue = Self.folderHint
             return
         }
         let folder = URL(fileURLWithPath: (text as NSString).expandingTildeInPath).standardizedFileURL
         label.stringValue = "Checking the folder\u{2026}"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = LocalProjectPreflight.check(folder: folder)
+            let served = LocalProjectPreflight.servedFolder(for: folder)
+            let subfolder = served == folder ? nil : served.lastPathComponent
             DispatchQueue.main.async {
                 guard let self, self.checkedFolder == text else { return }
-                label.stringValue = Self.folderLine(outcome)
+                label.stringValue = Self.folderLine(outcome, servedSubfolder: subfolder)
             }
         }
     }
 
-    static func folderLine(_ outcome: LocalProjectPreflight.Outcome) -> String {
+    static func folderLine(_ outcome: LocalProjectPreflight.Outcome, servedSubfolder: String? = nil) -> String {
         switch outcome {
         case .ready:
-            return "index.html found \u{00B7} " + (DevOpsHubWords.folderDetail(outcome) ?? "")
+            let found = servedSubfolder.map { "Serves \($0)/ \u{00B7} " } ?? "index.html found \u{00B7} "
+            return found + (DevOpsHubWords.folderDetail(outcome) ?? "")
         case .folderMissing:
             return "There is no folder at that path."
         case .indexMissing:
@@ -198,8 +222,8 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
     /// usable. `name` is Add Project's name field, and a nil `name` keeps the
     /// project's own. `takenPorts` are the other projects' ports.
     static func edited(_ project: LocalProject, name: String? = nil, folderText: String, portText: String,
-                       opensWhenReady: Bool, startsAtLaunch: Bool, takenPorts: Set<UInt16> = [],
-                       requiresFolder: Bool = false) -> (LocalProject?, String?) {
+                       opensWhenReady: Bool, startsAtLaunch: Bool, allowsBrowser: Bool? = nil,
+                       confinesNetwork: Bool? = nil, takenPorts: Set<UInt16> = [], requiresFolder: Bool = false) -> (LocalProject?, String?) {
         let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let trimmedName, trimmedName.isEmpty { return (nil, "Give the project a name.") }
         let folder = folderText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -223,6 +247,8 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         edited.port = port
         edited.opensWhenReady = opensWhenReady
         edited.startsAtLaunch = startsAtLaunch
+        if let allowsBrowser { edited.allowsBrowser = allowsBrowser }
+        if let confinesNetwork { edited.confinesNetwork = confinesNetwork }
         return (edited, nil)
     }
 
@@ -232,6 +258,7 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
                                             folderText: folderField.stringValue,
                                             portText: portField.stringValue,
                                             opensWhenReady: opensRow.isOn, startsAtLaunch: launchRow.isOn,
+                                            allowsBrowser: browserRow.isOn, confinesNetwork: confineRow.isOn,
                                             takenPorts: takenPorts, requiresFolder: adding)
         guard let edited else {
             let field: HelmTextField
@@ -279,6 +306,8 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         launchRow.isOn = startsAtLaunch
     }
     func debugSetName(_ name: String) { nameField.stringValue = name }
+    var debugBrowserRow: HelmToggleRow { browserRow }
+    var debugConfineRow: HelmToggleRow { confineRow }
     func debugCheckFolder() { checkFolder() }
     func debugSave() { save() }
     #endif

@@ -2,14 +2,21 @@
 //
 // Home's hero cards (the widget-style board's picks: the Claude card's split
 // hero and the Fleet card's full hero, and the Hosts card's full hero with its
-// recent hosts as rows), drawn by the real Home canvas in a real probe window.
+// recent hosts as rows), drawn by the real Home canvas at a window's size.
 //
-// Window-backed, because what it asserts is real layout: where the gradient
-// lands at each of the three sizes, that every word on it is painted in the
-// palette's ink and fits inside the card, and that the style menu's size and
-// colour items reach the arrangement and the card. The pure half - the
-// palette over every preset and theme, the five states' words, the stored
-// colour - is `HeroCardsSelfTest`.
+// It asserts real layout: where the gradient lands at each of the three
+// sizes, that every word on it is painted in the palette's ink and fits
+// inside the card, and that the style menu's size and colour items reach the
+// arrangement and the card. The pure half - the palette over every preset and
+// theme, the five states' words, the stored colour - is `HeroCardsSelfTest`.
+//
+// Headless since full review 4's T-05 audit. None of that needs a window
+// server: the canvas is laid out in a plain host view at the window's content
+// size, the menu items are fired through their own target and action, and the
+// pill-versus-card check asks the card's own recognizer about an event rather
+// than dispatching one. Injected, a gesture arbitration that always lets the
+// card recognize still fails "a click on a Connect pill would also open the
+// card".
 //
 // With `FM_HERO_RENDER_DIR` set it also writes one PNG per card, size, state
 // and theme into that folder (the PR's renders). Nothing is written otherwise.
@@ -150,7 +157,7 @@ enum HeroCardsViewSelfTest {
     /// `mode`, fed `state`, in a probe window.
     static func mountCanvas(_ mode: HomeCardSizeMode, state: State, theme: HelmTheme,
                             sizes: [DaylightModule: HomeCardLayout.CardSize]? = nil,
-                            body: (HomeCanvasController, NSWindow) -> Void) {
+                            body: (HomeCanvasController, NSView) -> Void) {
         ThemeManager.shared.setTheme(theme)
         let canvas = HomeCanvasController(sources: .init(
             shiftStore: ShiftStore(), hostStore: hostStore, scheduleStore: ScheduleStore(),
@@ -158,8 +165,14 @@ enum HeroCardsViewSelfTest {
             codePreviewStore: CodePreviewStore(), notebookStore: NotebookStore(),
             readingListStore: ReadingListStore(), commandLibraryStore: CommandLibraryStore(),
             stickyBoardStore: StickyBoardStore()))
-        let window = OffScreenProbe.window(width: windowWidth, height: 1100)
-        window.contentView = canvas.view
+        // No window (full review 4, T-05): everything this suite asserts is
+        // layout, painted colours and target/action, which a view laid out
+        // in a plain host answers. A host at the window's content size stands
+        // in for the content view.
+        let window = NSView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: 1100))
+        canvas.view.frame = window.bounds
+        canvas.view.autoresizingMask = [.width, .height]
+        window.addSubview(canvas.view)
         let live = Set(hostStore.hosts.filter { liveHosts(state).contains($0.label) }.map(\.id))
         canvas.connectedHostIDs = { live }
         canvas.hostSession = { id in
@@ -173,11 +186,10 @@ enum HeroCardsViewSelfTest {
         if state == .stale { canvas.applyQuota(.failure("quota-axi timed out")) }
         canvas.applyFleet(snapshot: fleet(state), mergedPRs: [], prFetchFailure: nil)
         canvas.debugRenderNow()
-        window.layoutIfNeeded()
+        window.layoutSubtreeIfNeeded()
         canvas.view.layoutSubtreeIfNeeded()
         body(canvas, window)
-        window.contentView = nil
-        window.close()
+        canvas.view.removeFromSuperview()
     }
 
     static var daylight: HelmTheme { HelmTheme.appThemes.first { $0.id == "daylight" } ?? ThemeManager.shared.theme }
@@ -397,7 +409,7 @@ enum HeroCardsViewSelfTest {
             func event(at view: NSView) -> NSEvent? {
                 let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
                 return NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
-                                          windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                          windowNumber: 0, context: nil, eventNumber: 0,
                                           clickCount: 1, pressure: 1)
             }
             if let onButton = event(at: button) {
@@ -461,7 +473,7 @@ enum HeroCardsViewSelfTest {
                 var stored: [HomeCardLayout] = []
                 canvas.onCardLayoutChanged = { stored.append($0) }
                 canvas.setCustomizing(true)
-                window.layoutIfNeeded()
+                window.layoutSubtreeIfNeeded()
                 guard let card = canvas.cardForTests(.claudeStatus),
                       let grip = canvas.resizeHandlesForTests[.claudeStatus]?.first(where: { $0.edge == edge }) else {
                     fail("\(edge): Customize drew no Claude card or grip", &ok)
@@ -470,7 +482,7 @@ enum HeroCardsViewSelfTest {
                 let start = grip.convert(NSPoint(x: grip.bounds.midX, y: grip.bounds.midY), to: nil)
                 func event(_ type: NSEvent.EventType, _ point: NSPoint) -> NSEvent? {
                     NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
-                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                       windowNumber: 0, context: nil, eventNumber: 0,
                                        clickCount: 1, pressure: 1)
                 }
                 let before = canvas.cardLayout
@@ -483,7 +495,7 @@ enum HeroCardsViewSelfTest {
                 let dragged = canvas.cardLayout
 
                 canvas.setCustomizing(false)
-                window.layoutIfNeeded()
+                window.layoutSubtreeIfNeeded()
                 guard let after = canvas.cardForTests(.claudeStatus) else {
                     fail("\(edge): Done drew no Claude card", &ok)
                     return
@@ -518,7 +530,7 @@ enum HeroCardsViewSelfTest {
                         return
                     }
                     fire(item)
-                    window.layoutIfNeeded()
+                    window.layoutSubtreeIfNeeded()
                 }
                 let before = canvas.cardLayout
                 check(before.shown.contains(module), "\(module.title): fixture: the card is not on Home", &ok)
@@ -531,7 +543,7 @@ enum HeroCardsViewSelfTest {
                 let undo = allViews(in: canvas.view).compactMap { $0 as? HelmButton }.first { $0.title == "Undo" }
                 check(undo != nil, "\(module.title): the toast has no Undo", &ok)
                 undo?.performClick(nil)
-                window.layoutIfNeeded()
+                window.layoutSubtreeIfNeeded()
                 check(canvas.cardLayout == before && canvas.cardForTests(module) != nil && stored.last == before,
                       "\(module.title): Undo did not put the card back", &ok)
 
@@ -616,7 +628,7 @@ enum HeroCardsViewSelfTest {
             let point = connectPill.convert(NSPoint(x: connectPill.bounds.midX, y: connectPill.bounds.midY), to: nil)
             if let recognizer = card.debugCardHitView.gestureRecognizers.first,
                let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
-                                             windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                             windowNumber: 0, context: nil, eventNumber: 0,
                                              clickCount: 1, pressure: 1) {
                 check(!card.gestureRecognizer(recognizer, shouldAttemptToRecognizeWith: down),
                       "a click on a Connect pill would also open the card", &ok)

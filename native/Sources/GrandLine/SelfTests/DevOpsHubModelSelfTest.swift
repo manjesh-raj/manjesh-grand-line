@@ -12,11 +12,18 @@
 //   2. **The same over a real loopback listener**: it answers on 127.0.0.1,
 //      a second listener on the port is `.portInUse`, and the port is free
 //      again once it stops.
+//   2a. **Ranges and media** (full review 4, PF-03): 206 with
+//      `Content-Range`, 416 past the end, the media types, a big file
+//      streamed from disk and arriving intact, and no response built on the
+//      listener's queue.
+//   2b. **Connection limits** (S-03): past the cap a connection is closed at
+//      once, and one that sends no head is closed at its deadline.
 //   3. **The store** keeps a newer build's keys (`passthrough`), reads an
 //      older file's missing fields as their defaults (GL-01), seeds
 //      devops-atlas, and resolves the default folder to scratch in a test
 //      process, never the real clone.
 //   4. **Preflight** says missing, no index.html, or ready with the count.
+//   4a. **Start never walks the folder on main** (PF-02).
 //   5. **The runner**: every transition, a Stop that beats a slow start, the
 //      last run it records, and the port holder named from `lsof`.
 //   6. **The words** for every state, and their tones and actions.
@@ -31,6 +38,14 @@
 //      emptied store that stays empty.
 //   8. **The settings sheet's validation**, Add Project's too, and the web
 //      view's same-site rule and stable store identifier.
+//   10. **Only Grand Line reads the site** (full review 4, S-02): the run's
+//      key in a cookie or 403, a fresh key per run, none with "Allow my
+//      browser", the build folder served in place of the repository, and a
+//      real web view that loads the site with the key it was handed.
+//   11. **The site stays on its own address** (S-04): the CSP on every
+//      answer, the switch on by default and carried to the run, and a real
+//      page whose request to another loopback server is blocked by the
+//      content rules alone and by the CSP alone, and reaches it with both off.
 //   9. **The site's own dialogs and a site that keeps crashing** (full
 //      review 2026-11-25, B-04 and B-05), on a real `DevOpsHubWebView` with
 //      no window: `confirm`, `prompt` and `alert` reach `HelmConfirm` from
@@ -47,9 +62,11 @@ enum DevOpsHubModelSelfTest {
 
     static func run() -> Bool {
         var ok = true
-        for check in [checkServerRules, checkServerOverLoopback, checkStore, checkPreflight, checkRunner,
+        for check in [checkServerRules, checkServerOverLoopback, checkStore, checkPreflight,
+                      checkStartNeverWalksTheFolderOnMain, checkRangesAndMedia, checkConnectionLimits, checkRunner,
                       checkWords, checkSidebar, checkCardsWords, checkAddAndRemove, checkProfileAndSettle,
-                      checkSettingsAndWebRules, checkSiteDialogs, checkASiteThatKeepsCrashing] {
+                      checkSettingsAndWebRules, checkSiteDialogs, checkASiteThatKeepsCrashing,
+                      checkOnlyGrandLineReadsTheSite, checkTheSiteStaysOnItsOwnAddress] {
             var caseOK = true
             check(&caseOK)
             ok = ok && caseOK
@@ -145,9 +162,10 @@ enum DevOpsHubModelSelfTest {
     /// The answer arrives on URLSession's own queue, so it crosses to this
     /// thread under a lock. The nightly ThreadSanitizer run reported the bare
     /// `result` and `done` as a race (full review 2026-11-25, T-01).
-    static func fetch(_ url: URL, host: String? = nil, timeout: TimeInterval = 5) -> (Int, Data)? {
+    static func fetch(_ url: URL, host: String? = nil, range: String? = nil, timeout: TimeInterval = 5) -> (Int, Data)? {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         if let host { request.setValue(host, forHTTPHeaderField: "Host") }
+        if let range { request.setValue(range, forHTTPHeaderField: "Range") }
         final class Answer: @unchecked Sendable {
             private let lock = NSLock()
             private var value: (Int, Data)?
@@ -295,6 +313,210 @@ enum DevOpsHubModelSelfTest {
         }
         check(DevOpsHubWords.folderDetail(.ready(files: 899, bytes: 67_000_000))?.hasPrefix("899 files, ") == true,
               "the folder detail reads \(DevOpsHubWords.folderDetail(.ready(files: 899, bytes: 67_000_000)) ?? "-")", &ok)
+    }
+
+    // MARK: 2a - ranges, media and big files (full review 4, PF-03)
+
+    /// A byte pattern a slice can be checked against: byte `i` is `i % 251`.
+    static func pattern(_ count: Int) -> Data { Data((0..<count).map { UInt8($0 % 251) }) }
+
+    private static func checkRangesAndMedia(_ ok: inout Bool) {
+        print("\n-- PF-03: ranges, media types, and big files streamed off the listener's queue --")
+        let (root, _) = makeSite()
+        let fm = FileManager.default
+        try? fm.createDirectory(at: root.appendingPathComponent("media"), withIntermediateDirectories: true)
+        let clip = pattern(1000)
+        let bigSize = LocalStaticServer.inlineBodyLimit * 2 + 12_345
+        let big = pattern(bigSize)
+        try? clip.write(to: root.appendingPathComponent("media/clip.mp4"))
+        try? big.write(to: root.appendingPathComponent("media/big.webm"))
+        let serve = { (data: Data) in LocalStaticServer.response(forRequest: data, root: root, port: 7420) }
+        func ranged(_ target: String, _ range: String, extra: String = "") -> LocalStaticServer.Response {
+            serve(request(target, extra: "Range: \(range)\r\n\(extra)"))
+        }
+
+        let whole = serve(request("/media/clip.mp4"))
+        check(whole.status == 200 && whole.header("Accept-Ranges") == "bytes" && whole.header("Content-Type") == "video/mp4",
+              "a video is \(whole.status) \(whole.header("Content-Type") ?? "-") with Accept-Ranges \(whole.header("Accept-Ranges") ?? "none")", &ok)
+        let first = ranged("/media/clip.mp4", "bytes=0-3")
+        check(first.status == 206 && first.body == clip.prefix(4) && first.header("Content-Range") == "bytes 0-3/1000"
+                && first.header("Content-Length") == "4",
+              "bytes=0-3 is \(first.status) \(first.header("Content-Range") ?? "-")", &ok)
+        let tail = ranged("/media/clip.mp4", "bytes=-10")
+        check(tail.status == 206 && tail.body == clip.suffix(10) && tail.header("Content-Range") == "bytes 990-999/1000",
+              "bytes=-10 is \(tail.status) \(tail.header("Content-Range") ?? "-")", &ok)
+        let open = ranged("/media/clip.mp4", "bytes=900-")
+        check(open.status == 206 && open.body == clip.suffix(100), "bytes=900- is \(open.status)", &ok)
+        let past = ranged("/media/clip.mp4", "bytes=5000-")
+        check(past.status == 416 && past.header("Content-Range") == "bytes */1000",
+              "a range past the end is \(past.status) \(past.header("Content-Range") ?? "-")", &ok)
+        check(ranged("/media/clip.mp4", "bytes=0-1,4-5").status == 200, "two ranges are not answered whole", &ok)
+        if let etag = whole.header("ETag") {
+            check(ranged("/media/clip.mp4", "bytes=0-3", extra: "If-Range: \(etag)\r\n").status == 206,
+                  "a matching If-Range lost the range", &ok)
+        }
+        check(ranged("/media/clip.mp4", "bytes=0-3", extra: "If-Range: \"stale\"\r\n").status == 200,
+              "a stale If-Range still got a part of a file that changed", &ok)
+        for (ext, type) in [("mp4", "video/mp4"), ("webm", "video/webm"), ("mp3", "audio/mpeg"), ("m4a", "audio/mp4")] {
+            check(LocalStaticServer.mimeType(for: URL(fileURLWithPath: "/a/x.\(ext)")) == type,
+                  ".\(ext) is \(LocalStaticServer.mimeType(for: URL(fileURLWithPath: "/a/x.\(ext)")))", &ok)
+        }
+        // A big body is streamed from disk, not read into memory.
+        let bigResponse = serve(request("/media/big.webm"))
+        check(bigResponse.status == 200 && bigResponse.body.isEmpty && bigResponse.file?.length == Int64(bigSize)
+                && bigResponse.header("Content-Length") == "\(bigSize)",
+              "a \(bigSize)-byte file was not streamed: body \(bigResponse.body.count), file \(String(describing: bigResponse.file))", &ok)
+
+        // Over a real listener: the streamed file arrives whole, a range of
+        // it arrives exact, and no response is built on the listener's queue.
+        var port = freePort()
+        var server = LocalStaticServer(root: root, port: port)
+        if case .failure(.portInUse)? = start(server) {
+            port = freePort()
+            server = LocalStaticServer(root: root, port: port)
+            _ = start(server)
+        }
+        defer { server.stop() }
+        // The recorder's own power: a response built on that queue is counted.
+        let recorded = LocalStaticServer.debugResponsesOnListenerQueue.value
+        server.debugBuildOnListenerQueue(request("/", port: port))
+        check(LocalStaticServer.debugResponsesOnListenerQueue.value == recorded + 1,
+              "fixture: a response built on the listener's queue was not recorded", &ok)
+        let before = LocalStaticServer.debugResponsesOnListenerQueue.value
+        let origin = LocalStaticServer.origin(port: port)
+        let streamed = fetch(origin.appendingPathComponent("media/big.webm"))
+        check(streamed?.0 == 200 && streamed?.1 == big,
+              "the streamed file arrived as \(streamed?.0 ?? 0), \(streamed?.1.count ?? 0) of \(bigSize) bytes, intact \(streamed?.1 == big)", &ok)
+        let start = Int64(LocalStaticServer.inlineBodyLimit) + 7
+        let end = start + Int64(LocalStaticServer.inlineBodyLimit) + 100
+        let slice = fetch(origin.appendingPathComponent("media/big.webm"), range: "bytes=\(start)-\(end)")
+        check(slice?.0 == 206 && slice?.1 == big.subdata(in: Int(start)..<Int(end + 1)),
+              "a streamed range arrived as \(slice?.0 ?? 0), \(slice?.1.count ?? 0) bytes", &ok)
+        check(LocalStaticServer.debugResponsesOnListenerQueue.value == before,
+              "a response was built on the listener's queue", &ok)
+    }
+
+    // MARK: 2b - connection limits (full review 4, S-03)
+
+    /// A bare TCP client, so a suite can hold a connection open without
+    /// sending anything, as a misbehaving local process would.
+    final class RawClient {
+        private let fd: Int32
+
+        init?(port: UInt16) {
+            fd = socket(AF_INET, SOCK_STREAM, 0)
+            guard fd >= 0 else { return nil }
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = port.bigEndian
+            address.sin_addr.s_addr = inet_addr("127.0.0.1")
+            let connected = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            guard connected == 0 else { Darwin.close(fd); return nil }
+        }
+
+        deinit { Darwin.close(fd) }
+
+        /// Whether the server closed this connection within `timeout`.
+        func closed(within timeout: TimeInterval) -> Bool {
+            var wait = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - floor(timeout)) * 1_000_000))
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+            var byte: UInt8 = 0
+            let n = recv(fd, &byte, 1, 0)
+            return n == 0 || (n < 0 && errno == ECONNRESET)
+        }
+    }
+
+    private static func checkConnectionLimits(_ ok: inout Bool) {
+        print("\n-- S-03: at most N open connections, and an idle one is closed --")
+        let (root, _) = makeSite()
+        let limits = LocalStaticServer.Limits(maxConnections: 2, headTimeout: 1.5)
+        var port = freePort()
+        var server = LocalStaticServer(root: root, port: port, limits: limits)
+        if case .failure(.portInUse)? = start(server) {
+            port = freePort()
+            server = LocalStaticServer(root: root, port: port, limits: limits)
+            _ = start(server)
+        }
+        defer { server.stop() }
+        func waitFor(_ condition: () -> Bool, _ seconds: TimeInterval = 3) {
+            let deadline = Date().addingTimeInterval(seconds)
+            while !condition(), Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+        }
+        guard let first = RawClient(port: port), let second = RawClient(port: port) else {
+            fail("could not open two raw connections to \(port)", &ok)
+            return
+        }
+        waitFor { server.debugOpenConnections == 2 }
+        check(server.debugOpenConnections == 2, "the server holds \(server.debugOpenConnections) of 2 idle connections", &ok)
+        if let third = RawClient(port: port) {
+            check(third.closed(within: 1), "a connection past the cap of 2 was kept open", &ok)
+        }
+        check(server.currentCounters.refused == 1, "refused \(server.currentCounters.refused) connections, want 1", &ok)
+        // Not closed before its time.
+        check(!first.closed(within: 0.2), "an idle connection was closed long before its deadline", &ok)
+        check(first.closed(within: 4) && second.closed(within: 4), "an idle connection outlived its 1.5s deadline", &ok)
+        waitFor { server.debugOpenConnections == 0 }
+        check(server.debugOpenConnections == 0 && server.currentCounters.timedOut == 2,
+              "after the deadline \(server.debugOpenConnections) stay open, \(server.currentCounters.timedOut) timed out", &ok)
+        // A request sent in time is answered, and the freed slots take it.
+        check(fetch(LocalStaticServer.origin(port: port))?.0 == 200, "a prompt request was not answered", &ok)
+    }
+
+    // MARK: 4a - Start never walks the folder on main (full review 4, PF-02)
+
+    /// Start runs on the main thread, and at launch for a project marked to
+    /// start then. It decides on the cheap checks alone and counts the files
+    /// on a utility queue, publishing the count when it lands.
+    private static func checkStartNeverWalksTheFolderOnMain(_ ok: inout Bool) {
+        print("\n-- PF-02: Start counts the folder off the main thread --")
+        let (root, _) = makeSite()
+        let stub = StubServer()
+        let (registry, url) = makeRegistry(folder: root, stub: stub)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let id = LocalProject.devopsAtlas.id
+        var notes = 0
+        let observer = NotificationCenter.default.addObserver(forName: LocalProjectRegistry.didChange, object: registry,
+                                                              queue: nil) { _ in notes += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        // The fixture's own power: counting on main is what the recorder sees.
+        let baseline = LocalProjectPreflight.debugMainThreadCounts.value
+        _ = LocalProjectPreflight.count(folder: root)
+        check(LocalProjectPreflight.debugMainThreadCounts.value == baseline + 1,
+              "fixture: a count on the main thread was not recorded, so this check could not fail", &ok)
+
+        let before = LocalProjectPreflight.debugMainThreadCounts.value
+        registry.start(id)
+        check(LocalProjectPreflight.debugMainThreadCounts.value == before,
+              "Start walked the folder on the main thread", &ok)
+        check(registry.state(of: id) == .starting, "Start did not go on to bind: \(registry.state(of: id))", &ok)
+        check(registry.folderCount(of: id) == nil, "the count was there before the walk could have run", &ok)
+        let notesBefore = notes
+        let deadline = Date().addingTimeInterval(5)
+        while registry.folderCount(of: id) == nil, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        if let count = registry.folderCount(of: id) {
+            check(count.files >= 3 && count.bytes > 0, "the published count is \(count)", &ok)
+            check(notes > notesBefore, "the count landed without a change notification", &ok)
+        } else {
+            fail("the folder's count never landed", &ok)
+        }
+        check(LocalProjectPreflight.debugMainThreadCounts.value == before,
+              "the count ran on the main thread after all", &ok)
+        registry.stop(id)
+        // The refusals still come from the cheap half, at once.
+        var missing = LocalProject.devopsAtlas
+        missing.folderOverride = root.appendingPathComponent("nope").path
+        registry.update(missing)
+        registry.start(id)
+        check(registry.state(of: id) == .folderNotFound(noIndex: false),
+              "a missing folder is \(registry.state(of: id)) straight after Start", &ok)
+        if ok { print("  OK   the gate decides on main, the count lands from a utility queue") }
     }
 
     // MARK: 5 - the runner
@@ -735,6 +957,215 @@ enum DevOpsHubModelSelfTest {
         let a = DevOpsHubWebView.storeIdentifier(for: "devops-atlas")
         check(a == DevOpsHubWebView.storeIdentifier(for: "devops-atlas") && a != DevOpsHubWebView.storeIdentifier(for: "other"),
               "the store identifier is not stable per project", &ok)
+    }
+
+    // MARK: 10 - only Grand Line reads the site (full review 4, S-02)
+
+    private static func checkOnlyGrandLineReadsTheSite(_ ok: inout Bool) {
+        print("\n-- S-02: only Grand Line reads the site, from its build folder --")
+        let (root, _) = makeSite()
+        let key = LocalStaticServer.makeAccessToken()
+        check(key.count == 64 && key != LocalStaticServer.makeAccessToken(), "a run key is \(key.count) characters, or repeats", &ok)
+        let cookie = LocalStaticServer.cookieName(port: 7420)
+        let policy = LocalStaticServer.Policy(accessToken: key)
+        let serve = { (data: Data) in LocalStaticServer.response(forRequest: data, root: root, port: 7420, policy: policy) }
+        let bare = serve(request("/"))
+        check(bare.status == 403 && String(data: bare.body, encoding: .utf8)?.contains("Allow my browser") == true,
+              "a request with no key is \(bare.status), want 403 that says how to allow the browser", &ok)
+        let wrong = String(key.dropLast()) + (key.hasSuffix("0") ? "1" : "0")
+        check(serve(request("/", extra: "Cookie: \(cookie)=\(wrong)\r\n")).status == 403,
+              "a wrong key was answered", &ok)
+        check(serve(request("/", extra: "Cookie: \(LocalStaticServer.cookieName(port: 7421))=\(key)\r\n")).status == 403,
+              "another port's cookie was answered", &ok)
+        check(serve(request("/", extra: "Cookie: theme=dark; \(cookie)=\(key); lang=en\r\n")).status == 200,
+              "the run's key among other cookies was refused", &ok)
+        check(serve(request("/", host: "evil.example:7420", extra: "Cookie: \(cookie)=\(key)\r\n")).status == 421,
+              "the key let a foreign Host through", &ok)
+        check(LocalStaticServer.response(forRequest: request("/"), root: root, port: 7420, policy: .open).status == 200,
+              "with the browser allowed a request with no key is refused", &ok)
+
+        // The build folder is served in place of the repository.
+        let repo = root.deletingLastPathComponent().appendingPathComponent("repo", isDirectory: true)
+        let fm = FileManager.default
+        try? fm.createDirectory(at: repo.appendingPathComponent("public"), withIntermediateDirectories: true)
+        try? fm.createDirectory(at: repo.appendingPathComponent("dist"), withIntermediateDirectories: true)
+        try? Data("<title>source</title>".utf8).write(to: repo.appendingPathComponent("index.html"))
+        try? Data("{}".utf8).write(to: repo.appendingPathComponent("package.json"))
+        try? Data("<p>no index here</p>".utf8).write(to: repo.appendingPathComponent("public/about.html"))
+        check(LocalProjectPreflight.servedFolder(for: repo) == repo,
+              "with no build index the repository itself is not served", &ok)
+        try? Data("<title>built</title>".utf8).write(to: repo.appendingPathComponent("dist/index.html"))
+        check(LocalProjectPreflight.servedFolder(for: repo).lastPathComponent == "dist",
+              "a dist folder with an index.html is not the one served", &ok)
+        check(LocalProjectPreflight.servedFolder(for: root) == root, "a site with no build folder is not served as it is", &ok)
+        let noTopIndex = root.deletingLastPathComponent().appendingPathComponent("built-only", isDirectory: true)
+        try? fm.createDirectory(at: noTopIndex.appendingPathComponent("build"), withIntermediateDirectories: true)
+        try? Data("<title>b</title>".utf8).write(to: noTopIndex.appendingPathComponent("build/index.html"))
+        check(LocalProjectPreflight.gate(folder: noTopIndex) == nil,
+              "a project whose only index.html is in build/ is refused", &ok)
+
+        // The registry: the build folder, a new key every run, none required
+        // when the browser is allowed, and the key gone with the run.
+        var setups: [ServerSetup] = []
+        let url = AppPaths.dataRoot().appendingPathComponent("lp-\(UUID().uuidString).json")
+        defer { try? fm.removeItem(at: url) }
+        var project = LocalProject.devopsAtlas
+        project.folderOverride = repo.path
+        LocalProjectStore.save([project], at: url)
+        let registry = LocalProjectRegistry(storeURL: url, makeServer: { setups.append($0); return StubServer() },
+                                            lookUpPortHolder: { _, done in done(nil) })
+        let id = project.id
+        registry.start(id)
+        let firstKey = registry.accessToken(of: id)
+        check(setups.last?.root.lastPathComponent == "dist", "Start served \(setups.last?.root.path ?? "nothing")", &ok)
+        check(firstKey != nil && setups.last?.policy.accessToken == firstKey,
+              "the server was not given the run's key", &ok)
+        registry.stop(id)
+        check(registry.accessToken(of: id) == nil, "the run's key outlived the run", &ok)
+        registry.start(id)
+        check(registry.accessToken(of: id) != nil && registry.accessToken(of: id) != firstKey, "a second run reused the key", &ok)
+        registry.stop(id)
+        project.allowsBrowser = true
+        registry.update(project)
+        registry.start(id)
+        check(setups.last?.policy.accessToken == nil && registry.accessToken(of: id) != nil,
+              "with the browser allowed the server still asks for a key", &ok)
+        registry.stop(id)
+
+        // The setting is stored, an older file reads it as off, and the
+        // sheet carries it and says who else can read the site.
+        LocalProjectStore.save([project], at: url)
+        check(LocalProjectStore.load(at: url).first?.allowsBrowser == true, "Allow my browser did not round-trip", &ok)
+        try? Data(#"{"projects":[{"id":"old"}]}"#.utf8).write(to: url)
+        check(LocalProjectStore.load(at: url).first?.allowsBrowser == false, "an older file reads the browser as allowed", &ok)
+        check(DevOpsHubSettingsSheet.edited(LocalProject.devopsAtlas, folderText: "", portText: "7420", opensWhenReady: true,
+                                            startsAtLaunch: false, allowsBrowser: true).0?.allowsBrowser == true,
+              "the sheet dropped Allow my browser", &ok)
+        check(DevOpsHubSettingsSheet.addPortCaption.contains("other apps on this Mac"),
+              "Add Project's caption does not say other apps on this Mac can reach it", &ok)
+        check(DevOpsHubWords.readersLine(LocalProject.devopsAtlas).contains("only Grand Line"),
+              "the page does not say only Grand Line reads the site", &ok)
+
+        // End to end: a real server that asks for the key, and a real web
+        // view that loads the site with it - and without it, does not.
+        try? Data("<!doctype html><title>hub</title><p>ok</p>".utf8).write(to: root.appendingPathComponent("index.html"))
+        var port = freePort()
+        var server = LocalStaticServer(root: root, port: port, policy: .init(accessToken: key))
+        if case .failure(.portInUse)? = start(server) {
+            port = freePort()
+            server = LocalStaticServer(root: root, port: port, policy: .init(accessToken: key))
+            _ = start(server)
+        }
+        defer { server.stop() }
+        let origin = LocalStaticServer.origin(port: port)
+        check(fetch(origin)?.0 == 403, "over loopback a request with no key is answered", &ok)
+        func title(loading accessToken: String?) -> String? {
+            let web = DevOpsHubWebView(projectID: "atlas-key-\(UUID().uuidString)")
+            var loaded = false
+            web.onFinished = { loaded = true }
+            web.load(origin: origin, accessToken: accessToken)
+            guard waitUntil(timeout: 15, { loaded }) else { return nil }
+            return evaluate("document.title", in: web)
+        }
+        check(title(loading: key) == "hub", "the web view given the run's key did not load the site", &ok)
+        check(title(loading: nil) == "Open in Grand Line", "a web view with no key was served the site", &ok)
+    }
+
+    // MARK: 11 - the site stays on its own address (full review 4, S-04)
+
+    private static func checkTheSiteStaysOnItsOwnAddress(_ ok: inout Bool) {
+        print("\n-- S-04: a site is kept to its own address --")
+        let (root, _) = makeSite()
+        let csp = LocalStaticServer.Policy.confinedCSP
+        check(csp == "default-src 'self' 'unsafe-inline' data: blob:", "the policy reads \(csp)", &ok)
+        let confined = LocalStaticServer.Policy(contentSecurityPolicy: csp)
+        for (target, status) in [("/", 200), ("/missing.js", 404), ("/.git/config", 404)] {
+            let response = LocalStaticServer.response(forRequest: request(target), root: root, port: 7420, policy: confined)
+            check(response.status == status && response.header("Content-Security-Policy") == csp,
+                  "\(target) is \(response.status) with CSP \(response.header("Content-Security-Policy") ?? "none")", &ok)
+        }
+        check(LocalStaticServer.response(forRequest: request("/"), root: root, port: 7420)
+                .header("Content-Security-Policy") == nil, "an unconfined site was sent a CSP", &ok)
+        let rules = DevOpsHubWebView.contentRules(for: LocalStaticServer.origin(port: 7420))
+        check(rules.contains(#"^http:\/\/127\\.0\\.0\\.1:7420\/"#) || rules.contains(#"^http://127\\.0\\.0\\.1:7420/"#),
+              "the rules do not let the project's own origin through: \(rules)", &ok)
+
+        // On by default, an older file reads it as on, and the run carries it.
+        check(LocalProject.devopsAtlas.confinesNetwork, "a project is not kept to its address by default", &ok)
+        let url = AppPaths.dataRoot().appendingPathComponent("lp-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try? Data(#"{"projects":[{"id":"old"}]}"#.utf8).write(to: url)
+        check(LocalProjectStore.load(at: url).first?.confinesNetwork == true, "an older file reads the switch as off", &ok)
+        var project = LocalProject.devopsAtlas
+        project.folderOverride = root.path
+        LocalProjectStore.save([project], at: url)
+        var setups: [ServerSetup] = []
+        let registry = LocalProjectRegistry(storeURL: url, makeServer: { setups.append($0); return StubServer() },
+                                            lookUpPortHolder: { _, done in done(nil) })
+        registry.start(project.id)
+        check(setups.last?.policy.contentSecurityPolicy == csp && registry.confinesNetwork(of: project.id),
+              "a confined run did not carry the CSP and the rules", &ok)
+        registry.stop(project.id)
+        project.confinesNetwork = false
+        registry.update(project)
+        registry.start(project.id)
+        check(setups.last?.policy.contentSecurityPolicy == nil && !registry.confinesNetwork(of: project.id),
+              "with the switch off the run is still confined", &ok)
+        registry.stop(project.id)
+        check(DevOpsHubSettingsSheet.edited(LocalProject.devopsAtlas, folderText: "", portText: "7420", opensWhenReady: true,
+                                            startsAtLaunch: false, confinesNetwork: false).0?.confinesNetwork == false,
+              "the sheet dropped the switch", &ok)
+
+        // End to end: a page that asks another loopback server for a file.
+        // That server's own count says whether the request reached it.
+        var otherPort = freePort()
+        var other = LocalStaticServer(root: root, port: otherPort)
+        if case .failure(.portInUse)? = start(other) {
+            otherPort = freePort()
+            other = LocalStaticServer(root: root, port: otherPort)
+            _ = start(other)
+        }
+        defer { other.stop() }
+        let probe = "<!doctype html><title>hub</title><script>window.__probe = 'pending';"
+            + "fetch('http://127.0.0.1:\(otherPort)/index.html', {mode: 'no-cors', cache: 'no-store'})"
+            + ".then(() => { window.__probe = 'reached' }).catch(() => { window.__probe = 'blocked' });</script>"
+        try? Data(probe.utf8).write(to: root.appendingPathComponent("index.html"))
+        func run(rules: Bool, sendsCSP: Bool) -> (probe: String?, reachedOther: Bool) {
+            let policy = LocalStaticServer.Policy(contentSecurityPolicy: sendsCSP ? csp : nil)
+            var port = freePort()
+            var server = LocalStaticServer(root: root, port: port, policy: policy)
+            if case .failure(.portInUse)? = start(server) {
+                port = freePort()
+                server = LocalStaticServer(root: root, port: port, policy: policy)
+                _ = start(server)
+            }
+            defer { server.stop() }
+            let before = other.currentCounters.served
+            let web = DevOpsHubWebView(projectID: "atlas-confine-\(UUID().uuidString)")
+            var loaded = false
+            web.onFinished = { loaded = true }
+            web.load(origin: LocalStaticServer.origin(port: port), confined: rules)
+            guard waitUntil(timeout: 15, { loaded }) else { return (nil, false) }
+            var answer: String?
+            _ = waitUntil(timeout: 10) {
+                answer = evaluate("String(window.__probe)", in: web)
+                return answer == "reached" || answer == "blocked"
+            }
+            // Give a request that got out time to be counted.
+            _ = waitUntil(timeout: 1) { other.currentCounters.served > before }
+            return (answer, other.currentCounters.served > before)
+        }
+        let open = run(rules: false, sendsCSP: false)
+        check(open.probe == "reached" && open.reachedOther,
+              "fixture: with nothing confining it the page's request did not reach the other server (\(open))", &ok)
+        let byRules = run(rules: true, sendsCSP: false)
+        check(byRules.probe == "blocked" && !byRules.reachedOther,
+              "the content rules let the page reach another port on this Mac (\(byRules))", &ok)
+        let byCSP = run(rules: false, sendsCSP: true)
+        check(byCSP.probe == "blocked" && !byCSP.reachedOther,
+              "the CSP let the page reach another port on this Mac (\(byCSP))", &ok)
+        let both = run(rules: true, sendsCSP: true)
+        check(both.probe == "blocked" && !both.reachedOther, "a confined site reached another port (\(both))", &ok)
     }
 
     // MARK: 9 - the site's dialogs, and a site that keeps crashing

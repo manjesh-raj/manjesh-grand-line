@@ -229,7 +229,11 @@ enum ReviewTourLab {
         /// can render it. `ux snooze`, `ux bell <inbox|snoozed> <name>`,
         /// `ux keyfallback`, `ux hosttest`, `ux fleetpass`, `ux schedulerun`,
         /// `ux backup`, `ux merge` (logs the merge confirm's body) and
-        /// `ux focuscard`. Each says in the log what it did.
+        /// `ux focuscard`. Each says in the log what it did. Full review 4's
+        /// T-03 added `ux lock`, `chest`, `palette`, `capture`, `tasksheet`,
+        /// `toast`, `hud`, `menubar`, `clipboard` and `confirm`, each of
+        /// which renders its surface's real controller off screen to a PNG
+        /// (`ReviewTourLabSurfaces.swift` has the grammar).
         case ux(String)
         /// `demo focus`: start F7's focus timer on a fixture task, so a render
         /// shows its chip - the floating bar's beside its search pill, the
@@ -1118,7 +1122,9 @@ enum ReviewTourLab {
             card.window?.makeFirstResponder(card)
             return "ux focuscard (first responder: \(card.window?.firstResponder === card))"
         default:
-            return "ux \(argument) FAILED - unknown state"
+            // Full review 4, T-03: the restyled surfaces, in their own file.
+            return applySurfaceUX(parts, shell: shell, outputDirectory: outputDirectory)
+                ?? "ux \(argument) FAILED - unknown state"
         }
     }
 

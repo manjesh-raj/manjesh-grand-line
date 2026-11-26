@@ -165,7 +165,7 @@ private final class QuotaUsageViewController: NSViewController {
     private let ringsRow = NSStackView()
     private lazy var header = PopoverHeroHeader(symbol: quotaUsageGaugeSymbol, tileStyle: .glass, tileSide: 30,
                                                 insets: NSEdgeInsets(top: 13, left: 14, bottom: 14, right: 14),
-                                                body: ringsRow)
+                                                body: ringsRow, quietInk: HelmHeroColumn.quietInkAlpha)
     private let refreshButton = HelmButton(symbol: "arrow.clockwise", variant: .secondary, size: .small)
     private var rings: [QuotaHeroRing] = []
 
@@ -516,6 +516,7 @@ private final class QuotaUsageViewController: NSViewController {
     var debugRetryButton: HelmButton { retryButton }
     var debugRefreshButton: HelmButton { refreshButton }
     var debugErrorText: String { errorBody.stringValue }
+    var debugHeroHeader: PopoverHeroHeader { header }
     #endif
 }
 
@@ -782,6 +783,7 @@ extension QuotaUsageController {
     var debugErrorVisible: Bool { content.debugErrorVisible }
     var debugRetryButton: HelmButton { content.debugRetryButton }
     var debugErrorText: String { content.debugErrorText }
+    var debugHeroHeader: PopoverHeroHeader { content.debugHeroHeader }
     static func debugSummary(for snapshot: QuotaSnapshot) -> String { QuotaUsageViewController.summary(for: snapshot) }
     static func debugWarningSentence(_ window: QuotaWindow, now: Date) -> String {
         QuotaUsageViewController.warningSentence(window, now: now)

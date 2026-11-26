@@ -277,19 +277,8 @@ final class DictationHUDController {
         hideWorkItem?.cancel()
         hideWorkItem = nil
 
-        let panel = ensurePanel()
-        iconView.image = NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: Self.glyphPointSize, weight: .semibold))
-        titleLabel.stringValue = state.text
         let isNewState = currentState?.text != state.text
-        currentState = state
-        paintedState = state
-        // The meter only while listening, the sweep only while transcribing.
-        // Set before the pill is measured, because each changes its width.
-        meter.isHidden = state != .listening
-        sweep.isHidden = state != .transcribing
-        applyTheme(ThemeManager.shared.theme)
-        applyLiveAnimation()
+        let panel = paint(state)
 
         // A2: this panel is borderless, `ignoresMouseEvents`, and deliberately
         // never key - so nothing about it reaches VoiceOver on its own, and a
@@ -380,6 +369,25 @@ final class DictationHUDController {
     /// it. Kept at the old HUD's strength, which was measured against a light
     /// document.
     static let hairlineAlpha: CGFloat = 0.22
+
+    /// Puts `state` into the pill - glyph, words, meter or sweep, colours -
+    /// without sizing, placing or showing the panel.
+    @discardableResult
+    private func paint(_ state: DictationHUDVisualState) -> NSPanel {
+        let panel = ensurePanel()
+        iconView.image = NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: Self.glyphPointSize, weight: .semibold))
+        titleLabel.stringValue = state.text
+        currentState = state
+        paintedState = state
+        // The meter only while listening, the sweep only while transcribing.
+        // Set before the pill is measured, because each changes its width.
+        meter.isHidden = state != .listening
+        sweep.isHidden = state != .transcribing
+        applyTheme(ThemeManager.shared.theme)
+        applyLiveAnimation()
+        return panel
+    }
 
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
@@ -615,6 +623,14 @@ final class DictationHUDController {
     var debugKickerText: String? { kickerLabel?.stringValue }
     var debugKickerLabel: NSTextField? { kickerLabel }
     var debugCurrentState: DictationHUDVisualState? { currentState }
+    /// Full review 4, T-03: the pill painted and sized for `state`, with the
+    /// panel never ordered in, for the review lab's `ux hud`. A real
+    /// `present` would put the HUD on the captain's screen.
+    func debugPaintWithoutShowing(_ state: DictationHUDVisualState) -> NSView? {
+        let panel = paint(state)
+        sizePanel(panel)
+        return panel.contentView
+    }
     #endif
 }
 

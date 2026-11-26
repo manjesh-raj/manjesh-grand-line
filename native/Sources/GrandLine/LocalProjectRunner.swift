@@ -57,6 +57,14 @@ protocol LocalServing: AnyObject {
 
 extension LocalStaticServer: LocalServing {}
 
+/// What one Start hands the server it makes.
+struct ServerSetup {
+    let project: LocalProject
+    /// The folder served: the project's build folder when it has one (S-02).
+    let root: URL
+    let policy: LocalStaticServer.Policy
+}
+
 final class LocalProjectRegistry {
 
     static let didChange = Notification.Name("LocalProjectRegistryDidChange")
@@ -69,15 +77,25 @@ final class LocalProjectRegistry {
     private var servers: [String: LocalServing] = [:]
     /// A start in flight, so a Stop before the listener is ready wins.
     private var startTokens: [String: UUID] = [:]
+    /// PF-02: the last count of each project's folder, published when the
+    /// background walk lands, and the walk in flight.
+    private var folderCounts: [String: (files: Int, bytes: Int64)] = [:]
+    private var countTokens: [String: UUID] = [:]
+    /// S-02: each run's key, which the page's web view sends as a cookie.
+    private var accessTokens: [String: String] = [:]
+    /// S-04: whether each run keeps its site to its own address.
+    private var confinedRuns: Set<String> = []
 
     private let storeURL: URL
-    private let makeServer: (LocalProject) -> LocalServing
+    private let makeServer: (ServerSetup) -> LocalServing
     private let lookUpPortHolder: (UInt16, @escaping (String?) -> Void) -> Void
     /// The clock the uptime reads (AGENTS.md: one injectable clock).
     var clock: () -> Date = Date.init
 
     init(storeURL: URL = LocalProjectStore.storeURL(),
-         makeServer: @escaping (LocalProject) -> LocalServing = { LocalStaticServer(root: $0.folder, port: $0.port) },
+         makeServer: @escaping (ServerSetup) -> LocalServing = {
+             LocalStaticServer(root: $0.root, port: $0.project.port, policy: $0.policy)
+         },
          lookUpPortHolder: @escaping (UInt16, @escaping (String?) -> Void) -> Void = LocalProjectRegistry.lsofPortHolder) {
         self.storeURL = storeURL
         self.makeServer = makeServer
@@ -92,6 +110,17 @@ final class LocalProjectRegistry {
     func state(of id: String) -> LocalProjectState { states[id] ?? .notStarted }
 
     func counters(of id: String) -> LocalStaticServer.Counters? { servers[id]?.currentCounters }
+
+    /// The key the current run of `id` answers to, for Grand Line's own web
+    /// view. Nil when it is not starting or running.
+    func accessToken(of id: String) -> String? { accessTokens[id] }
+
+    /// Whether the current run of `id` keeps its site to its own address,
+    /// so the web view installs the matching content rules (S-04).
+    func confinesNetwork(of id: String) -> Bool { confinedRuns.contains(id) }
+
+    /// The files and bytes the last Start counted, once the count has landed.
+    func folderCount(of id: String) -> (files: Int, bytes: Int64)? { folderCounts[id] }
 
     var runningCount: Int { projects.filter { state(of: $0.id).isRunning }.count }
 
@@ -183,27 +212,40 @@ final class LocalProjectRegistry {
         case .starting, .running: return
         default: break
         }
-        switch LocalProjectPreflight.check(folder: project.folder) {
-        case .folderMissing:
+        // PF-02: only the cheap checks here. This runs on the main thread,
+        // and at launch for a project marked to start then, so the walk over
+        // the folder's files goes to a utility queue below.
+        switch LocalProjectPreflight.gate(folder: project.folder) {
+        case .folderMissing?:
             states[id] = .folderNotFound(noIndex: false)
             notify()
             return
-        case .indexMissing:
+        case .indexMissing?:
             states[id] = .folderNotFound(noIndex: true)
             notify()
             return
-        case .notReadable(let reason):
+        case .notReadable(let reason)?:
             states[id] = .failed(.notReadable(reason))
             notify()
             return
-        case .ready:
+        case .ready?, nil:
             break
         }
+        let served = LocalProjectPreflight.servedFolder(for: project.folder)
+        countFolder(id, folder: served)
+        // S-02: a new key for every run. Grand Line's own view always sends
+        // it; the server asks for it unless the browser is allowed.
+        let accessToken = LocalStaticServer.makeAccessToken()
+        accessTokens[id] = accessToken
+        let policy = LocalStaticServer.Policy(
+            accessToken: project.allowsBrowser ? nil : accessToken,
+            contentSecurityPolicy: project.confinesNetwork ? LocalStaticServer.Policy.confinedCSP : nil)
+        if project.confinesNetwork { confinedRuns.insert(id) } else { confinedRuns.remove(id) }
         let token = UUID()
         startTokens[id] = token
         states[id] = .starting
         notify()
-        let server = makeServer(project)
+        let server = makeServer(ServerSetup(project: project, root: served, policy: policy))
         servers[id] = server
         server.start { [weak self] result in
             guard let self, self.startTokens[id] == token else {
@@ -217,6 +259,8 @@ final class LocalProjectRegistry {
                 self.notify()
             case .failure(let error):
                 self.servers[id] = nil
+                self.accessTokens[id] = nil
+                self.confinedRuns.remove(id)
                 switch error {
                 case .portInUse:
                     self.states[id] = .failed(.portInUse(holder: nil))
@@ -238,12 +282,32 @@ final class LocalProjectRegistry {
         }
     }
 
+    /// Count the folder off the main thread and publish the count when it
+    /// lands. A newer Start's count wins over an older one still walking.
+    private func countFolder(_ id: String, folder: URL) {
+        let token = UUID()
+        countTokens[id] = token
+        countQueue.async { [weak self] in
+            let count = LocalProjectPreflight.count(folder: folder)
+            DispatchQueue.main.async {
+                guard let self, self.countTokens[id] == token else { return }
+                self.countTokens[id] = nil
+                self.folderCounts[id] = count
+                self.notify()
+            }
+        }
+    }
+
+    private let countQueue = DispatchQueue(label: "com.manjesh.grandline.local-project-count", qos: .utility)
+
     /// Close the listener. The port is free at once.
     func stop(_ id: String, reason: StopReason = .stopped) {
         startTokens[id] = nil
         let wasRunning = state(of: id)
         servers[id]?.stop()
         servers[id] = nil
+        accessTokens[id] = nil
+        confinedRuns.remove(id)
         states[id] = .notStarted
         if case .running(let since) = wasRunning, let index = projects.firstIndex(where: { $0.id == id }) {
             projects[index].lastRun = LocalProject.LastRun(startedAt: since, endedAt: clock(), reason: reason.rawValue)

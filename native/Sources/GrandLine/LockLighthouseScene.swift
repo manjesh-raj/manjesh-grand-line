@@ -378,6 +378,7 @@ final class LockLighthouseScene {
     var debugVeilOpacity: Float { fogVeil.layer.opacity }
     var debugGlassOpacity: Float { glass.opacity }
     var debugLensSpeed: Float { lensGroup.speed }
+    var debugFogDrifting: Bool { [fogFar, fogBank, fogVeil].contains { $0.isDrifting } }
     #endif
 }
 
@@ -427,6 +428,8 @@ final class FogBand {
     }
 
     func stopDrift() { replicator.removeAnimation(forKey: "drift") }
+
+    var isDrifting: Bool { replicator.animation(forKey: "drift") != nil }
 }
 
 extension FogTexture {

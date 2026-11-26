@@ -32,7 +32,8 @@
 // hero columns do. On the plain palette the 86% subtitle falls under 4.5:1
 // against the lighter stop (3.78:1 on Daylight and 3.91:1 on Dusk, measured
 // by `NotificationBridgePanelSelfTest`'s sweep). `nil`, the default, keeps
-// the plain palette, so the three Console surfaces draw exactly as they did.
+// the plain palette. Every call site in the app passes it since full review 4
+// (A-01), and `FM_RUN_CONTRAST_TESTS` fails a new one that does not.
 //
 // **Three more options for the menu-bar popover** (MB-1, Helm 10.4.0), all
 // off by default. `titleSize` sets the verdict headline's point size: the

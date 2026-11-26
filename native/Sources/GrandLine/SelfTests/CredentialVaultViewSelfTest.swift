@@ -103,6 +103,7 @@ enum CredentialVaultViewSelfTest {
         checkTouchIDIndicatorAlignmentAndOrdering(scratch: scratch, window: window, check)
         checkDragReorderWithinCategory(scratch: scratch, window: window, check)
         checkTheChestGate(window: window, check)
+        checkTheChestTakesTheKeyboard(window: window, &ok)
 
         window.contentView = nil
         if ok {
@@ -111,6 +112,55 @@ enum CredentialVaultViewSelfTest {
         }
         print("CredentialVaultViewSelfTest: FAILED")
         return false
+    }
+
+    // MARK: A-02 - the chest takes the keyboard (full review 4)
+
+    /// Tab reaches the chest, it draws a real focus ring, Space or Return
+    /// opens it, its label says so, and a click still leaves the field
+    /// focused. The padlock is a target too, with its own ring and label.
+    private static func checkTheChestTakesTheKeyboard(window: NSWindow, _ ok: inout Bool) {
+        print("\n-- A-02: the chest and the padlock take the keyboard --")
+        if NSWorkspace.shared.isVoiceOverEnabled {
+            print("  SKIP: VoiceOver is on, so the chest starts open by design")
+            return
+        }
+        let savedReduced = HelmMotion.reducedOverrideForTests
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = savedReduced }
+        let gate = CredentialVaultUnlockView()
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 700))
+        window.contentView = host
+        defer { window.contentView = nil }
+        host.addSubview(gate)
+        NSLayoutConstraint.activate([
+            gate.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            gate.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            gate.topAnchor.constraint(equalTo: host.topAnchor),
+            gate.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        gate.setMode(.unlock(touchIDAvailable: false))
+        for _ in 0..<2 { host.layoutSubtreeIfNeeded() }
+        let chest = gate.debugChest
+        SceneGateKeyboardChecks.run(.init(
+            name: "chest", window: window, hotspot: chest.chestHotspot, field: gate.debugPasswordField,
+            darkLabel: "Open the chest to unlock",
+            isOpen: { gate.debugIsLit },
+            monitorKeyDown: { gate.debugKeyDown() },
+            reset: {
+                gate.debugPasswordField.stringValue = ""
+                gate.setMode(.create)
+                gate.setMode(.unlock(touchIDAvailable: false))
+                for _ in 0..<2 { host.layoutSubtreeIfNeeded() }
+                gate.focusPasswordField()
+            }), &ok)
+        check(chest.padlockHotspot.focusRingType == .exterior && !chest.padlockHotspot.focusRingMaskBounds.isEmpty,
+              "A-02: the padlock draws no focus ring", &ok)
+        gate.setMode(.create)
+        gate.setMode(.unlock(touchIDAvailable: true))
+        check(chest.padlockHotspot.accessibilityLabel() == "Unlock with Touch ID",
+              "A-02: the padlock is labelled \(chest.padlockHotspot.accessibilityLabel() ?? "nothing")", &ok)
+        if ok { print("  OK   Tab, ring, Space, Return and the labels hold, and a click leaves the field focused") }
     }
 
     // MARK: S-1 / V-4 - the treasure chest gate
@@ -187,6 +237,30 @@ enum CredentialVaultViewSelfTest {
               "S-1: shut means the page dark, the dome down and the lining folded")
         check(chest.debugSeamPulsing, "S-1: light leaks from the seam while shut")
 
+        // PF-01 (full review 4): nobody looking holds the chest still - the
+        // app inactive, the window occluded, Low Power Mode - and it moves
+        // again when that clears. Each condition is pinned and then announced
+        // with the real notification, so it enters through the gate's own
+        // observer.
+        do {
+            let center = NotificationCenter.default
+            let conditions: [(String, (Bool) -> Void, () -> Void)] = [
+                ("the app resigned active", { DecorativeMotionGate.appActiveOverrideForTests = !$0 },
+                 { center.post(name: NSApplication.didResignActiveNotification, object: nil) }),
+                ("the window was occluded", { DecorativeMotionGate.windowVisibleOverrideForTests = !$0 },
+                 { center.post(name: NSWindow.didChangeOcclusionStateNotification, object: gate.window) }),
+                ("Low Power Mode came on", { DecorativeMotionGate.lowPowerOverrideForTests = $0 },
+                 { center.post(name: Notification.Name.NSProcessInfoPowerStateDidChange, object: nil) }),
+            ]
+            for (name, pin, announce) in conditions {
+                pin(true); announce()
+                check(!chest.debugSeamPulsing && chest.holdsStill, "PF-01: \(name), but the shut chest's seam kept pulsing")
+                pin(false); announce()
+                check(chest.debugSeamPulsing && !chest.holdsStill, "PF-01: \(name) and then cleared, but the seam did not pulse again")
+            }
+            DecorativeMotionGate.resetOverridesForTests()
+        }
+
         // Not while the app is locked: those keys are the app password, typed
         // on the lock screen in front of this page.
         AppLockGate.shared.setLocked(true)
@@ -203,6 +277,13 @@ enum CredentialVaultViewSelfTest {
         check(chest.debugFlyingCount > 0, "S-1: opening throws coins and gems")
         check(chest.debugTwinkling && chest.debugRaysLooping && !chest.debugSeamPulsing,
               "S-1: the open chest twinkles and its rays sway, and the seam stops")
+        DecorativeMotionGate.appActiveOverrideForTests = false
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: nil)
+        check(!chest.debugTwinkling && !chest.debugRaysLooping && gate.debugIsLit,
+              "PF-01: an inactive app left the open chest twinkling, or shut it")
+        DecorativeMotionGate.appActiveOverrideForTests = nil
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        check(chest.debugTwinkling && chest.debugRaysLooping, "PF-01: the open chest did not move again on activation")
         check(fieldIsFirstResponder(), "S-1: opening the chest left the field focused")
 
         // The arrow submits exactly what Return does.

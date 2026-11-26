@@ -34,12 +34,46 @@
 // build. `Cache-Control: no-cache` makes WebKit revalidate every time, and a
 // matching `If-None-Match` answers 304.
 //
+// ## Media, and big files (full review 4, PF-03)
+//
+// WebKit will not play audio or video from a server that cannot answer a
+// byte range, so a single `Range: bytes=...` answers 206 with
+// `Content-Range` (416 when it starts past the end, and the whole file for
+// anything this server does not handle, such as several ranges at once).
+// A body up to `inlineBodyLimit` is read whole; anything bigger is sent in
+// `streamChunk` pieces from a `FileHandle`, each sent when the last has been
+// taken by the network stack, so a video never sits in memory at once. The
+// listener's queue only accepts and reads request heads: building a
+// response and reading a file happen on `fileQueue`, so one big file never
+// holds up another request.
+//
+// ## Who may read it (full review 4, S-02)
+//
+// Loopback keeps the LAN out and the `Host` check keeps DNS rebinding out,
+// but neither says *who* is asking: every process and every user account on
+// this Mac can reach a loopback port, and file permissions and the macOS
+// privacy prompts do not apply to it. So each run has a random key
+// (`Policy.accessToken`), Grand Line's own web view sends it as the
+// `cookieName(port:)` cookie, and a request without it gets 403. "Allow my
+// browser" in the project's settings runs without one. The registry also
+// serves a project's build folder (`dist`, `build`, `public`) when it has
+// one, rather than the whole cloned repository.
+//
+// ## Limits (full review 4, S-03)
+//
+// Any local process can open connections, and this process also runs the
+// terminals, the vault and git sync. So at most `Limits.maxConnections`
+// are open at once (a new one past that is closed at once), and a
+// connection that has not sent a complete request head within
+// `Limits.headTimeout` is closed.
+//
 // The response logic is pure (`response(forRequest:root:port:)`), so
 // `LocalStaticServerSelfTest` asserts every rule without a socket, and then
 // once more over a real loopback listener.
 
 import Foundation
 import Network
+import Security
 
 final class LocalStaticServer {
 
@@ -57,17 +91,53 @@ final class LocalStaticServer {
     struct Counters: Equatable {
         var served = 0
         var notFound = 0
+        /// S-03: connections closed because `maxConnections` were open.
+        var refused = 0
+        /// S-03: connections closed for not sending a head in time.
+        var timedOut = 0
     }
 
-    /// One HTTP response, before it is serialised.
+    /// What a request must carry, and what every answer says, for one run.
+    struct Policy: Equatable {
+        /// S-02: the run's key. A request is answered only when its
+        /// `cookieName(port:)` cookie holds this. `nil` answers anyone on
+        /// this Mac ("Allow my browser").
+        var accessToken: String?
+        /// S-04: sent on every answer when set, so the site's own requests
+        /// stay on its origin in any client, the browser included.
+        var contentSecurityPolicy: String?
+
+        static let open = Policy()
+        /// What a project kept to its own address sends.
+        static let confinedCSP = "default-src 'self' 'unsafe-inline' data: blob:"
+    }
+
+    /// S-03's two bounds. A suite passes smaller ones.
+    struct Limits: Equatable {
+        var maxConnections = 64
+        var headTimeout: TimeInterval = 10
+
+        static let standard = Limits()
+    }
+
+    /// Part of a file, sent from disk rather than held in memory.
+    struct FileSlice: Equatable {
+        let url: URL
+        let offset: Int64
+        let length: Int64
+    }
+
+    /// One HTTP response, before it is serialised. The body is either
+    /// `body`, in memory, or `file`, streamed after the head.
     struct Response: Equatable {
         var status: Int
         var reason: String
         var headers: [(String, String)]
         var body: Data
+        var file: FileSlice? = nil
 
         static func == (lhs: Response, rhs: Response) -> Bool {
-            lhs.status == rhs.status && lhs.body == rhs.body
+            lhs.status == rhs.status && lhs.body == rhs.body && lhs.file == rhs.file
                 && lhs.headers.map { "\($0.0):\($0.1)" } == rhs.headers.map { "\($0.0):\($0.1)" }
         }
 
@@ -75,7 +145,8 @@ final class LocalStaticServer {
             headers.first { $0.0.caseInsensitiveCompare(name) == .orderedSame }?.1
         }
 
-        /// The bytes on the wire. A HEAD answer carries the headers alone.
+        /// The bytes on the wire, or the head and in-memory body of a
+        /// streamed one. A HEAD answer carries the headers alone.
         func serialized(includeBody: Bool) -> Data {
             var head = "HTTP/1.1 \(status) \(reason)\r\n"
             for (name, value) in headers { head += "\(name): \(value)\r\n" }
@@ -86,22 +157,39 @@ final class LocalStaticServer {
         }
     }
 
+    /// The largest body read into memory whole. Anything bigger streams.
+    static let inlineBodyLimit = 256 * 1024
+    /// One streamed piece.
+    static let streamChunk = 256 * 1024
+
     /// The folder this serves, symlink-resolved once so every containment
     /// check compares like with like.
     let root: URL
     let port: UInt16
+    let policy: Policy
+    let limits: Limits
 
+    /// Accepts connections and reads request heads. Nothing slower.
     private let queue = DispatchQueue(label: "com.manjesh.grandline.local-static-server")
+    /// Builds responses and reads files (PF-03), so one big file never holds
+    /// up the listener or another request.
+    private let fileQueue = DispatchQueue(label: "com.manjesh.grandline.local-static-server.files",
+                                          qos: .userInitiated, attributes: .concurrent)
     private var listener: NWListener?
-    /// GL-28: written on the server's queue, read on main.
+    /// GL-28: written on the server's queues, read on main.
     private let lock = NSLock()
     private var counters = Counters()
     private var connections: [ObjectIdentifier: NWConnection] = [:]
 
-    init(root: URL, port: UInt16) {
+    init(root: URL, port: UInt16, policy: Policy = .open, limits: Limits = .standard) {
         self.root = root.standardizedFileURL.resolvingSymlinksInPath()
         self.port = port
+        self.policy = policy
+        self.limits = limits
+        queue.setSpecific(key: Self.listenerQueueKey, value: true)
     }
+
+    private static let listenerQueueKey = DispatchSpecificKey<Bool>()
 
     deinit { stop() }
 
@@ -119,6 +207,20 @@ final class LocalStaticServer {
     }
 
     static let loopbackHost = "127.0.0.1"
+
+    /// The cookie Grand Line's web view sends the run's key in. Cookies are
+    /// shared across a host's ports, so the name carries the port.
+    static func cookieName(port: UInt16) -> String { "grandline-hub-\(port)" }
+
+    /// A new run's key: 32 random bytes, as hex.
+    static func makeAccessToken() -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) != errSecSuccess {
+            // Never a guessable key: fall back to the system's other source.
+            bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max) }
+        }
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
 
     // MARK: Start and stop
 
@@ -196,8 +298,19 @@ final class LocalStaticServer {
     private func accept(_ connection: NWConnection) {
         let id = ObjectIdentifier(connection)
         lock.lock()
-        connections[id] = connection
+        let full = connections.count >= limits.maxConnections
+        if full {
+            counters.refused += 1
+        } else {
+            connections[id] = connection
+        }
         lock.unlock()
+        if full {
+            // S-03: past the cap a connection is closed, not queued.
+            connection.start(queue: queue)
+            connection.cancel()
+            return
+        }
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .failed, .cancelled:
@@ -207,7 +320,20 @@ final class LocalStaticServer {
             }
         }
         connection.start(queue: queue)
-        receive(on: connection, buffer: Data())
+        // S-03: a connection that has not sent its head by now is closed.
+        let deadline = DispatchWorkItem { [weak self, weak connection] in
+            guard let self, let connection else { return }
+            switch connection.state {
+            case .cancelled, .failed: return
+            default: break
+            }
+            self.lock.lock()
+            self.counters.timedOut += 1
+            self.lock.unlock()
+            connection.cancel()
+        }
+        queue.asyncAfter(deadline: .now() + limits.headTimeout, execute: deadline)
+        receive(on: connection, buffer: Data(), deadline: deadline)
     }
 
     private func forget(_ id: ObjectIdentifier) {
@@ -216,25 +342,75 @@ final class LocalStaticServer {
         lock.unlock()
     }
 
-    private func receive(on connection: NWConnection, buffer: Data) {
+    private func receive(on connection: NWConnection, buffer: Data, deadline: DispatchWorkItem) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, isComplete, error in
             guard let self else { return }
             var buffer = buffer
             if let data { buffer.append(data) }
             let headEnd = buffer.range(of: Data("\r\n\r\n".utf8))
             if headEnd == nil, buffer.count <= Self.maxRequestHead, !isComplete, error == nil {
-                self.receive(on: connection, buffer: buffer)
+                self.receive(on: connection, buffer: buffer, deadline: deadline)
                 return
             }
+            deadline.cancel()
             guard headEnd != nil || buffer.count > Self.maxRequestHead else {
                 connection.cancel()
                 return
             }
-            let response = Self.response(forRequest: buffer, root: self.root, port: self.port)
-            self.count(response)
-            let isHead = buffer.starts(with: Data("HEAD ".utf8))
-            connection.send(content: response.serialized(includeBody: !isHead),
-                            completion: .contentProcessed { _ in connection.cancel() })
+            // PF-03: the head is in. Everything after it - the file system,
+            // the file itself - happens off the listener's queue.
+            self.fileQueue.async {
+                let response = Self.response(forRequest: buffer, root: self.root, port: self.port, policy: self.policy)
+                self.count(response)
+                let isHead = buffer.starts(with: Data("HEAD ".utf8))
+                self.send(response, includeBody: !isHead, on: connection)
+            }
+        }
+    }
+
+    /// Sends the head and the in-memory body, then a streamed file's bytes.
+    private func send(_ response: Response, includeBody: Bool, on connection: NWConnection) {
+        let head = response.serialized(includeBody: includeBody)
+        guard includeBody, let slice = response.file, slice.length > 0,
+              let handle = try? FileHandle(forReadingFrom: slice.url) else {
+            connection.send(content: head, completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+        do {
+            try handle.seek(toOffset: UInt64(slice.offset))
+        } catch {
+            try? handle.close()
+            connection.cancel()
+            return
+        }
+        connection.send(content: head, isComplete: false, completion: .contentProcessed { [weak self] error in
+            guard let self, error == nil else {
+                try? handle.close()
+                connection.cancel()
+                return
+            }
+            self.stream(handle, remaining: slice.length, on: connection)
+        })
+    }
+
+    /// One piece read on `fileQueue`, and the next once the stack has taken it.
+    private func stream(_ handle: FileHandle, remaining: Int64, on connection: NWConnection) {
+        fileQueue.async { [weak self] in
+            let chunk = (try? handle.read(upToCount: Int(min(Int64(Self.streamChunk), remaining)))) ?? Data()
+            guard let self, !chunk.isEmpty else {
+                try? handle.close()
+                connection.cancel()
+                return
+            }
+            let left = remaining - Int64(chunk.count)
+            connection.send(content: chunk, isComplete: left <= 0, completion: .contentProcessed { [weak self] error in
+                guard let self, error == nil, left > 0 else {
+                    try? handle.close()
+                    connection.cancel()
+                    return
+                }
+                self.stream(handle, remaining: left, on: connection)
+            })
         }
     }
 
@@ -242,7 +418,7 @@ final class LocalStaticServer {
         lock.lock()
         if response.status == 404 {
             counters.notFound += 1
-        } else if response.status == 200 || response.status == 304 {
+        } else if [200, 206, 304].contains(response.status) {
             counters.served += 1
         }
         lock.unlock()
@@ -251,7 +427,18 @@ final class LocalStaticServer {
     // MARK: The rules (pure)
 
     /// The answer to one raw request head, against `root` served on `port`.
-    static func response(forRequest raw: Data, root: URL, port: UInt16) -> Response {
+    static func response(forRequest raw: Data, root: URL, port: UInt16, policy: Policy = .open) -> Response {
+        #if FM_SELFTESTS
+        if DispatchQueue.getSpecific(key: listenerQueueKey) == true { debugResponsesOnListenerQueue.increment() }
+        #endif
+        var response = answer(raw, root: root, port: port, policy: policy)
+        if let csp = policy.contentSecurityPolicy {
+            response.headers.insert(("Content-Security-Policy", csp), at: min(1, response.headers.count))
+        }
+        return response
+    }
+
+    private static func answer(_ raw: Data, root: URL, port: UInt16, policy: Policy) -> Response {
         guard raw.count <= maxRequestHead, let text = String(data: raw, encoding: .utf8),
               let headEnd = text.range(of: "\r\n\r\n") else {
             return plain(431, "Request Header Fields Too Large")
@@ -274,10 +461,46 @@ final class LocalStaticServer {
         guard let host = fields["host"], allowedHosts(port: port).contains(host.lowercased()) else {
             return plain(421, "Misdirected Request")
         }
+        if let token = policy.accessToken,
+           !carriesKey(fields["cookie"], name: cookieName(port: port), token: token) {
+            return forbidden()
+        }
         guard let file = resolve(target: String(requestLine[1]), root: root) else {
             return plain(404, "Not Found")
         }
-        return fileResponse(file, ifNoneMatch: fields["if-none-match"])
+        return fileResponse(file, ifNoneMatch: fields["if-none-match"], range: fields["range"],
+                            ifRange: fields["if-range"])
+    }
+
+    /// Whether a `Cookie` header holds `name=token`. Compared in constant
+    /// time, so the answer's timing says nothing about how close a guess was.
+    static func carriesKey(_ header: String?, name: String, token: String) -> Bool {
+        guard let header else { return false }
+        let expected = Array(token.utf8)
+        var found = false
+        for pair in header.split(separator: ";") {
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == name else { continue }
+            let given = Array(parts[1].trimmingCharacters(in: .whitespaces).utf8)
+            guard given.count == expected.count else { continue }
+            var difference: UInt8 = 0
+            for (a, b) in zip(given, expected) { difference |= a ^ b }
+            if difference == 0 { found = true }
+        }
+        return found
+    }
+
+    /// 403, in words a person who opened the address in a browser can act on.
+    private static func forbidden() -> Response {
+        let body = Data(("<!doctype html><meta charset=utf-8><title>Open in Grand Line</title>"
+            + "<p>This site is served to Grand Line only while it runs. To open it in your browser, turn on "
+            + "<b>Allow my browser</b> in the project\u{2019}s settings in Grand Line, then restart it.</p>\n").utf8)
+        return Response(status: 403, reason: "Forbidden",
+                        headers: [("Content-Type", "text/html; charset=utf-8"),
+                                  ("Content-Length", "\(body.count)"),
+                                  ("Cache-Control", "no-store"),
+                                  ("Connection", "close")],
+                        body: body)
     }
 
     /// The `Host` values a request to this server may carry.
@@ -313,9 +536,9 @@ final class LocalStaticServer {
         return url
     }
 
-    private static func fileResponse(_ file: URL, ifNoneMatch: String?) -> Response {
+    private static func fileResponse(_ file: URL, ifNoneMatch: String?, range: String?, ifRange: String?) -> Response {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
-              let size = (attributes[.size] as? NSNumber)?.intValue else {
+              let size = (attributes[.size] as? NSNumber)?.int64Value else {
             return plain(404, "Not Found")
         }
         let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
@@ -324,18 +547,82 @@ final class LocalStaticServer {
             ("ETag", etag),
             ("Cache-Control", "no-cache"),
             ("X-Content-Type-Options", "nosniff"),
+            ("Accept-Ranges", "bytes"),
             ("Connection", "close"),
         ]
         if let ifNoneMatch, ifNoneMatch == etag {
             headers.append(("Content-Length", "0"))
             return Response(status: 304, reason: "Not Modified", headers: headers, body: Data())
         }
-        guard let body = try? Data(contentsOf: file, options: .mappedIfSafe) else {
-            return plain(404, "Not Found")
+        // `If-Range` names the file the client already has part of; a
+        // different one gets the whole file.
+        let wanted = (ifRange == nil || ifRange == etag) ? range.map { byteRange($0, size: size) } : nil
+        switch wanted ?? .whole {
+        case .unsatisfiable:
+            var refused = plain(416, "Range Not Satisfiable")
+            refused.headers.append(("Content-Range", "bytes */\(size)"))
+            return refused
+        case .part(let part):
+            guard let response = body(file, offset: part.lowerBound, length: part.upperBound - part.lowerBound + 1,
+                                      status: 206, reason: "Partial Content", headers: headers + [
+                                          ("Content-Range", "bytes \(part.lowerBound)-\(part.upperBound)/\(size)"),
+                                      ]) else { return plain(404, "Not Found") }
+            return response
+        case .whole:
+            return body(file, offset: 0, length: size, status: 200, reason: "OK", headers: headers)
+                ?? plain(404, "Not Found")
         }
+    }
+
+    /// The response for `length` bytes of `file` from `offset`: read whole
+    /// up to `inlineBodyLimit`, streamed from disk past it.
+    private static func body(_ file: URL, offset: Int64, length: Int64, status: Int, reason: String,
+                             headers: [(String, String)]) -> Response? {
+        var headers = headers
         headers.insert(("Content-Type", mimeType(for: file)), at: 0)
-        headers.append(("Content-Length", "\(body.count)"))
-        return Response(status: 200, reason: "OK", headers: headers, body: body)
+        headers.append(("Content-Length", "\(length)"))
+        guard length > Int64(inlineBodyLimit) else {
+            guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+            defer { try? handle.close() }
+            guard (try? handle.seek(toOffset: UInt64(offset))) != nil,
+                  let data = try? handle.read(upToCount: Int(length)) ?? Data(),
+                  Int64(data.count) == length else { return nil }
+            return Response(status: status, reason: reason, headers: headers, body: data)
+        }
+        return Response(status: status, reason: reason, headers: headers, body: Data(),
+                        file: FileSlice(url: file, offset: offset, length: length))
+    }
+
+    /// What a `Range` header asks of a file of `size` bytes.
+    enum ByteRange: Equatable {
+        /// No range this server handles: send the whole file.
+        case whole
+        /// One range, both ends inclusive and inside the file.
+        case part(ClosedRange<Int64>)
+        /// A range that starts past the end: 416.
+        case unsatisfiable
+    }
+
+    /// One `bytes=` range: `a-b`, `a-` or `-n`. Several ranges, another
+    /// unit, or a malformed one read as `.whole`, which a client must accept.
+    static func byteRange(_ header: String, size: Int64) -> ByteRange {
+        let value = header.trimmingCharacters(in: .whitespaces)
+        guard value.lowercased().hasPrefix("bytes=") else { return .whole }
+        let spec = value.dropFirst("bytes=".count).trimmingCharacters(in: .whitespaces)
+        guard !spec.contains(","), let dash = spec.firstIndex(of: "-") else { return .whole }
+        let first = spec[..<dash].trimmingCharacters(in: .whitespaces)
+        let last = spec[spec.index(after: dash)...].trimmingCharacters(in: .whitespaces)
+        if first.isEmpty {
+            // The last `n` bytes.
+            guard let n = Int64(last), n >= 0 else { return .whole }
+            guard n > 0, size > 0 else { return .unsatisfiable }
+            return .part(max(0, size - n)...(size - 1))
+        }
+        guard let start = Int64(first), start >= 0 else { return .whole }
+        guard start < size else { return .unsatisfiable }
+        if last.isEmpty { return .part(start...(size - 1)) }
+        guard let end = Int64(last), end >= start else { return .whole }
+        return .part(start...min(end, size - 1))
     }
 
     private static func plain(_ status: Int, _ reason: String) -> Response {
@@ -369,7 +656,39 @@ final class LocalStaticServer {
         case "xml": return "application/xml"
         case "wasm": return "application/wasm"
         case "pdf": return "application/pdf"
+        case "avif": return "image/avif"
+        case "otf": return "font/otf"
+        case "csv": return "text/csv; charset=utf-8"
+        case "vtt": return "text/vtt; charset=utf-8"
+        // PF-03: the media a course site plays.
+        case "mp4", "m4v": return "video/mp4"
+        case "webm": return "video/webm"
+        case "mov": return "video/quicktime"
+        case "ogv": return "video/ogg"
+        case "mp3": return "audio/mpeg"
+        case "m4a": return "audio/mp4"
+        case "aac": return "audio/aac"
+        case "wav": return "audio/wav"
+        case "oga", "ogg", "opus": return "audio/ogg"
+        case "flac": return "audio/flac"
         default: return "application/octet-stream"
         }
     }
+
+    #if FM_SELFTESTS
+    /// How many responses were built on the listener's queue: none, since PF-03.
+    static let debugResponsesOnListenerQueue = LocalProjectPreflight.LockedCounter()
+
+    var debugOpenConnections: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return connections.count
+    }
+
+    /// Builds a response on the listener's queue, as the server did before
+    /// PF-03, so a suite can show its recorder sees that.
+    func debugBuildOnListenerQueue(_ raw: Data) {
+        queue.sync { _ = Self.response(forRequest: raw, root: root, port: port, policy: policy) }
+    }
+    #endif
 }

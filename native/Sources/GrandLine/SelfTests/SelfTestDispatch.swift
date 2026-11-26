@@ -1940,7 +1940,8 @@ enum SelfTestDispatch {
         }
 
         // Home's two hero cards (the widget-style board's picks). The pure half
-        // needs no window; the view half mounts the real canvas. See
+        // needs no window; the view half lays the real canvas out in a plain
+        // host view, headless since full review 4's T-05 audit. See
         // `HeroCardsSelfTest` and `HeroCardsViewSelfTest`.
         if ProcessInfo.processInfo.environment["FM_RUN_HERO_CARDS_TESTS"] == "1" {
             exit(HeroCardsSelfTest.run() ? 0 : 1)

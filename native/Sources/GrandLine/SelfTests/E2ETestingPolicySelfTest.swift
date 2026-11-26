@@ -519,8 +519,10 @@ enum E2ETestingPolicySelfTest {
             // file path rather than by an `FM_RUN_*` flag with `=1` - which is
             // deliberate, since the runner discovers suites by that prefix.
             // Its own coverage is `ReviewTourLabSelfTest`, which is dispatched
-            // normally and is in `NEEDS_SESSION`.
-            guard name != "ReviewTourLab" else { continue }
+            // normally and is in `NEEDS_SESSION`. `ReviewTourLabSurfaces` is
+            // the same tool's verbs for the restyled surfaces (full review 4,
+            // T-03), split out of it by GL-36, and covered by the same suite.
+            guard name != "ReviewTourLab", name != "ReviewTourLabSurfaces" else { continue }
             guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
             guard mountsAWindow(source) else { continue }
             windowBacked += 1
@@ -1039,7 +1041,7 @@ enum E2ETestingPolicySelfTest {
     ///
     /// 122 after the P-03 sweep deleted Home's Needs attention card, which
     /// nothing drew any more, and `NeedsAttentionViewSelfTest` with it.
-    private static let windowBackedSuiteCeiling = 122
+    private static let windowBackedSuiteCeiling = 121
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning
