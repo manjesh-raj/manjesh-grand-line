@@ -269,6 +269,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     var onSelectSession: ((UUID) -> Void)?
     var onEndSession: ((UUID) -> Void)?
     var onConnectHost: (() -> Void)?
+    /// F-15: "Open in New Window" on a row, optionally kept on top.
+    var onOpenInNewWindow: ((WorkspaceModule, Bool) -> Void)?
     var onLogOut: (() -> Void)?
 
     let outlineView = WorkspaceSidebarOutlineView()
@@ -919,6 +921,16 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             if module == .console || module == .connections {
                 menu.addItem(menuItem("Connect to a Host\u{2026}", symbol: "plus.circle") { [weak self] in
                     self?.onConnectHost?()
+                })
+            }
+            // F-15: a page that can live in a window of its own.
+            if PageWindowTarget.target(for: module) != nil {
+                menu.addItem(.separator())
+                menu.addItem(menuItem("Open in New Window", symbol: "macwindow.on.rectangle") { [weak self] in
+                    self?.onOpenInNewWindow?(module, false)
+                })
+                menu.addItem(menuItem("Open in New Window, Kept on Top", symbol: "pin") { [weak self] in
+                    self?.onOpenInNewWindow?(module, true)
                 })
             }
         case .session(let hostID):

@@ -313,6 +313,8 @@ enum AppLockedSurface {
     /// F-05: the voice memo key (Right ⌥ + ⇧), which records from any app
     /// and files into the Notebook or a task.
     case voiceMemo
+    /// F-15: a page, or the focus timer, opened in a window of its own.
+    case pageWindow
 }
 
 final class AppLockGate {

@@ -2249,6 +2249,13 @@ enum SelfTestDispatch {
             exit(ReaderModeSelfTest.run() ? 0 : 1)
         }
 
+        // F-15 of full review 4: a page in its own window - the same view moves,
+        // the placeholder takes its visibility, it comes back pinned, one window
+        // per page, the lock, and the focus timer window. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_PAGE_WINDOWS_TESTS"] == "1" {
+            exit(PageWindowsSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }

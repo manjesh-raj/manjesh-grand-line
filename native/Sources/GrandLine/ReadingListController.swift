@@ -490,7 +490,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     /// The last page a highlight went to, recent pages, and a new page.
     private func showNotebookMenu(block: Int, range: NSRange, anchor: NSView) {
         guard let notebook = GrandLineServices.shared.notebookStore else {
-            Toast.show(in: view, message: "Open the Notebook once, then send highlights to it", kind: .warning)
+            Toast.show(in: view, message: "Open the \(PlaceName.of(.notebook)) once, then send highlights to it", kind: .warning)
             return
         }
         let menu = NSMenu()
@@ -566,7 +566,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
             let row = HelmAccentRow(chipPlacement: .trailing, trailingAccessory: nil, hover: false)
             row.configure(HelmAccentRow.Content(tint: .warn, kicker: article.site.uppercased(),
                                                 title: "\u{201C}\(highlight.text)\u{201D}",
-                                                meta: article.title + (highlight.sentToPageID != nil ? " \u{00B7} in Notebook" : ""),
+                                                meta: article.title + (highlight.sentToPageID != nil ? " \u{00B7} in \(PlaceName.of(.notebook))" : ""),
                                                 badgeSymbol: "highlighter", titleWraps: true), theme: theme)
             highlightsList.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: highlightsList.widthAnchor).isActive = true

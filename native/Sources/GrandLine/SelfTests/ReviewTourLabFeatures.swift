@@ -22,6 +22,8 @@
 //     ux memohud <recording|saved|mic> <name>  F-05: the voice memo HUD
 //     ux memopage seed                F-05: a memo page open in the Notebook (goto notebook first)
 //     ux reader <article|highlights|notext>   F-03: the Reading list's reader (goto readingList first)
+//     ux pagewindow <notebook|stickyBoard|console> <name>  F-15: pop the page out and render its window
+//     ux timerwindow <name>           F-15: the focus timer in its own window
 //
 // GL-27: debug builds only.
 
@@ -31,7 +33,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode", "memohud", "memopage", "reader"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode", "memohud", "memopage", "reader", "pagewindow", "timerwindow"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -77,6 +79,26 @@ extension ReviewTourLab {
             return "ux memopage (\(page.id))"
         case "reader":
             return seedReader(shell, state: name)
+        case "pagewindow":
+            guard let target = PageWindowTarget(rawValue: name), let file = rest.dropFirst().first else {
+                return "ux pagewindow FAILED - want a page and a name"
+            }
+            // A tour starts locked; the gate is the suite's to test.
+            AppLockGate.shared.setLocked(false)
+            guard let window = shell.workspace.pageWindows.open(target, keepOnTop: true), let view = window.contentView else {
+                return "ux pagewindow FAILED - no window"
+            }
+            window.setContentSize(NSSize(width: 820, height: 640))
+            view.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            return done(writePNG(of: view, to: url(file)), file)
+        case "timerwindow":
+            AppLockGate.shared.setLocked(false)
+            guard let window = shell.workspace.pageWindows.openFocusTimer(), let view = window.contentView else {
+                return "ux timerwindow FAILED - no window"
+            }
+            view.layoutSubtreeIfNeeded()
+            return done(writePNG(of: view, to: url(name)), name)
         case "runmode":
             return seedRunMode(shell.workspace.runbooks, state: name)
         case "devservers" where name == "seed":

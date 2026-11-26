@@ -79,7 +79,7 @@ final class ReadingListReaderView: NSView, NSTextViewDelegate {
         selectionBar.translatesAutoresizingMaskIntoConstraints = false
         for (title, symbol, action) in [("Highlight", "highlighter", #selector(highlightTapped)),
                                         ("Copy", "doc.on.doc", #selector(copyTapped)),
-                                        ("Send to Notebook", "book.closed", #selector(sendTapped))] {
+                                        ("Send to \(PlaceName.of(.notebook))", "book.closed", #selector(sendTapped))] {
             let button = HelmButton(title: title, variant: .quiet, size: .small, symbol: symbol, target: self, action: action)
             selectionBar.addArrangedSubview(button)
         }

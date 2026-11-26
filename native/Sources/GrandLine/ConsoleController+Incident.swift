@@ -475,7 +475,7 @@ extension ConsoleController {
         case .postmortems:
             let saved = docsRunbookStore.createPostmortem(title: "\(current.id) - \(current.title) (draft)",
                                                           content: markdown)
-            Toast.show(in: view, message: "Draft saved to Postmortems: \(saved.title)")
+            Toast.show(in: view, message: "Draft saved to \(PlaceName.of(.postmortems)): \(saved.title)")
         case .copy:
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(markdown, forType: .string)

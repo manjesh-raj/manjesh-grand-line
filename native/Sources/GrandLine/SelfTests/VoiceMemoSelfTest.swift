@@ -165,7 +165,7 @@ enum VoiceMemoSelfTest {
                   page.content.contains("[1:20] Renew the staging cert before any of this.") else {
                 return "the page is wrong (\(page.id)):\n\(page.content)"
             }
-            return c.hud.view.debugDetail == "Saved to Notebook \u{203A} Memos" ? nil : "the HUD said \(c.hud.view.debugDetail)"
+            return c.hud.view.debugDetail == "Saved to \(PlaceName.of(.notebook)) \u{203A} Memos" ? nil : "the HUD said \(c.hud.view.debugDetail)"
         }
     }
 

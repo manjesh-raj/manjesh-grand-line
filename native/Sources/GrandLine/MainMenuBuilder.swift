@@ -583,6 +583,17 @@ extension AppDelegate {
         windowMenu.addItem(withTitle: "Minimize", symbol: "minus", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", symbol: "arrow.up.left.and.arrow.down.right", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(NSMenuItem.separator())
+        // F-15: the page on screen, or the focus timer, in a window of its own.
+        let pageWindowItem = NSMenuItem(title: "Open Page in New Window", action: #selector(AppDelegate.openPageInNewWindow),
+                                        keyEquivalent: "o").withSymbol("macwindow.on.rectangle")
+        pageWindowItem.keyEquivalentModifierMask = [.command, .option]
+        pageWindowItem.target = self
+        windowMenu.addItem(pageWindowItem)
+        let timerWindowItem = NSMenuItem(title: "Focus Timer in Its Own Window", action: #selector(AppDelegate.openFocusTimerWindow),
+                                         keyEquivalent: "").withSymbol("timer")
+        timerWindowItem.target = self
+        windowMenu.addItem(timerWindowItem)
+        windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Bring All to Front", symbol: "square.stack", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         // R2-ARCH-06: the window toolbar is customisable. The system's own
         // sheet, through the window's own action - a right click on the

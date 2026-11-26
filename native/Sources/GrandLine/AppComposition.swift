@@ -136,6 +136,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return provider
     }()
 
+    /// F-15: Window > Open Page in New Window (opt-cmd-O). A page that cannot
+    /// live in a window of its own says so rather than doing nothing.
+    @objc func openPageInNewWindow() {
+        if !appShell.workspace.openCurrentPageInNewWindow() {
+            appShell.showToast("The Notebook, the Sticky Board and the Console can open in their own window")
+        }
+    }
+
+    /// F-15: Window > Focus Timer in Its Own Window.
+    @objc func openFocusTimerWindow() { appShell.workspace.pageWindows.openFocusTimer() }
+
     /// F-06: Shift > Grab Text from Screen.
     @objc func grabTextFromScreen() { screenTextGrab.start() }
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)

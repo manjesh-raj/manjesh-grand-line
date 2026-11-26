@@ -171,7 +171,7 @@ final class VoiceMemoController {
         self.pending = nil
         switch destination {
         case .notebook:
-            hud.show(.message("Saved to Notebook \u{203A} Memos", settings: nil))
+            hud.show(.message("Saved to \(PlaceName.of(.notebook)) \u{203A} Memos", settings: nil))
         case .task(_, let title):
             hud.show(.message("Added to \u{201C}\(title)\u{201D} as a voice note", settings: nil))
         }

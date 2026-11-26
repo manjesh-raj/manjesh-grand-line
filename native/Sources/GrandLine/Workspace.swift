@@ -57,6 +57,22 @@ final class Workspace {
     weak var chrome: WorkspaceChrome?
 
     let content = WorkspaceContent()
+    /// F-15: pages and the focus timer in windows of their own.
+    private(set) lazy var pageWindows = PageWindows(
+        content: content,
+        mount: { [weak self] destination in
+            guard let self else { return nil }
+            self.navigator.show(destination)
+            return self.content.mounter.slot(for: destination.slot)?.controller
+        },
+        timer: { [weak self] in self?.focusTimer })
+
+    /// F-15: the page on screen, popped out (the Window menu's item).
+    func openCurrentPageInNewWindow(keepOnTop: Bool = false) -> Bool {
+        guard case .rail(let destination)? = navigator.currentDestinationKind,
+              let target = PageWindowTarget.target(for: destination) else { return false }
+        return pageWindows.open(target, keepOnTop: keepOnTop) != nil
+    }
     private(set) lazy var hosts = HostSessionCoordinator(workspace: self, makeHostConsole: makeHostConsole)
     private(set) lazy var navigator = Navigator(workspace: self)
     let lock = LockPresenter()
