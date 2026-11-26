@@ -1087,6 +1087,19 @@ enum ReviewTourLab {
             shell.workspace.navigator.show(.homeCanvas)
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             return "ux tips (\(shell.debugHomeCanvas.debugTipTitle ?? "no tip showing"))"
+        // UX-03: the board's first card to do takes the keyboard, so its
+        // quick actions show.
+        case "boardfocus":
+            func cards(in view: NSView) -> [ShiftBoardCardView] {
+                view.subviews.flatMap { ($0 as? ShiftBoardCardView).map { [$0] } ?? cards(in: $0) }
+            }
+            let index = parts.count > 1 ? Int(parts[1]) ?? 1 : 1
+            let all = cards(in: shell.view).filter { !$0.isHiddenOrHasHiddenAncestor
+                && $0.debugWorkspaceCard?.offersQuickActions == true }
+            guard all.indices.contains(index) else { return "ux boardfocus FAILED - \(all.count) cards" }
+            shell.view.window?.makeFirstResponder(all[index])
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            return "ux boardfocus"
         // UX-26: the Add Host sheet, rendered on its own.
         case "hostsheet":
             guard parts.count == 2 else { return "ux hostsheet FAILED - want hostsheet <name>" }

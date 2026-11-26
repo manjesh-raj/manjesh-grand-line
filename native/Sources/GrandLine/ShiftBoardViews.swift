@@ -318,6 +318,9 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
         currentColumn = column
         if usesWorkspaceStyle {
             workspaceCard.configure(task: task, project: project, column: column, theme: theme)
+            // UX-03: a card still to do takes the quick actions.
+            workspaceCard.offersQuickActions = column != .done
+            workspaceCard.onQuickAction = { [weak self] action in self?.performQuickAction(action) }
             let priorityText = task.priority.rawValue.capitalized
             setAccessibilityLabel("\(task.title), \(column.title), \(priorityText) priority")
             menu = buildMenu()
@@ -412,12 +415,71 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
     }
 
     override func keyDown(with event: NSEvent) {
-        // 36 = Return, 76 = keypad Enter, 49 = Space.
-        if [36, 76, 49].contains(event.keyCode) {
+        // 36 = Return, 76 = keypad Enter: open, as a click does.
+        if [36, 76].contains(event.keyCode) {
             onOpen?()
             return
         }
+        // UX-03: Space, T and F do a card's three quick actions, and J and K
+        // move between cards. Without modifiers only, so ⌘T and ⌘F stay the
+        // app's.
+        let mods = event.modifierFlags.intersection(KeyChord.relevantModifierMask)
+        if mods.isEmpty {
+            if event.keyCode == 49 {
+                if usesWorkspaceStyle && workspaceCard.offersQuickActions { performQuickAction(.done) } else { onOpen?() }
+                return
+            }
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "t" where usesWorkspaceStyle && workspaceCard.offersQuickActions:
+                performQuickAction(.tomorrow)
+                return
+            case "f" where usesWorkspaceStyle && workspaceCard.offersQuickActions:
+                performQuickAction(.focus)
+                return
+            case "j":
+                moveSelection(by: 1)
+                return
+            case "k":
+                moveSelection(by: -1)
+                return
+            default:
+                break
+            }
+        }
         super.keyDown(with: event)
+    }
+
+    // MARK: UX-03 - the quick actions
+
+    /// Done goes to the Done lane (`onMove`, the same call a drop makes, and
+    /// the page offers Undo), Tomorrow pushes the due date (`onPushDue`), and
+    /// Focus starts the default focus session (`onStartFocus`).
+    func performQuickAction(_ action: ShiftWorkspaceTaskCard.QuickAction) {
+        switch action {
+        case .done:
+            if let onComplete { onComplete() } else { onMove?(.done) }
+        case .tomorrow: onPushDue?(.tomorrow)
+        case .focus: onStartFocus?(FocusTimerEngine.defaultMinutes)
+        }
+    }
+
+    /// Done with the page's Undo toast, when the page offers one.
+    var onComplete: (() -> Void)?
+
+    /// J and K: the next or previous card on the board, lane by lane.
+    private func moveSelection(by step: Int) {
+        var root: NSView? = superview
+        while let view = root, !(view is ShiftBoardView) { root = view.superview }
+        guard let board = root else { return }
+        func cards(in view: NSView) -> [ShiftBoardCardView] {
+            view.subviews.flatMap { ($0 as? ShiftBoardCardView).map { [$0] } ?? cards(in: $0) }
+        }
+        let all = cards(in: board).filter { !$0.isHiddenOrHasHiddenAncestor }
+        guard let index = all.firstIndex(where: { $0 === self }) else { return }
+        let next = index + step
+        guard all.indices.contains(next) else { return }
+        window?.makeFirstResponder(all[next])
+        all[next].scrollToVisible(all[next].bounds)
     }
 
     // MARK: Press, click and drag
@@ -439,7 +501,12 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
     /// driven by the tracking rect rather than by hit testing.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden else { return nil }
-        return bounds.contains(convert(point, from: superview)) ? self : nil
+        let local = convert(point, from: superview)
+        // UX-03: a showing quick action takes its own click.
+        if usesWorkspaceStyle, let button = workspaceCard.quickActionButton(at: workspaceCard.convert(local, from: self)) {
+            return button
+        }
+        return bounds.contains(local) ? self : nil
     }
 
     /// A card is draggable in a window that is not focused, the way a Finder
@@ -668,8 +735,97 @@ final class ShiftWorkspaceTaskCard: NSView {
     private var dueTint: HelmTint?
     private var struck = false
 
-    var isSelected = false { didSet { if isSelected != oldValue { applyTheme(theme) } } }
-    private var isHovered = false { didSet { if isHovered != oldValue { applyTheme(theme) } } }
+    var isSelected = false { didSet { if isSelected != oldValue { applyTheme(theme); refreshActions() } } }
+    private var isHovered = false { didSet { if isHovered != oldValue { applyTheme(theme); refreshActions() } } }
+
+    /// UX-03: the three things done most to a card, on hover or keyboard
+    /// focus - Done (Space), Tomorrow (T) and Focus (F).
+    enum QuickAction: CaseIterable {
+        case done, tomorrow, focus
+
+        var title: String {
+            switch self {
+            case .done: return "Done"
+            case .tomorrow: return "Tomorrow"
+            case .focus: return "Focus"
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .done: return "checkmark"
+            case .tomorrow: return "arrow.right"
+            case .focus: return "timer"
+            }
+        }
+        /// The key that does it while the card is selected.
+        var key: String {
+            switch self {
+            case .done: return "Space"
+            case .tomorrow: return "T"
+            case .focus: return "F"
+            }
+        }
+    }
+
+    var onQuickAction: ((QuickAction) -> Void)?
+    /// A card that can take them: not a Done card, not a follow-up.
+    var offersQuickActions = false { didSet { refreshActions() } }
+    private(set) lazy var actionButtons: [HelmButton] = QuickAction.allCases.map { action in
+        let button = HelmButton(title: action.title, variant: .secondary, size: .small, symbol: action.symbol,
+                                target: self, action: #selector(quickActionTapped(_:)))
+        button.toolTip = "\(action.title) (\(action.key))"
+        button.setAccessibilityLabel("\(action.title), \(action.key)")
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        return button
+    }
+    private lazy var actionRow: NSStackView = {
+        let row = NSStackView(views: actionButtons)
+        row.orientation = .horizontal
+        row.spacing = HelmMetrics.s1 + 2
+        row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }()
+    private var metaToFoot: NSLayoutConstraint?
+    private var actionsToFoot: NSLayoutConstraint?
+
+    /// Whether the row shows: on hover or keyboard focus, on a card that
+    /// takes them.
+    var showsQuickActions: Bool { offersQuickActions && (isHovered || isSelected) }
+
+    private func refreshActions() {
+        let shows = showsQuickActions
+        guard actionRow.isHidden == shows || actionRow.superview == nil else { return }
+        if actionRow.superview == nil {
+            addSubview(actionRow)
+            NSLayoutConstraint.activate([
+                actionRow.topAnchor.constraint(equalTo: meta.bottomAnchor, constant: HelmMetrics.s2),
+                actionRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.padding.left),
+                actionRow.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -Self.padding.right),
+            ])
+            actionsToFoot = actionRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.padding.bottom)
+        }
+        actionRow.isHidden = !shows
+        if shows {
+            metaToFoot?.isActive = false
+            actionsToFoot?.isActive = true
+        } else {
+            actionsToFoot?.isActive = false
+            metaToFoot?.isActive = true
+        }
+    }
+
+    @objc private func quickActionTapped(_ sender: HelmButton) {
+        guard let index = actionButtons.firstIndex(of: sender) else { return }
+        onQuickAction?(QuickAction.allCases[index])
+    }
+
+    /// The button under `point` (in this card's coordinates) while the row
+    /// shows, so the board card's own hit test hands it the click.
+    func quickActionButton(at point: NSPoint) -> HelmButton? {
+        guard showsQuickActions else { return nil }
+        return actionButtons.first { !$0.isHidden && $0.frame.contains(actionRow.convert(point, from: self)) }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -714,8 +870,10 @@ final class ShiftWorkspaceTaskCard: NSView {
             meta.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 7),
             meta.leadingAnchor.constraint(equalTo: leadingAnchor, constant: p.left),
             meta.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -p.right),
-            meta.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -p.bottom),
         ])
+        let foot = meta.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -p.bottom)
+        foot.isActive = true
+        metaToFoot = foot
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -1324,6 +1482,8 @@ final class ShiftBoardColumnView: NSView {
     /// UX7's reschedule gesture, forwarded up with the task's id like every
     /// other card verb here.
     var onPushTaskDue: ((String, ShiftDuePush) -> Void)?
+    /// UX-03: a card's Done, which the page does with Undo.
+    var onCompleteTask: ((String) -> Void)?
     /// F7, forwarded up to `ShiftController` exactly as `onPushTaskDue` is.
     var onStartFocusTask: ((String, Int) -> Void)?
     var onAddTask: ((ShiftBoardColumn) -> Void)?
@@ -1668,6 +1828,7 @@ final class ShiftBoardColumnView: NSView {
             cardView.onDelete = { [weak self] in self?.onDeleteTask?(id) }
             cardView.onPushDue = { [weak self] option in self?.onPushTaskDue?(id, option) }
             cardView.onStartFocus = { [weak self] minutes in self?.onStartFocusTask?(id, minutes) }
+            cardView.onComplete = { [weak self] in self?.onCompleteTask?(id) }
             return cardView
         }, update: { [weak self] view, task in
             guard let self, let cardView = view as? ShiftBoardCardView else { return }
@@ -1872,6 +2033,8 @@ final class ShiftBoardView: NSView {
     /// UX7's reschedule gesture, forwarded up with the task's id like every
     /// other card verb here.
     var onPushTaskDue: ((String, ShiftDuePush) -> Void)?
+    /// UX-03: a card's Done, which the page does with Undo.
+    var onCompleteTask: ((String) -> Void)?
     /// F7, forwarded up to `ShiftController` exactly as `onPushTaskDue` is.
     var onStartFocusTask: ((String, Int) -> Void)?
     var onAddTask: ((ShiftBoardColumn) -> Void)?
@@ -1890,6 +2053,7 @@ final class ShiftBoardView: NSView {
             column.onMoveTask = { [weak self] id, target in self?.onMoveTask?(id, target) }
             column.onDeleteTask = { [weak self] id in self?.onDeleteTask?(id) }
             column.onPushTaskDue = { [weak self] id, option in self?.onPushTaskDue?(id, option) }
+            column.onCompleteTask = { [weak self] id in self?.onCompleteTask?(id) }
             column.onStartFocusTask = { [weak self] id, minutes in self?.onStartFocusTask?(id, minutes) }
             column.onAddTask = { [weak self] target in self?.onAddTask?(target) }
             column.onDropTask = { [weak self] id, target in self?.onDropTask?(id, target) ?? false }

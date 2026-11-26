@@ -830,6 +830,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             guard let self, let task = self.store.activeTasks.first(where: { $0.id == id }) else { return }
             self.startFocus(on: task, minutes: minutes)
         }
+        boardView.onCompleteTask = { [weak self] id in self?.completeTaskWithUndo(id: id) }
         boardView.onDeleteTask = { [weak self] id in self?.confirmDeleteTask(id: id) }
         boardView.onAddTask = { [weak self] column in self?.addTask(in: column) }
         boardView.onDropTask = { [weak self] id, column in self?.moveTask(id: id, to: column) ?? false }
@@ -1153,6 +1154,23 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             // was up, and an Undo of the *due date* must not revert that.
             current.dueDate = previousDue
             self.store.updateTask(current)
+            self.render()
+        }
+    }
+
+    /// UX-03: a card's Done (its button or Space), with GL-33's real Undo -
+    /// the caller still holds the status it had, so reopening restores it.
+    func completeTaskWithUndo(id: String) {
+        guard let task = store.activeTasks.first(where: { $0.id == id }) else { return }
+        let previousStatus = task.status
+        guard moveTask(id: id, to: .done) else { return }
+        Toast.showUndo(in: view, message: "Done: \(task.title)") { [weak self] in
+            guard let self else { return }
+            self.store.setTaskCompleted(id: id, completed: false)
+            if previousStatus != .todo, var reopened = self.store.activeTasks.first(where: { $0.id == id }) {
+                reopened.status = previousStatus
+                self.store.updateTask(reopened)
+            }
             self.render()
         }
     }
