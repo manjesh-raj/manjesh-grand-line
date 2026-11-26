@@ -314,6 +314,13 @@ extension ConsoleController {
             self?.incidentPopover.performClose(nil)
             self?.onOpenInvestigation?(reference)
         }
+        incidentCard.exportCounts = { [weak self] incident in
+            let findings = self?.exportFindings(for: incident) ?? []
+            return IncidentPostmortemExport.counts(for: incident, findings: findings)
+        }
+        incidentCard.onExport = { [weak self] incident, options, destination in
+            self?.exportPostmortemDraft(incident, options: options, destination: destination)
+        }
 
         let controller = NSViewController()
         controller.view = incidentCard
@@ -427,6 +434,71 @@ extension ConsoleController {
                                                         ok: ok, refused: refused),
                              to: incident.id)
         renderIncidentCardIfShown()
+    }
+
+    /// D-05: a command this app just typed into a tab of this host. A hook
+    /// on the send itself (the Command Library, a snippet's Run, a Log
+    /// Analyzer suggestion, a runbook step) - never a reading of what the
+    /// captain typed by hand, and never the command's output.
+    func noteCommandSent(_ text: String, tabName: String, via source: String) {
+        guard let incident = activeIncident() else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        incidentStore.append(IncidentSources.commandSent(trimmed, tabName: tabName, via: source), to: incident.id)
+        renderIncidentCardIfShown()
+    }
+
+    // MARK: Export (D-05)
+
+    /// The saved investigations this incident references, read through the
+    /// Log Analyzer's own store. A store that is not up yet gives no findings
+    /// rather than a guess.
+    func exportFindings(for incident: Incident) -> [IncidentPostmortemExport.Finding] {
+        guard let store = GrandLineServices.shared.logAnalyzerStore else { return [] }
+        return IncidentPostmortemExport.findings(for: incident) { store.load(id: $0) }
+    }
+
+    /// "Create draft": build the facts-only Markdown and send it where the
+    /// captain chose. The draft is built fresh from the record on disk, so an
+    /// entry that attached while the panel was open is in it.
+    func exportPostmortemDraft(_ incident: Incident,
+                               options: IncidentPostmortemExport.Options,
+                               destination: IncidentPostmortemExport.Destination) {
+        let current = incidentStore.load(id: incident.id) ?? incident
+        let markdown = IncidentPostmortemExport.markdown(for: current,
+                                                         findings: exportFindings(for: current),
+                                                         options: options)
+        #if FM_SELFTESTS
+        debugLastExport = (markdown, destination)
+        #endif
+        switch destination {
+        case .postmortems:
+            let saved = docsRunbookStore.createPostmortem(title: "\(current.id) - \(current.title) (draft)",
+                                                          content: markdown)
+            Toast.show(in: view, message: "Draft saved to Postmortems: \(saved.title)")
+        case .copy:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(markdown, forType: .string)
+            Toast.show(in: view, message: "Postmortem draft copied")
+        case .file:
+            // An isolated process (a suite or a tour) never opens a save panel.
+            if ProcessMode.current.isIsolated { return }
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = IncidentPostmortemExport.suggestedFileName(for: current)
+            panel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
+            incidentPopover.performClose(nil)
+            guard let window = view.window else { return }
+            panel.beginSheetModal(for: window) { [weak self] response in
+                guard response == .OK, let url = panel.url, let self else { return }
+                do {
+                    try AtomicWrite.text(markdown, to: url)
+                    Toast.show(in: self.view, message: "Draft saved as \(url.lastPathComponent)")
+                } catch {
+                    PersistenceFailureReporter.report(what: "postmortem draft", path: url.path, error: error)
+                    Toast.show(in: self.view, message: "Couldn't save the draft", kind: .failure)
+                }
+            }
+        }
     }
 
     private func renderIncidentCardIfShown() {

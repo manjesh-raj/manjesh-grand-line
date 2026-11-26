@@ -2190,6 +2190,13 @@ enum SelfTestDispatch {
             exit(IncidentStoreSelfTest.run() ? 0 : 1)
         }
 
+        // D-05 of full review 4: the incident's Markdown postmortem draft - the
+        // command entry, the draft's facts and prompts, the options, redaction
+        // and the card's export panel. Headless. See IncidentExportSelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
+            exit(IncidentExportSelfTest.run() ? 0 : 1)
+        }
+
         // Audit §6.2's relaunch-continuity half. Window-backed (it mounts a real
         // `ConsoleController`), so it belongs in `run-all-tests.sh`'s NEEDS_SESSION
         // list rather than beside the pure-logic store suite above.

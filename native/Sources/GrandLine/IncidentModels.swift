@@ -65,6 +65,13 @@ enum IncidentEntryKind: String, Codable, CaseIterable {
     case runbook
     /// The captain typed something into the incident card themselves.
     case note
+    /// D-05 of full review 4: a command this app typed into a terminal of
+    /// this host - the Command Library's Send to Terminal, a snippet's Run, a
+    /// Log Analyzer suggestion or a runbook step. The app is the sender, so
+    /// this is a hook on that send and never a reading of the terminal. The
+    /// command text goes through `LogRedactor` before it is stored, and never
+    /// its output.
+    case command
 
     /// The mockup's per-kind row glyph. Chosen to match what each source
     /// feature already uses for itself, so one concept is not drawn two ways
@@ -76,6 +83,7 @@ enum IncidentEntryKind: String, Codable, CaseIterable {
         case .logCapture: return "text.magnifyingglass"
         case .runbook: return "doc.text"
         case .note: return "text.bubble"
+        case .command: return "terminal"
         }
     }
 
@@ -88,6 +96,7 @@ enum IncidentEntryKind: String, Codable, CaseIterable {
         case .logCapture: return .info
         case .runbook: return .good
         case .note: return .neutral
+        case .command: return .accent
         }
     }
 
@@ -98,6 +107,7 @@ enum IncidentEntryKind: String, Codable, CaseIterable {
         case .logCapture: return "Evidence"
         case .runbook: return "Runbook"
         case .note: return "Note"
+        case .command: return "Command"
         }
     }
 }
@@ -276,5 +286,19 @@ enum IncidentSources {
     /// The captain's own note, typed into the incident card.
     static func note(_ text: String) -> IncidentTimelineEntry {
         IncidentTimelineEntry(kind: .note, title: text, detail: nil)
+    }
+
+    /// D-05: a command this app sent to a terminal of this host. Redacted
+    /// before it is stored, because a command line can carry a token
+    /// (`curl -H "Authorization: Bearer ..."`). A multi-line send keeps its
+    /// first line in the title and says how many lines it had.
+    static func commandSent(_ text: String, tabName: String, via source: String) -> IncidentTimelineEntry {
+        let redacted = LogRedactor.redact(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        let lines = redacted.text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        let first = lines.first ?? ""
+        var detail = "\(source) \u{00B7} sent to \(tabName)"
+        if lines.count > 1 { detail += " \u{00B7} \(lines.count) lines" }
+        if !redacted.isEmpty { detail += " \u{00B7} secrets redacted" }
+        return IncidentTimelineEntry(kind: .command, title: first, detail: detail)
     }
 }

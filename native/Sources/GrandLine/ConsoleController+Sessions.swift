@@ -358,6 +358,7 @@ extension ConsoleController {
     func runSnippetInActiveTab(_ snippet: Snippet) {
         guard let tab = currentTab else { return }
         focusedTerminal(of: tab).send(txt: snippet.command + "\n")
+        noteCommandSent(snippet.command, tabName: tab.name, via: "Snippet \u{201C}\(snippet.label)\u{201D}")
     }
 
     /// The DevOps Command Library's "Send to Terminal" action (fm/grandline-
@@ -368,6 +369,7 @@ extension ConsoleController {
     func sendCommandLibraryTextToActiveTab(_ text: String) {
         guard let tab = currentTab else { return }
         focusedTerminal(of: tab).send(txt: text + "\n")
+        noteCommandSent(text, tabName: tab.name, via: "Command Library")
     }
 
     /// Delete a tab's materialized key scratch dir, if it has one. Called
