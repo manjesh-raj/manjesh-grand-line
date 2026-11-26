@@ -1087,6 +1087,13 @@ enum ReviewTourLab {
             shell.workspace.navigator.show(.homeCanvas)
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             return "ux tips (\(shell.debugHomeCanvas.debugTipTitle ?? "no tip showing"))"
+        // UX-25: the window toolbar's display mode, "labels" or "icons".
+        case "toolbar":
+            guard parts.count == 2 else { return "ux toolbar FAILED - want toolbar labels|icons" }
+            guard let split = shell as? MainSplitShellController else { return "ux toolbar FAILED - no toolbar" }
+            split.toolbar.toolbar.displayMode = parts[1] == "labels" ? .iconAndLabel : .iconOnly
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            return "ux toolbar \(parts[1])"
         // R5-UX-01: the welcome sheet's first step, rendered on its own.
         case "welcome":
             guard parts.count >= 2 else { return "ux welcome FAILED - want welcome <name> [step]" }
