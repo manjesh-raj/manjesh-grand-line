@@ -219,6 +219,18 @@ final class FleetController: NSViewController {
 
     /// The band every tab this page draws opens on.
     private lazy var crewBand = HelmHeroColumn()
+    /// UX-06: In flight's one action while its headline is about a decision,
+    /// the solid pill on the band (`HelmButton.heroProminent`).
+    private lazy var openNeedsYouButton: HelmButton = {
+        let button = HelmButton(title: CrewHeroWords.openNeedsYouTitle, variant: .secondary, size: .small,
+                                symbol: "arrow.right", target: self, action: #selector(openNeedsYouTapped))
+        button.symbolTrailing = true
+        button.heroProminent = true
+        return button
+    }()
+    /// UX-06: the Needs you count the toolbar's tab last drew, so a read that
+    /// changes it asks the shell to redraw the tabs.
+    private var reportedNeedsYouCount: Int?
     /// The band's strip: In flight's six figures, or Needs you's three.
     /// Ready to merge is its one button, into Review.
     private lazy var bandFigures: HelmKPIStrip = {
@@ -1600,6 +1612,9 @@ extension FleetController: ModuleTabHosting {
     }
 
     func setModuleTabControlHidden(_ hidden: Bool) { tabs.isHidden = hidden }
+
+    /// UX-06: "Needs you 1", as Connections' "Hosts 7".
+    var moduleTabCounts: [String: Int] { needsYouTabCount.map { ["Needs you": $0] } ?? [:] }
 }
 
 // MARK: - Crew › Needs you
@@ -1813,7 +1828,8 @@ extension FleetController {
             hasRead: true, homeOk: snapshot.homeOk, verdictHeadline: answer.title, verdictBody: answer.meta,
             working: working.count, queued: snapshot.queuedCount, doneToday: snapshot.doneCount,
             projects: snapshot.projectsCount, ready: readyWords, watcher: snapshot.watcher.status,
-            tasksRead: snapshot.tasksRead, checkedAt: Date())
+            tasksRead: snapshot.tasksRead, checkedAt: Date(),
+            needingCaptain: FleetGreeting.needingCaptain(needs + working).count)
     }
 
     /// Draw the band for the tab that is showing. Cheap when nothing changed:
@@ -1854,6 +1870,9 @@ extension FleetController {
                 briefingKey = "\(bandBriefingBusy)|\(bandBriefing?.generatedAt.timeIntervalSince1970 ?? 0)|\(bandTileClauses.count)"
             }
         }
+        // UX-06: the headline's door leads the band's views.
+        if words.opensNeedsYou { bandViews.insert(openNeedsYouButton, at: 0) }
+        reportNeedsYouCountIfChanged()
         let signature = "\(words)|\(bandViews.count)|\(briefingKey)"
         guard signature != bandSignature else { return }
         bandSignature = signature
@@ -1919,11 +1938,35 @@ extension FleetController {
     }
 
     @objc fileprivate func bandRegenerateTapped() { refresh(forceBriefing: true) }
+
+    /// UX-06: In flight's "Open Needs you", through the same path the
+    /// toolbar's tab takes.
+    @objc fileprivate func openNeedsYouTapped() { showNeedsYou() }
+
+    /// UX-06: the toolbar's Needs you tab carries its count, as Connections'
+    /// tabs do. Only a count that is known is drawn (GL-14), and only one
+    /// that is not zero: an empty Needs you says so on its own band.
+    var needsYouTabCount: Int? {
+        let reading = needsYouWordsReading()
+        guard reading.hasRead, reading.homeOk, !reading.readFailed, reading.waiting > 0 else { return nil }
+        return reading.waiting
+    }
+
+    private func reportNeedsYouCountIfChanged() {
+        let count = needsYouTabCount
+        guard count != reportedNeedsYouCount else { return }
+        reportedNeedsYouCount = count
+        onModuleTabChanged?()
+    }
     @objc fileprivate func bandDismissTapped() { dismissBriefing() }
 
     #if FM_SELFTESTS
     /// The band as drawn, or `nil` with none showing (the floating bar).
     var debugCrewBand: HelmHeroColumn? { crewBandShows && !crewBand.isHidden ? crewBand : nil }
+    /// UX-06: the band's "Open Needs you", or `nil` when the band offers none.
+    var debugOpenNeedsYouButton: HelmButton? {
+        openNeedsYouButton.superview == nil || openNeedsYouButton.isHidden ? nil : openNeedsYouButton
+    }
     /// CR-1 on Log: the filter (on the band's foot in the sidebar layout, in
     /// the list's column in the floating bar), the list, and what was read.
     var debugLogFilters: HelmSegmentedTabs { logFilters }

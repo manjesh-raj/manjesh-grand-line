@@ -978,12 +978,31 @@ enum PageRedesignsSelfTest {
         clickTab("In flight", shell)
         check(!fleet.debugNeedsYouShowing && !onScreen(fleet.debugReplyButton(taskID: ReviewTourLab.demoDecisionTaskID)),
               "In flight still shows the Needs your call list", &ok)
+        // UX-06: the tab carries its count, and a headline about a decision
+        // has its door on the band, the solid pill, which goes to Needs you.
+        check(shell.toolbar.debugTabLabels.first == "Needs you\u{2002}1",
+              "UX-06: Crew's tabs read \(shell.toolbar.debugTabLabels) with one decision waiting", &ok)
+        if let door = fleet.debugOpenNeedsYouButton, let inFlight = band(fleet) {
+            check(onScreen(door) && door.isDescendant(of: inFlight) && door.heroSelection != nil
+                    && door.title == CrewHeroWords.openNeedsYouTitle,
+                  "UX-06: In flight's Open Needs you is not the band's solid pill", &ok)
+            door.performClick(nil)
+            settle(shell)
+            check(fleet.debugNeedsYouShowing && shell.debugCurrentTab?.name == "Needs you",
+                  "UX-06: Open Needs you did not land on Needs you", &ok)
+            clickTab("In flight", shell)
+        } else {
+            fail("UX-06: In flight says a task needs your call and offers no Open Needs you", &ok)
+        }
 
         // Nothing waiting is said plainly by the band, with when it was
         // checked, and with no second empty card under it.
         let quiet = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [], queuedCount: 0, doneCount: 0,
                                   projectsCount: 0, watcher: WatcherHealth(status: "healthy"))
         fleet.debugRender(snapshot: quiet, mergedPRs: [])
+        check(fleet.debugOpenNeedsYouButton == nil && shell.toolbar.debugTabLabels.first == "Needs you",
+              "UX-06: with nothing waiting In flight still offers Open Needs you, or the tab reads "
+                + "\(shell.toolbar.debugTabLabels.first ?? "-")", &ok)
         clickTab("Needs you", shell)
         if let calm = band(fleet) {
             check(calm.debugHeadline == "Nothing needs you" && calm.debugKicker.hasPrefix("Needs you \u{00B7} checked ")
@@ -1193,7 +1212,8 @@ enum PageRedesignsSelfTest {
             return
         }
         let tiles = fleet.debugBandTiles
-        check(tiles.map(\.debugText) == clauses.map(\.text) && briefed.debugBandViews.count == 2
+        // UX-06's Open Needs you is a band view too, while a decision waits.
+        check(tiles.map(\.debugText) == clauses.map(\.text) && briefed.debugBandViews.filter({ !($0 is HelmButton) }).count == 2
                 && tiles.allSatisfy(onScreen),
               "CR-1: the band's tiles read \(tiles.map(\.debugText))", &ok)
         check(tiles.map(\.isActivatable) == [true, true, true, false],
@@ -1224,7 +1244,7 @@ enum PageRedesignsSelfTest {
         clickTab("In flight", shell)
         fleet.debugBandDismissButton.performClick(nil)
         settle(shell)
-        check(fleet.debugBandBriefingRow == nil && band(fleet)?.debugBandViews.isEmpty == true
+        check(fleet.debugBandBriefingRow == nil && band(fleet)?.debugBandViews.allSatisfy({ $0 is HelmButton }) == true
                 && settings.morningBriefingRecord?.dismissed == true,
               "CR-1: Dismiss until tomorrow did not take the briefing off the band", &ok)
 

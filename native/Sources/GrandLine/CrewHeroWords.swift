@@ -82,7 +82,13 @@ enum CrewHeroWords {
         /// count. Empty draws none: a log with nothing in it has nothing to
         /// filter, and the band is its empty state.
         var filter: [LogSegment] = []
+        /// UX-06: the headline is about a decision waiting on the captain, so
+        /// the band offers "Open Needs you" as its one action.
+        var opensNeedsYou = false
     }
+
+    /// UX-06: the band's one action when its headline is about a decision.
+    static let openNeedsYouTitle = "Open Needs you"
 
     static let crewSymbol = "person.2.fill"
     static let calmSymbol = "checkmark"
@@ -207,6 +213,9 @@ enum CrewHeroWords {
         /// failed read said "Nothing needs you right now" (GL-14).
         var tasksRead = true
         var checkedAt: Date? = nil
+        /// UX-06: the tasks waiting on the captain (`FleetGreeting.needingCaptain`),
+        /// the ones the verdict's headline is about when it has any.
+        var needingCaptain = 0
     }
 
     static func inFlight(_ reading: InFlightReading, day: String, time: (Date) -> String) -> Band {
@@ -243,8 +252,12 @@ enum CrewHeroWords {
         }
         // A PR scan that failed leaves the verdict partly unknown, so the
         // band takes the dimmed tone the way a failed Needs you read does.
-        return Band(symbol: crewSymbol, kicker: kicker, headline: reading.verdictHeadline, body: reading.verdictBody,
-                    tone: reading.ready == .failed ? .dimmed : .accent, figures: figures, status: watcher)
+        var band = Band(symbol: crewSymbol, kicker: kicker, headline: reading.verdictHeadline, body: reading.verdictBody,
+                        tone: reading.ready == .failed ? .dimmed : .accent, figures: figures, status: watcher)
+        // UX-06: a headline about a decision has its door. `FleetGreeting`
+        // leads with the tasks waiting on the captain whenever there are any.
+        band.opensNeedsYou = reading.needingCaptain > 0
+        return band
     }
 
     /// The watcher's pill: "Watcher healthy", "Watcher stale" or "Watcher off".

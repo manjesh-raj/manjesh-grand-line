@@ -95,7 +95,7 @@ enum HelmKit {
         Component("HelmDomainHue", "1.1.0", file: "HelmDaylight.swift"),
         // HelmDesignSystem.swift
         Component("HelmAccentRow", "1.0.0", file: "HelmDesignSystem.swift"),
-        Component("HelmButton", "1.4.0", file: "HelmDesignSystem.swift"),
+        Component("HelmButton", "1.5.0", file: "HelmDesignSystem.swift"),
         Component("HelmCard", "2.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmCountBadge", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmEmptyState", "1.0.1", file: "HelmDesignSystem.swift"),
@@ -133,7 +133,7 @@ enum HelmKit {
         Component("HelmHeroTile", "1.1.0", file: "HelmHeroCard.swift"),
         Component("HelmHeroTileGrid", "1.1.0", file: "HelmHeroCard.swift"),
         // HelmHeroColumn.swift
-        Component("HelmHeroColumn", "1.7.0", file: "HelmHeroColumn.swift"),
+        Component("HelmHeroColumn", "1.8.0", file: "HelmHeroColumn.swift"),
         Component("HelmHeroNavRow", "1.0.0", file: "HelmHeroColumn.swift"),
         Component("HelmHeroRow", "1.0.0", file: "HelmHeroColumn.swift"),
         // HelmHeroSplitCard.swift

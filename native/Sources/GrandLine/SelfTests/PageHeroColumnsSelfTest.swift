@@ -491,6 +491,16 @@ enum PageHeroColumnsSelfTest {
                 && band.figures.map(\.opensReview) == [false, true, false, false, false, false],
               "CR-1: In flight's figures are \(band.figures)", &ok)
         check(band.status == .init(text: "Watcher healthy", state: .good), "CR-1: the watcher pill is \(String(describing: band.status))", &ok)
+        // UX-06: the door follows the decision, not the words.
+        check(!band.opensNeedsYou, "UX-06: In flight offers Open Needs you with nothing waiting on the captain", &ok)
+        var deciding = read
+        deciding.needingCaptain = 2
+        check(CrewHeroWords.inFlight(deciding, day: "Tue 24 Nov", time: crewTime).opensNeedsYou,
+              "UX-06: In flight's headline is about two decisions and offers no Open Needs you", &ok)
+        var blindDeciding = deciding
+        blindDeciding.tasksRead = false
+        check(!CrewHeroWords.inFlight(blindDeciding, day: "Tue 24 Nov", time: crewTime).opensNeedsYou,
+              "UX-06: an unread task list still offers Open Needs you", &ok)
 
         var scanning = read
         scanning.ready = .scanning

@@ -512,7 +512,9 @@ final class HelmHeroColumn: NSView {
             let headerRow = Self.row(top, spacing: HelmMetrics.s5,
                                      alignment: header.status != nil && ringRow == nil ? .top : .centerY)
             add(headerRow, to: bandStack)
-            for view in bandViews { add(view, to: bandStack) }
+            // 1.8.0: a button handed in as a band view is the band's action
+            // and keeps its own width at the leading edge.
+            for view in bandViews { add(view, to: bandStack, fills: !(view is HelmButton)) }
             if !footViews.isEmpty {
                 if footRule { add(footRuleView, to: bandStack) }
                 let foot = Self.row(footViews, spacing: HelmMetrics.s2, alignment: .centerY)
@@ -820,6 +822,8 @@ final class HelmHeroColumn: NSView {
             row.applyInk(ink)
         case let button as HelmButton:
             button.heroInk = ink
+            // 1.8.0: a hero's one action is the solid pill.
+            if button.heroProminent, let selection { button.heroSelection = selection }
         case let field as HelmSearchField:
             field.heroInk = ink
         case let strip as HelmKPIStrip:
