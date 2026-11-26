@@ -1087,6 +1087,11 @@ enum ReviewTourLab {
             shell.workspace.navigator.show(.homeCanvas)
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             return "ux tips (\(shell.debugHomeCanvas.debugTipTitle ?? "no tip showing"))"
+        // UX-21: Code's Sandboxed chip, which opens the facts in the inspector.
+        case "sandboxchip":
+            shell.workspace.codePreview.sandboxChip.performClick(nil)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            return "ux sandboxchip (\(shell.workspace.codePreview.sandboxChip.title))"
         // UX-22: Updates' Check for updates, run and waited for, so the
         // groups have states to show.
         case "updatescheck":

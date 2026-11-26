@@ -381,6 +381,8 @@ final class CodePreviewWorkbenchView: NSView {
         let toolbarLeading: [NSView]
         let runStatus: CodePreviewRunStatus
         let runButton: NSView
+        /// UX-21: a chip before the run status (the sandbox shield), or none.
+        var trailingChip: NSView? = nil
         let tabStrip: NSView
         let titleRow: CodePreviewEditorTitleRow
         let codeArea: NSView
@@ -489,6 +491,7 @@ final class CodePreviewWorkbenchView: NSView {
                 leadingTools.addArrangedSubview(view)
             }
         }
+        if let chip = parts.trailingChip { trailingTools.addArrangedSubview(chip) }
         trailingTools.addArrangedSubview(parts.runStatus)
         trailingTools.addArrangedSubview(parts.runButton)
         trailingTools.setCustomSpacing(HelmMetrics.s3, after: parts.runStatus)
@@ -682,7 +685,8 @@ final class CodePreviewWorkbenchView: NSView {
 
     private func applyColumnsIfWidthChanged() {
         guard bounds.width > 0 else { return }
-        let wantsInspector = !expanded && CodePreviewWorkbenchMetrics.showsInspector(pageWidth: bounds.width)
+        let wantsInspector = !expanded && !parts.inspectorCards.isEmpty
+            && CodePreviewWorkbenchMetrics.showsInspector(pageWidth: bounds.width)
         let width = CodePreviewWorkbenchMetrics.snippetColumnWidth(pageWidth: bounds.width)
         if wantsInspector != inspectorShown || snippetWidth.constant != width {
             applyColumns()
@@ -692,7 +696,9 @@ final class CodePreviewWorkbenchView: NSView {
     private func applyColumns() {
         let pageWidth = bounds.width > 0 ? bounds.width : 1512
         let showSnippets = snippetColumnWanted && !expanded
-        let showInspector = !expanded && CodePreviewWorkbenchMetrics.showsInspector(pageWidth: pageWidth)
+        // UX-21: a workbench handed no cards draws no right column.
+        let showInspector = !expanded && !parts.inspectorCards.isEmpty
+            && CodePreviewWorkbenchMetrics.showsInspector(pageWidth: pageWidth)
         snippetWidth.constant = CodePreviewWorkbenchMetrics.snippetColumnWidth(pageWidth: pageWidth)
         snippetBand.isHidden = !showSnippets
         inspectorScroll.isHidden = !showInspector
