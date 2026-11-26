@@ -13,6 +13,11 @@
 //     ux spotlight <name>             F-04: Settings' "Show in Spotlight" section, alone
 //     ux grabtext <copied|nothing|locked> <name>   F-06: the result card
 //     ux sendto <open|locked> <name>  F-10: the Services filing panel
+//     ux devservers seed              D-02: a static site, a running dev server and a
+//                                     crash-looped one (real `sh` children, gone at exit)
+//     ux devservers open <id>         D-02: show one project's page
+//     ux devservers logtab            D-02: the shown dev server's Log tab
+//     ux devservers sheet <name>      D-02: the Add sheet on Dev server
 //
 // GL-27: debug builds only.
 
@@ -22,7 +27,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -33,6 +38,27 @@ extension ReviewTourLab {
         }
         guard let name = rest.first else { return "ux \(verb) FAILED - want a name" }
         switch verb {
+        case "devservers" where name == "seed":
+            return seedDevServers(shell)
+        case "devservers" where name == "open":
+            guard let id = rest.dropFirst().first else { return "ux devservers open FAILED - want an id" }
+            shell.workspace.devopsHub.showProject(id)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+            return "ux devservers open \(id)"
+        case "devservers" where name == "logtab":
+            shell.workspace.devopsHub.projectView.debugSelectLogTab()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            return "ux devservers logtab"
+        case "devservers" where name == "sheet":
+            guard let file = rest.dropFirst().first else { return "ux devservers sheet FAILED - want a name" }
+            let sheet = DevOpsHubSettingsSheet.adding(port: 0, takenPorts: [])
+            _ = sheet.view
+            sheet.debugChooseKind(.devServer)
+            sheet.debugSetName("checkout-web")
+            sheet.debugSetFields(folder: "~/code/checkout-web", port: "", opensWhenReady: true, startsAtLaunch: false)
+            sheet.debugSetCommand("npm run dev")
+            sheet.view.layoutSubtreeIfNeeded()
+            return done(renderFixed(sheet.view, size: sheet.view.fittingSize, to: url(file)), file)
         case "sendto":
             guard let file = rest.dropFirst().first else { return "ux sendto FAILED - want a state and a name" }
             let view = SendToGrandLineView()
@@ -120,6 +146,43 @@ extension ReviewTourLab {
         let deadline = Date().addingTimeInterval(5)
         while !finished, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
         return "ux expiry seed (\(monitor.store.state.items.count) items, \(monitor.store.state.filed.count) filed)"
+    }
+
+    /// D-02's demo: devops-atlas as a running static site, checkout-web as a
+    /// dev server that prints a Vite banner and stays up, and api-mock as one
+    /// that crashes until it is left stopped.
+    static func seedDevServers(_ shell: WorkspaceShellController) -> String {
+        let registry = LocalProjectRegistry.shared
+        let root = AppPaths.dataRoot().appendingPathComponent("dev-server-demo", isDirectory: true)
+        let site = root.appendingPathComponent("devops-atlas/dist", isDirectory: true)
+        try? FileManager.default.createDirectory(at: site, withIntermediateDirectories: true)
+        try? Data("<p>demo</p>".utf8).write(to: site.appendingPathComponent("index.html"))
+        var atlas = LocalProject.devopsAtlas
+        atlas.folderOverride = site.deletingLastPathComponent().path
+        func dev(_ id: String, _ command: String) -> LocalProject {
+            let folder = root.appendingPathComponent(id, isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var p = LocalProject(id: id, name: id, kind: .devServer, folderOverride: folder.path, port: 0,
+                                 opensWhenReady: true, startsAtLaunch: false, lastRun: nil)
+            p.command = command
+            return p
+        }
+        let vite = dev("checkout-web", "printf '\\n  VITE v6.0.3  ready in 412 ms\\n\\n  ➜  Local:   http://localhost:5173/\\n  ➜  Network: use --host to expose\\n'; sleep 1; printf '[vite] hmr update /src/pages/Checkout.tsx\\n[vite] page reload src/api/client.ts\\n'; sleep 600")
+        let mock = dev("api-mock", "echo 'Traceback (most recent call last):'; echo \"ModuleNotFoundError: No module named 'fastapi'\"; exit 1")
+        LocalProjectStore.save([atlas, vite, mock], at: registry.debugStoreURL)
+        registry.debugReload()
+        registry.debugSetState(.running(since: registry.clock().addingTimeInterval(-42 * 60)), for: atlas.id)
+        registry.start(vite.id)
+        registry.start(mock.id)
+        let deadline = Date().addingTimeInterval(9)
+        while Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            if case .failed = registry.state(of: mock.id), registry.devServer(of: vite.id)?.detectedPort != nil,
+               registry.devServer(of: vite.id)?.log.lines.count ?? 0 > 6 { break }
+        }
+        shell.workspace.devopsHub.showCards()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        return "ux devservers seed (vite \(registry.state(of: vite.id)), mock \(registry.state(of: mock.id)))"
     }
 
     /// Renders a fixed-size view (a popover's content) in its own off-screen

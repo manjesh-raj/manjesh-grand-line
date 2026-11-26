@@ -218,10 +218,10 @@ final class DevOpsHubController: NSViewController, HelmSplitPageHosting, Workspa
             registry.stop(id)
         case .restart: registry.restart(id)
         case .open: showProject(id)
-        case .openInBrowser: WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub")
+        case .openInBrowser: WebNavigationPolicy.openExternally(registry.origin(of: id) ?? project.origin, from: "DevOps Hub")
         case .copyAddress:
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(project.origin.absoluteString, forType: .string)
+            NSPasteboard.general.setString((registry.origin(of: id) ?? project.origin).absoluteString, forType: .string)
             Feedback.report("Address copied", kind: .done, persistence: .transient, in: view)
         case .settings: presentSettings(projectID: id)
         case .showInFinder: DevOpsHubProjectController.showInFinder(project.folder)

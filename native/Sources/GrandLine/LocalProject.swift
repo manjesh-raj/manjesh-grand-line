@@ -3,11 +3,10 @@
 // DevOps Hub's projects: a local folder Grand Line can serve and show, and
 // the one file that remembers them (`local-projects.json`).
 //
-// Only one kind exists today, `staticSite`: a folder of built HTML, CSS and
-// JS served by `LocalStaticServer`. The `kind` field is there so a project
-// that needs a command (`npm run dev`) can be added later without a store
-// migration; that kind would also need a managed child process, which this
-// app deliberately does not have yet (`LocalStaticServer`'s header).
+// Two kinds: `staticSite`, a folder of built HTML, CSS and JS served by
+// `LocalStaticServer`; and `devServer` (D-02 of full review 4), a folder
+// whose command (`npm run dev`) runs as a supervised child - see
+// `DevServerProcess.swift` for how it is kept from outliving the app.
 //
 // The store follows the house shape for a small JSON file
 // (`SessionRestoreStore`): GL-01's backup-before-overwrite load, GL-10's
@@ -21,8 +20,11 @@ import Foundation
 /// One project under DevOps Hub.
 struct LocalProject: Equatable {
 
-    enum Kind: String, Equatable {
+    enum Kind: String, Equatable, CaseIterable {
         case staticSite
+        case devServer
+
+        var title: String { self == .staticSite ? "Static site" : "Dev server" }
     }
 
     /// Stable across renames; the sidebar and the store key on it.
@@ -52,6 +54,10 @@ struct LocalProject: Equatable {
     /// request that is not to the project's own origin and the server sends
     /// a Content-Security-Policy that says the same.
     var confinesNetwork = true
+    /// D-02: the command a dev server runs in its folder (`npm run dev`).
+    var command: String?
+    /// D-02: restart it after a crash, up to three times in two minutes.
+    var restartsOnCrash = true
     /// Keys a newer build wrote that this one does not know, kept as they were.
     var passthrough: [String: LocalProjectJSON] = [:]
 
@@ -143,7 +149,7 @@ extension LocalProject: Codable {
     /// `passthrough` and written back as it was.
     static let knownKeys: Set<String> = [
         "id", "name", "kind", "folder", "port", "opensWhenReady", "startsAtLaunch", "lastRun", "allowsBrowser",
-        "confinesNetwork",
+        "confinesNetwork", "command", "restartsOnCrash",
     ]
 
     private struct Key: CodingKey {
@@ -169,6 +175,8 @@ extension LocalProject: Codable {
         lastRun = try? c.decodeIfPresent(LastRun.self, forKey: Key("lastRun"))
         allowsBrowser = try c.decodeIfPresent(Bool.self, forKey: Key("allowsBrowser")) ?? false
         confinesNetwork = try c.decodeIfPresent(Bool.self, forKey: Key("confinesNetwork")) ?? true
+        command = try c.decodeIfPresent(String.self, forKey: Key("command"))
+        restartsOnCrash = try c.decodeIfPresent(Bool.self, forKey: Key("restartsOnCrash")) ?? true
         var extra: [String: LocalProjectJSON] = [:]
         for key in c.allKeys where !Self.knownKeys.contains(key.stringValue) {
             if let value = try? c.decode(LocalProjectJSON.self, forKey: key) { extra[key.stringValue] = value }
@@ -188,6 +196,8 @@ extension LocalProject: Codable {
         try c.encodeIfPresent(lastRun, forKey: Key("lastRun"))
         try c.encode(allowsBrowser, forKey: Key("allowsBrowser"))
         try c.encode(confinesNetwork, forKey: Key("confinesNetwork"))
+        try c.encodeIfPresent(command, forKey: Key("command"))
+        try c.encode(restartsOnCrash, forKey: Key("restartsOnCrash"))
         for (key, value) in passthrough where !Self.knownKeys.contains(key) {
             try c.encode(value, forKey: Key(key))
         }

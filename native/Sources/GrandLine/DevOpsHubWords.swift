@@ -179,6 +179,25 @@ struct DevOpsHubWords: Equatable {
                 checksTitle: "What Start checked",
                 checks: [folderCheck, Check(mark: .failed, title: "Port \(project.port)", detail: "Out of range")])
 
+        case .project(.failed(.crashLoop(let line, let code, _))):
+            let sentence = (line.map { "The last line was \u{201C}\($0)\u{201D}. " } ?? "")
+                + "Fix what it says, then Retry. The output is in its log."
+            return DevOpsHubWords(
+                kicker: kicker, headline: "\(name) crashed \(DevServerRules.maxCrashes) times in \(Int(DevServerRules.crashWindow / 60)) minutes, so it was left stopped",
+                body: sentence, tone: .red, progress: nil, actions: [.retry, .settings],
+                checksTitle: "Its last run",
+                checks: [Check(mark: .failed, title: line ?? "No output before it stopped",
+                               detail: (code.map { "exit \($0)" } ?? "no exit code") + " \u{00B7} restart \(DevServerRules.maxCrashes) of \(DevServerRules.maxCrashes)",
+                               detailIsCode: false)])
+
+        case .project(.failed(.noCommand)):
+            return DevOpsHubWords(
+                kicker: kicker, headline: "\(name) has no command to run",
+                body: "A dev server runs a command in its folder, such as npm run dev. Set one in Project Settings.",
+                tone: .red, progress: nil, actions: [.settings],
+                checksTitle: "What Start checked",
+                checks: [Check(mark: .failed, title: "No command", detail: project.displayFolder)])
+
         case .project(.failed(.other(let reason))):
             return DevOpsHubWords(
                 kicker: kicker, headline: "\(name) could not start",

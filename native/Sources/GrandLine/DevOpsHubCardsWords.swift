@@ -44,7 +44,7 @@ struct DevOpsHubHeroWords: Equatable {
     static let recentLimit = 3
 
     static func make(projects: [LocalProject], state: (String) -> LocalProjectState,
-                     now: Date = Date()) -> DevOpsHubHeroWords {
+                     now: Date = Date(), address: ((LocalProject) -> String)? = nil) -> DevOpsHubHeroWords {
         let states = projects.map { ($0, state($0.id)) }
         let running = states.filter { $0.1.isRunning }.map(\.0)
         let failed = states.filter { if case .failed = $0.1 { return true } else { return false } }
@@ -88,7 +88,8 @@ struct DevOpsHubHeroWords: Equatable {
             return words("Starting \(project.name)\u{2026}", "Serving \(project.displayFolder), on this Mac only.", .accent)
         }
         if running.count == 1, let project = running.first {
-            var body = "\(project.name) on \(LocalStaticServer.loopbackHost):\(project.port)"
+            let at = address?(project) ?? "\(LocalStaticServer.loopbackHost):\(project.port)"
+            var body = "\(project.name) on \(at)"
             if case .running(let since) = state(project.id) {
                 body += ", up \(DevOpsHubWords.duration(now.timeIntervalSince(since)))"
             }
@@ -125,6 +126,11 @@ struct DevOpsHubHeroWords: Equatable {
             return "Port \(project.port) can\u{2019}t be used."
         case .other(let reason):
             return reason.hasSuffix(".") ? reason : reason + "."
+        case .crashLoop(let line, _, _):
+            let why = line.map { " The last line was \u{201C}\($0)\u{201D}." } ?? ""
+            return "It crashed \(DevServerRules.maxCrashes) times in \(Int(DevServerRules.crashWindow / 60)) minutes, so it was left stopped.\(why)"
+        case .noCommand:
+            return "It has no command to run. Set one in its settings."
         }
     }
 
@@ -243,7 +249,10 @@ struct DevOpsHubCardWords: Equatable {
     }
 
     static func make(project: LocalProject, state: LocalProjectState, now: Date = Date(),
-                     servedFiles: Int? = nil) -> DevOpsHubCardWords {
+                     servedFiles: Int? = nil, devPort: UInt16? = nil) -> DevOpsHubCardWords {
+        if project.kind == .devServer {
+            return makeDevServer(project: project, state: state, now: now, port: devPort)
+        }
         let address = "\(LocalStaticServer.loopbackHost):\(project.port)"
         var subtitle = project.displayFolder
         var status: String?
@@ -289,7 +298,7 @@ struct DevOpsHubCardWords: Equatable {
             status = "Port \(project.port) can\u{2019}t be used"
             tint = .critical
             primary = .retry
-        case .failed(.other):
+        case .failed(.other), .failed(.crashLoop), .failed(.noCommand):
             status = "Failed to start"
             tint = .critical
             primary = .retry
@@ -314,6 +323,62 @@ struct DevOpsHubCardWords: Equatable {
 }
 
 /// The filter row's segments and its search, over the projects.
+extension DevOpsHubCardWords {
+
+    /// D-02: a dev server's card. The subtitle is its command, and the line
+    /// says where it answers and for how long ("Running · localhost:5173 · up
+    /// 42 min"), or why it stopped.
+    static func makeDevServer(project: LocalProject, state: LocalProjectState, now: Date,
+                              port: UInt16?) -> DevOpsHubCardWords {
+        let subtitle = project.command?.isEmpty == false ? project.command! : "No command"
+        var status: String?
+        var detail: String?
+        let tint: Tint
+        let primary: Primary
+        switch state {
+        case .notStarted:
+            detail = project.lastRun.map { "Stopped \u{00B7} last ran \(DevOpsHubHeroWords.relative($0.endedAt, now: now))" }
+                ?? "Not started"
+            tint = .neutral
+            primary = .start
+        case .starting:
+            status = "Starting\u{2026}"
+            tint = .warn
+            primary = .cancel
+        case .running(let since):
+            let address = port.map { "localhost:\($0)" } ?? "no address in its output yet"
+            status = "Running \u{00B7} \(address) \u{00B7} up \(DevOpsHubWords.duration(now.timeIntervalSince(since)))"
+            tint = .good
+            primary = .stop
+        case .failed(.crashLoop):
+            status = "Stopped after \(DevServerRules.maxCrashes) crashes"
+            tint = .critical
+            primary = .retry
+        case .failed(.noCommand):
+            status = "No command set"
+            tint = .warn
+            primary = .retry
+        case .failed:
+            status = "Failed to start"
+            tint = .critical
+            primary = .retry
+        case .folderNotFound:
+            status = "Folder not found"
+            tint = .warn
+            primary = .chooseFolder
+        }
+        let menu: [Action]
+        switch state {
+        case .running: menu = [.stop, .restart, .open, .openInBrowser, .copyAddress, .settings, .showInFinder, .remove]
+        case .starting: menu = [.stop, .open, .settings, .showInFinder, .remove]
+        case .notStarted, .failed, .folderNotFound: menu = [.start, .open, .settings, .showInFinder, .remove]
+        }
+        let line = status ?? detail ?? ""
+        return DevOpsHubCardWords(subtitle: subtitle, status: status, detail: detail, tint: tint, primary: primary,
+                                  menu: menu, accessibilityLabel: "\(project.name), dev server, \(subtitle), \(line)")
+    }
+}
+
 enum DevOpsHubFilter: String, Equatable, CaseIterable {
     case all, running, attention
 

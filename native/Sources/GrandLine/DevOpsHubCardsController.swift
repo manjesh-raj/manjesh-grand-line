@@ -328,7 +328,8 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
 
     private func renderHero() {
         let projects = registry.projects
-        let words = DevOpsHubHeroWords.make(projects: projects, state: registry.state(of:), now: registry.clock())
+        let words = DevOpsHubHeroWords.make(projects: projects, state: registry.state(of:), now: registry.clock(),
+                                            address: { [registry] in registry.displayAddress(of: $0.id) })
         heroWords = words
         let ring = words.ring.map { ring in
             HelmHeroColumn.Ring(fraction: ring.total > 0 ? Double(ring.running) / Double(ring.total) : 0,
@@ -359,7 +360,7 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
                 }
                 pill.tag = heroRuns.count - 1
                 pill.setAccessibilityLabel(pill.toolTip)
-                let subtitle = state.isRunning ? "\(LocalStaticServer.loopbackHost):\(project.port)"
+                let subtitle = state.isRunning ? registry.displayAddress(of: id)
                     : DevOpsHubCardWords.make(project: project, state: state, now: registry.clock()).line
                 return HelmHeroRow(leading: .symbol("shippingbox"), title: project.name, subtitle: subtitle,
                                    subtitleIsCode: state.isRunning, subtitleTruncation: .byTruncatingTail,
@@ -442,11 +443,15 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
         let id = project.id
         let state = registry.state(of: id)
         let words = DevOpsHubCardWords.make(project: project, state: state, now: registry.clock(),
-                                            servedFiles: registry.folderCount(of: id)?.files)
-        var card = HelmCardGrid.Card(key: id, symbol: "shippingbox", tint: .accent, tintHex: nil,
-                                     title: project.name, subtitle: words.subtitle,
+                                            servedFiles: registry.folderCount(of: id)?.files,
+                                            devPort: registry.devServer(of: id)?.detectedPort)
+        let dev = project.kind == .devServer
+        var card = HelmCardGrid.Card(key: id, symbol: dev ? "terminal" : "shippingbox", tint: dev ? .violet : .accent,
+                                     tintHex: nil, title: project.name, subtitle: words.subtitle,
                                      accessibilityLabel: words.accessibilityLabel)
         card.subtitleTruncation = .byTruncatingMiddle
+        // D-02: the kind, as a chip, so a dev server reads as one at a glance.
+        card.chip = (project.kind.title, "Kind: \(project.kind.title)")
         card.status = words.status.map { ($0, Self.tint(words.tint)) }
         card.detail = words.detail
         card.actions = [
@@ -487,7 +492,7 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
                                      title: "Add a project", subtitle: Self.addCardSubtitle,
                                      accessibilityLabel: "Add a project")
         card.subtitleIsCode = false
-        card.detail = "It needs an index.html at its top"
+        card.detail = "A folder with an index.html, or a command that serves one"
         card.activate = { [weak self] in self?.handlers.add() }
         card.actions = [.init(symbol: "plus", label: "Add a project") { [weak self] in self?.handlers.add() }]
         return card
@@ -503,7 +508,7 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
                 "project": .title(project.name, subtitle: nil, subtitleIsCode: false, symbol: "shippingbox",
                                   tint: .accent, tintHex: nil),
                 "state": words.status.map { .status($0, tint: Self.tint(words.tint)) } ?? .muted(words.line),
-                "address": .code("\(LocalStaticServer.loopbackHost):\(project.port)"),
+                "address": .code(registry.displayAddress(of: id)),
                 "folder": .code(project.displayFolder),
             ]
             row.primary = .init(title: words.primary.title, symbol: words.primary.symbol) { [weak self] in

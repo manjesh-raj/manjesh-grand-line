@@ -2221,6 +2221,13 @@ enum SelfTestDispatch {
             exit(GrandLineServicesMenuSelfTest.run() ? 0 : 1)
         }
 
+        // D-02 of full review 4: DevOps Hub's managed dev servers - the bounded log,
+        // the address, the crash rule, and real process groups that die on Stop,
+        // after a crash loop and when their parent goes. Headless; real children.
+        if ProcessInfo.processInfo.environment["FM_RUN_DEV_SERVER_TESTS"] == "1" {
+            exit(DevServerSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }
