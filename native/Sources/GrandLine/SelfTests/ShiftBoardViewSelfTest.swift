@@ -39,6 +39,7 @@ enum ShiftBoardViewSelfTest {
         // case's own window, first-responder changes and run-loop turns -
         // waits behind that session until the suite's 300s bound kills it.
         checkTheRevampBoard(check)
+        checkTheMetaLineWraps(check)
         // Also before the drag case, for the same reason.
         checkTheBoardFitsTheMinimumWindow(check)
 
@@ -305,6 +306,58 @@ enum ShiftBoardViewSelfTest {
         return report(failures)
     }
 
+    // MARK: UI-04 - the meta line wraps
+
+    /// UI-04 of full review 4: a card's meta line wraps onto a second line
+    /// when it does not fit, rather than cutting the project's name. The
+    /// stack it replaced squeezed the name first: "Infra har..." on the
+    /// overdue, High card, "Infra h..." at the Large text size. A card in a
+    /// narrow lane, with a long project, an overdue date and Low's chip.
+    private static func checkTheMetaLineWraps(_ check: (Bool, String) -> Void) {
+        autoreleasepool {
+            let window = OffScreenProbe.window(width: 400, height: 300, styleMask: [.titled])
+            defer { window.orderOut(nil) }
+            let card = ShiftWorkspaceTaskCard()
+            card.translatesAutoresizingMaskIntoConstraints = false
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+            window.contentView = host
+            host.addSubview(card)
+            NSLayoutConstraint.activate([
+                card.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 20),
+                card.topAnchor.constraint(equalTo: host.topAnchor, constant: 20),
+                card.widthAnchor.constraint(equalToConstant: 236),
+            ])
+            var project = ShiftProject.fresh()
+            project.name = "Infra hardening"
+            var task = ShiftTask.fresh()
+            task.title = "Renew the staging TLS certificate"
+            task.priority = .low
+            task.dueDate = ShiftDateFormatting.components(from: Date().addingTimeInterval(-2 * 86_400)).dateStr
+            card.configure(task: task, project: project, column: .backlog, theme: ThemeManager.shared.theme)
+            for _ in 0..<3 { host.layoutSubtreeIfNeeded() }
+            let meta = card.debugMeta
+            let name = card.debugProjectLabel
+            // The fixture can fail: what the line holds is wider than the card.
+            let natural = meta.lines(width: .greatestFiniteMagnitude).first?.reduce(CGFloat(0)) {
+                $0 + $1.size.width + ShiftCardMetaFlow.spacing
+            } ?? 0
+            check(natural > meta.bounds.width,
+                  "UI-04: fixture: the meta line (\(natural)pt) fits the card's \(meta.bounds.width)pt on one line")
+            check(meta.debugLineCount == 2, "UI-04: the meta line takes \(meta.debugLineCount) lines, want 2")
+            check(name.frame.width + 0.5 >= name.intrinsicContentSize.width,
+                  "UI-04: the project's name is cut: \(name.frame.width)pt of \(name.intrinsicContentSize.width)pt")
+            check(card.debugDue?.hasPrefix("Overdue") == true && card.debugChip == "Low",
+                  "UI-04: the card lost its due state (\(card.debugDue ?? "none")) or Low's chip")
+            // Everything the line holds sits inside the card.
+            for item in meta.subviews where !item.isHidden {
+                let frame = item.convert(item.bounds, to: card)
+                check(frame.maxX <= card.bounds.width - ShiftWorkspaceTaskCard.padding.right + 0.5
+                        && frame.maxY <= card.bounds.height + 0.5,
+                      "UI-04: a meta item (\(frame)) runs out of the card (\(card.bounds))")
+            }
+        }
+    }
+
     // MARK: The UI/UX revamp's board (UI-21 to UI-29)
 
     /// What the revamp changed on the board, read off the mounted page:
@@ -360,7 +413,11 @@ enum ShiftBoardViewSelfTest {
                 check(c.debugWorkspaceCard?.debugChip == nil, "UI-23: a Normal task carries no chip")
             } else { check(false, "the Normal task should be on the board") }
             if let c = card(high.id) {
-                check(c.debugWorkspaceCard?.debugChip == "High", "UI-23: a High task carries the one pill")
+                // UI-04 of full review 4: High is a flag before the title,
+                // so the meta line keeps its room for the project and due.
+                check(c.debugWorkspaceCard?.debugChip == nil && c.debugWorkspaceCard?.debugIsFlagged == true,
+                      "UI-04: a High task carries a chip (\(c.debugWorkspaceCard?.debugChip ?? "none")) "
+                      + "or no flag before its title")
                 check(c.debugWorkspaceCard?.debugDue == "Due today",
                       "UI-24: a task due today says so on its due line, got "
                       + "\"\(c.debugWorkspaceCard?.debugDue ?? "nothing")\"")

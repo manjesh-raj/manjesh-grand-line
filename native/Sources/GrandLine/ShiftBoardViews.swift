@@ -630,11 +630,17 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
 
 // MARK: - The sidebar layout's card (stage 7)
 
-/// The prototype's task card: the title first, then one line saying which
+/// The prototype's task card: the title first, then a meta line saying which
 /// project (its dot and name), when it is due (a calendar glyph, amber today
 /// and red once late, through `ShiftTaskSignals` - the page's one rule), and
-/// a chip for High or Low. A card surface on the lane's tint, the accent
-/// stroke while selected, and a darker edge under the pointer.
+/// a chip for Low. A card surface on the lane's tint, the accent stroke while
+/// selected, and a darker edge under the pointer.
+///
+/// UI-04 of full review 4: High is a red flag before the title rather than a
+/// third chip on the meta line, and the meta line wraps onto a second line
+/// when it does not fit, so the project's name is never cut. Measured
+/// before: "Infra har..." on the overdue, High card, and "Infra h..." at the
+/// Large text size, with a second line of room unused.
 ///
 /// What the floating bar's card says beyond that stays on this one too:
 /// subtasks as "2/5", an attachment as a paperclip, and a Done card's
@@ -651,7 +657,11 @@ final class ShiftWorkspaceTaskCard: NSView {
     private let subtasksLabel = NSTextField(labelWithString: "")
     private let attachmentIcon = NSImageView()
     private let pill = HelmStatusPill(style: .pill)
-    private let meta = NSStackView()
+    private let meta = ShiftCardMetaFlow()
+    /// The task is High: its flag leads the title.
+    private var flagged = false
+    /// The title's words, without the flag the label may draw before them.
+    private var titleText = ""
     private var tracking: NSTrackingArea?
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var projectHue: HelmDomainHue?
@@ -692,13 +702,8 @@ final class ShiftWorkspaceTaskCard: NSView {
         due.spacing = HelmMetrics.s1
         due.alignment = .centerY
         due.identifier = NSUserInterfaceItemIdentifier("due")
-        meta.setViews([project, due, subtasksLabel, attachmentIcon, pill], in: .leading)
-        meta.orientation = .horizontal
-        meta.spacing = HelmMetrics.s2
-        meta.alignment = .centerY
-        meta.detachesHiddenViews = true
+        meta.items = [project, due, subtasksLabel, attachmentIcon, pill]
         meta.translatesAutoresizingMaskIntoConstraints = false
-        meta.setClippingResistancePriority(.defaultLow, for: .horizontal)
         addSubview(titleLabel)
         addSubview(meta)
         let p = Self.padding
@@ -708,7 +713,7 @@ final class ShiftWorkspaceTaskCard: NSView {
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -p.right),
             meta.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 7),
             meta.leadingAnchor.constraint(equalTo: leadingAnchor, constant: p.left),
-            meta.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -p.right),
+            meta.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -p.right),
             meta.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -p.bottom),
         ])
     }
@@ -724,6 +729,8 @@ final class ShiftWorkspaceTaskCard: NSView {
             titleLabel.preferredMaxLayoutWidth = width
             titleLabel.invalidateIntrinsicContentSize()
         }
+        // The meta line wraps at the same width, for the same reason.
+        meta.layoutWidth = width
     }
 
     override func updateTrackingAreas() {
@@ -739,7 +746,7 @@ final class ShiftWorkspaceTaskCard: NSView {
     override func mouseExited(with event: NSEvent) { isHovered = false }
 
     func configure(task: ShiftTask, project: ShiftProject?, column: ShiftBoardColumn, theme: HelmTheme) {
-        titleLabel.stringValue = task.title
+        titleText = task.title
         struck = column == .done
         projectHue = ShiftProjectPalette.hue(for: project, projectID: task.projectID)
         projectLabel.stringValue = project?.name ?? "No project"
@@ -759,12 +766,7 @@ final class ShiftWorkspaceTaskCard: NSView {
         subtasksLabel.isHidden = task.subtasks.isEmpty
         subtasksLabel.toolTip = task.subtasks.isEmpty ? nil : "\(done) of \(task.subtasks.count) subtasks done"
         attachmentIcon.isHidden = !task.hasAttachment
-        if let chip = ShiftTaskSignals.priorityPill(task.priority) {
-            pill.isHidden = false
-            pill.configure(text: chip.text, tint: chip.tint, theme: theme)
-        } else {
-            pill.isHidden = true
-        }
+        applyPriority(task.priority, theme: theme)
         toolTip = "Drag to another lane, or right-click to move."
         applyTheme(theme)
     }
@@ -773,7 +775,7 @@ final class ShiftWorkspaceTaskCard: NSView {
     /// same card a task takes - its title, its project, when it is due through
     /// the page's one due rule, and its priority chip.
     func configure(followUp: ShiftFollowUp, project: ShiftProject?, theme: HelmTheme) {
-        titleLabel.stringValue = followUp.title
+        titleText = followUp.title
         struck = false
         projectHue = ShiftProjectPalette.hue(for: project, projectID: followUp.projectID)
         projectLabel.stringValue = project?.name ?? "No project"
@@ -783,14 +785,29 @@ final class ShiftWorkspaceTaskCard: NSView {
         dueLabel.superview?.isHidden = caption == nil
         subtasksLabel.isHidden = true
         attachmentIcon.isHidden = true
-        if let chip = ShiftTaskSignals.priorityPill(followUp.priority) {
+        applyPriority(followUp.priority, theme: theme)
+        toolTip = "Click to open, or right-click to mark it done or snooze it."
+        applyTheme(theme)
+    }
+
+    /// High is the title's flag. Low keeps its quiet chip on the meta line,
+    /// and Normal says nothing.
+    private func applyPriority(_ priority: ShiftPriority, theme: HelmTheme) {
+        flagged = priority == .high
+        if !flagged, let chip = ShiftTaskSignals.priorityPill(priority) {
             pill.isHidden = false
             pill.configure(text: chip.text, tint: chip.tint, theme: theme)
         } else {
             pill.isHidden = true
         }
-        toolTip = "Click to open, or right-click to mark it done or snooze it."
-        applyTheme(theme)
+        meta.needsLayout = true
+        meta.invalidateIntrinsicContentSize()
+    }
+
+    /// The flag's colour: the critical hue, lifted until it reads on the card.
+    static func flagColor(_ theme: HelmTheme) -> NSColor {
+        HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme),
+                                       overAnyOf: [HelmTheme.nsColor(theme.chromeBackgroundHex)], theme: theme)
     }
 
     func applyTheme(_ theme: HelmTheme) {
@@ -805,15 +822,30 @@ final class ShiftWorkspaceTaskCard: NSView {
         }
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
-        let title = NSMutableAttributedString(string: titleLabel.stringValue, attributes: [
-            .font: NSFont.systemFont(ofSize: HelmType.scaled(13), weight: .semibold),
+        let words = titleText
+        let font = NSFont.systemFont(ofSize: HelmType.scaled(13), weight: .semibold)
+        let title = NSMutableAttributedString(string: words, attributes: [
+            .font: font,
             .foregroundColor: struck ? muted : ink,
         ])
         if struck {
             title.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue,
                                range: NSRange(location: 0, length: title.length))
         }
+        if flagged, let flag = HelmSymbol.image("flag.fill", pointSize: HelmType.scaled(10), weight: .semibold)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [Self.flagColor(theme)])) {
+            let attachment = NSTextAttachment()
+            attachment.image = flag
+            // On the words' baseline, centred on their capitals.
+            attachment.bounds = NSRect(x: 0, y: ((font.capHeight - flag.size.height) / 2).rounded(),
+                                       width: flag.size.width, height: flag.size.height)
+            let lead = NSMutableAttributedString(attachment: attachment)
+            lead.append(NSAttributedString(string: "\u{2009}", attributes: [.font: font]))
+            title.insert(lead, at: 0)
+        }
         titleLabel.attributedStringValue = title
+        // The flag is a picture; VoiceOver hears the word.
+        titleLabel.setAccessibilityLabel(flagged ? "\(words), High priority" : words)
         projectLabel.textColor = muted
         subtasksLabel.textColor = muted
         dueIcon.contentTintColor = muted
@@ -833,11 +865,17 @@ final class ShiftWorkspaceTaskCard: NSView {
     }
 
     #if FM_SELFTESTS
-    var debugTitle: String { titleLabel.stringValue }
+    var debugTitle: String { titleText }
     var debugProject: String { projectLabel.stringValue }
     var debugDue: String? { dueLabel.superview?.isHidden == true ? nil : dueLabel.stringValue }
     var debugChip: String? { pill.isHidden ? nil : pill.text }
     var debugIsStruck: Bool { struck }
+    /// Whether the title draws High's flag before its words.
+    var debugIsFlagged: Bool {
+        flagged && titleLabel.attributedStringValue.containsAttachments(in: NSRange(location: 0, length: 1))
+    }
+    var debugProjectLabel: NSTextField { projectLabel }
+    var debugMeta: ShiftCardMetaFlow { meta }
     #endif
 }
 
@@ -2219,5 +2257,85 @@ final class ShiftProjectFilterBar: NSView {
         guard let chip = chips.first(where: { $0.id == projectID }) else { return }
         chip.button.performClick(nil)
     }
+    #endif
+}
+
+/// UI-04: a task card's meta line - project, due, subtasks, attachment and
+/// Low's chip - which wraps onto a second line rather than cutting what it
+/// holds. Each item keeps its own fitting width and the line breaks between
+/// items, so the project's name and the due state are never cut while they
+/// fit a line of their own.
+///
+/// It is placed by frames, not a stack: an `NSStackView` lays its views on
+/// one line and squeezes the one with the lowest compression resistance,
+/// which was the project's name. Its width is the card's, handed in as
+/// `layoutWidth` (gotcha (22)), and its intrinsic height follows from it.
+final class ShiftCardMetaFlow: NSView {
+    var items: [NSView] = [] {
+        didSet {
+            oldValue.forEach { $0.removeFromSuperview() }
+            for item in items {
+                item.translatesAutoresizingMaskIntoConstraints = true
+                addSubview(item)
+            }
+            invalidateIntrinsicContentSize()
+        }
+    }
+    /// The width the line wraps at: the card's, less its padding.
+    var layoutWidth: CGFloat = 0 {
+        didSet {
+            guard abs(layoutWidth - oldValue) > 0.5 else { return }
+            invalidateIntrinsicContentSize()
+            needsLayout = true
+        }
+    }
+    static let spacing = HelmMetrics.s2
+    static let lineSpacing: CGFloat = 4
+
+    override var isFlipped: Bool { true }
+
+    /// The visible items, line by line, each at its own fitting size.
+    func lines(width: CGFloat) -> [[(view: NSView, size: NSSize)]] {
+        var lines: [[(view: NSView, size: NSSize)]] = [[]]
+        var x: CGFloat = 0
+        for item in items where !item.isHidden {
+            var size = item.fittingSize
+            size.width = min(size.width.rounded(.up), max(0, width))
+            if !lines[lines.count - 1].isEmpty, x + Self.spacing + size.width > width {
+                lines.append([])
+                x = 0
+            }
+            x += (lines[lines.count - 1].isEmpty ? 0 : Self.spacing) + size.width
+            lines[lines.count - 1].append((item, size))
+        }
+        return lines.filter { !$0.isEmpty }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let width = layoutWidth > 0 ? layoutWidth : .greatestFiniteMagnitude
+        let lines = self.lines(width: width)
+        let height = lines.reduce(CGFloat(0)) { $0 + ($1.map(\.size.height).max() ?? 0) }
+            + CGFloat(max(0, lines.count - 1)) * Self.lineSpacing
+        return NSSize(width: NSView.noIntrinsicMetric, height: height)
+    }
+
+    override func layout() {
+        super.layout()
+        var y: CGFloat = 0
+        for line in lines(width: bounds.width) {
+            let height = line.map(\.size.height).max() ?? 0
+            var x: CGFloat = 0
+            for (view, size) in line {
+                view.frame = NSRect(x: x, y: y + ((height - size.height) / 2).rounded(), width: size.width,
+                                    height: size.height)
+                x += size.width + Self.spacing
+            }
+            y += height + Self.lineSpacing
+        }
+    }
+
+    #if FM_SELFTESTS
+    /// How many lines the meta line takes at its width.
+    var debugLineCount: Int { lines(width: bounds.width).count }
     #endif
 }
