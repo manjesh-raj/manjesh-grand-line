@@ -104,7 +104,7 @@ final class KubeSetupStepsCard: NSView {
         self.theme = theme
         progressPill.configure(text: steps.progress, tint: steps.doneCount == steps.steps.count ? .good : .info,
                                theme: theme)
-        progressPill.setAccessibilityLabel("\(steps.doneCount) of \(steps.steps.count) steps done")
+        progressPill.setAccessibilityLabel("Setup \(steps.doneCount) of \(steps.steps.count) complete")
         for row in rows {
             rowsStack.removeArrangedSubview(row)
             row.removeFromSuperview()

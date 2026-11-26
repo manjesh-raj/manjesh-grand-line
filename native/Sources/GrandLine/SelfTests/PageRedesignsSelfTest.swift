@@ -261,9 +261,11 @@ enum PageRedesignsSelfTest {
         clickTab("Snippets", shell)
         check(onScreen(hosts.debugSnippetsTable.card), "the snippet table is not on screen on Snippets", &ok)
         // Stage 6 made the strip a plain row, still over the table;
-        // `SidebarPageFixesSelfTest` checks its placement and wiring.
-        check(onScreen(hosts.debugExpansionStrip),
-              "the snippet expansion switch is not the row over the Snippets table", &ok)
+        // `SidebarPageFixesSelfTest` checks its placement and wiring. UI-10
+        // of full review 4: beside the hero column the switch is the
+        // column's, and the row is there only while the column is away.
+        check(hosts.heroColumnShowing != onScreen(hosts.debugExpansionStrip),
+              "the snippet expansion switch is in both places, or in neither", &ok)
         clickTab("Hosts", shell)
     }
 

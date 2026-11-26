@@ -180,6 +180,13 @@ enum SidebarPageFixesSelfTest {
               "the Keys card says \"\(pill.label.stringValue)\" about Touch ID", &ok)
 
         clickTab("Snippets", shell)
+        // UI-10 of full review 4: beside the hero column the switch is the
+        // column's (`PageHeroColumnsViewSelfTest`), so the row is checked
+        // with the column put away, the way Toggle Sidebar puts it away.
+        let columnWasShowing = hosts.heroColumnShowing
+        if columnWasShowing { hosts.splitPage?.toggleSidebar(nil); settle(shell) }
+        defer { if columnWasShowing { hosts.splitPage?.toggleSidebar(nil); settle(shell) } }
+        check(!hosts.heroColumnShowing, "fixture: the hero column is still showing on Snippets", &ok)
         let strip = hosts.debugExpansionStrip
         func cards(in view: NSView) -> Int { (view is HelmCard ? 1 : 0) + view.subviews.reduce(0) { $0 + cards(in: $1) } }
         check(cards(in: strip) == 0 && strip.window != nil,
