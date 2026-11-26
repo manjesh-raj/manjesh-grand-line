@@ -112,6 +112,13 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
 
     private let readerCard = NSView()
     private var readerWebView: WKWebView!
+    /// F-03: the saved text as a clean page, over the original.
+    let readerView = ReadingListReaderView()
+    let articles = ReaderArticleQueue()
+    private var showingOriginal = false
+    private var readerModeButton: HelmButton!
+    private let highlightsList = NSStackView()
+    static let lastNotebookPageKey = "fm.readingList.lastHighlightPage"
     private let readerBar = HelmPageToolbar()
     private let readerTitle = NSTextField(labelWithString: "")
     private var readerBackButton: HelmButton!
@@ -275,6 +282,11 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
             self.filter = picked
             self.rebuildGrid()
         }
+        highlightsList.orientation = .vertical
+        highlightsList.alignment = .leading
+        highlightsList.spacing = HelmMetrics.s2
+        highlightsList.translatesAutoresizingMaskIntoConstraints = false
+        highlightsList.isHidden = true
 
         gridScroll.translatesAutoresizingMaskIntoConstraints = false
         gridScroll.drawsBackground = false
@@ -297,6 +309,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         dropHintCard.onDropText = { [weak self] text in self?.capture(text, source: "drop") }
         dropHintCard.onSave = { [weak self] text in self?.saveFromWell(text) ?? false }
         gridDocument.addSubview(dropHintCard)
+        gridDocument.addSubview(highlightsList)
 
         // P9: the column is a real split-view sidebar - draggable, collapsible
         // and answering Toggle Sidebar - at the place it was pinned before.
@@ -340,6 +353,11 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
             gridStack.trailingAnchor.constraint(equalTo: gridDocument.trailingAnchor),
             gridStack.topAnchor.constraint(equalTo: dropHintCard.bottomAnchor, constant: HelmResponsiveGrid.spacing),
             gridStack.bottomAnchor.constraint(equalTo: gridDocument.bottomAnchor, constant: -Self.gutter),
+            // F-03: the Highlights slice, in the grid's place.
+            highlightsList.leadingAnchor.constraint(equalTo: gridDocument.leadingAnchor),
+            highlightsList.trailingAnchor.constraint(equalTo: gridDocument.trailingAnchor),
+            highlightsList.topAnchor.constraint(equalTo: dropHintCard.bottomAnchor, constant: HelmResponsiveGrid.spacing),
+            gridDocument.bottomAnchor.constraint(greaterThanOrEqualTo: highlightsList.bottomAnchor, constant: Self.gutter),
         ])
     }
 
@@ -385,15 +403,33 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         readerOpenButton = HelmPageToolbar.iconButton(symbol: "arrow.up.forward.square",
                                                       tooltip: "Open in the system browser",
                                                       target: self, action: #selector(readerOpenExternallyTapped))
+        readerModeButton = HelmButton(title: "Original", variant: .secondary, size: .small, symbol: "safari",
+                                      target: self, action: #selector(readerModeTapped))
+        readerModeButton.toolTip = "Switch between the saved text and the page itself"
         readerCloseButton = HelmPageToolbar.iconButton(symbol: "xmark",
                                                        tooltip: "Back to the reading list",
                                                        target: self, action: #selector(closeReaderTapped))
 
         readerBar.setLeading(HelmPageToolbar.group([readerCloseButton, readerTitle]))
-        readerBar.setTrailing(HelmPageToolbar.group([readerBackButton, readerReloadButton, readerOpenButton]))
+        readerBar.setTrailing(HelmPageToolbar.group([readerModeButton, readerBackButton, readerReloadButton, readerOpenButton]))
 
         readerCard.addSubview(readerBar)
         readerCard.addSubview(readerWebView)
+        readerCard.addSubview(readerView)
+        readerView.onHighlight = { [weak self] block, range in self?.addHighlight(block: block, range: range) }
+        readerView.onSendToNotebook = { [weak self] block, range, anchor in
+            self?.showNotebookMenu(block: block, range: range, anchor: anchor)
+        }
+        readerView.onTryAgain = { [weak self] in
+            guard let self, let id = self.readingID, let link = self.store.link(id: id) else { return }
+            self.articles.enqueue(link, force: true)
+        }
+        readerView.onOpenOriginal = { [weak self] in self?.setShowingOriginal(true) }
+        articles.onSaved = { [weak self] id in
+            guard let self else { return }
+            if self.readingID == id, !self.showingOriginal { self.showReaderText() }
+            self.refreshCard(id: id)
+        }
         NSLayoutConstraint.activate([
             readerCard.leadingAnchor.constraint(equalTo: gridScroll.leadingAnchor),
             readerCard.trailingAnchor.constraint(equalTo: gridScroll.trailingAnchor),
@@ -408,7 +444,133 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
             readerWebView.trailingAnchor.constraint(equalTo: readerCard.trailingAnchor),
             readerWebView.topAnchor.constraint(equalTo: readerBar.bottomAnchor),
             readerWebView.bottomAnchor.constraint(equalTo: readerCard.bottomAnchor),
+            readerView.leadingAnchor.constraint(equalTo: readerCard.leadingAnchor),
+            readerView.trailingAnchor.constraint(equalTo: readerCard.trailingAnchor),
+            readerView.topAnchor.constraint(equalTo: readerBar.bottomAnchor),
+            readerView.bottomAnchor.constraint(equalTo: readerCard.bottomAnchor),
         ])
+    }
+
+    // MARK: F-03 - reader mode
+
+    /// The saved text when there is some, and the page when asked for.
+    func showReaderText() {
+        guard let id = readingID else { return }
+        let article = articles.store.article(id: id)
+        readerView.show(article, theme: theme)
+        readerView.isHidden = showingOriginal
+    }
+
+    func setShowingOriginal(_ original: Bool) {
+        showingOriginal = original
+        readerModeButton.title = original ? "Reader" : "Original"
+        readerModeButton.symbolName = original ? "doc.plaintext" : "safari"
+        readerView.isHidden = original
+        readerBackButton.isHidden = !original
+        readerReloadButton.isHidden = !original
+        if original, let id = readingID, let link = store.link(id: id), let url = URL(string: link.url),
+           readerWebView.url == nil || readerWebView.url?.absoluteString == "about:blank",
+           NetworkGate.allowsOutOfProcessLoad(url) {
+            readerWebView.load(URLRequest(url: url))
+        }
+        if !original { showReaderText() }
+    }
+
+    @objc private func readerModeTapped() { setShowingOriginal(!showingOriginal) }
+
+    func addHighlight(block: Int, range: NSRange) {
+        guard let id = readingID, var article = articles.store.article(id: id),
+              let highlight = ReaderHighlights.make(article: article, block: block, range: range) else { return }
+        article.highlights.append(highlight)
+        articles.store.save(article)
+        showReaderText()
+        rebuildSidebar()
+    }
+
+    /// The last page a highlight went to, recent pages, and a new page.
+    private func showNotebookMenu(block: Int, range: NSRange, anchor: NSView) {
+        guard let notebook = GrandLineServices.shared.notebookStore else {
+            Toast.show(in: view, message: "Open the Notebook once, then send highlights to it", kind: .warning)
+            return
+        }
+        let menu = NSMenu()
+        let header = NSMenuItem(title: "Send this highlight to", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        let last = AppDefaults.store.string(forKey: Self.lastNotebookPageKey)
+        var pages = notebook.listPages().sorted { $0.modifiedAt > $1.modifiedAt }
+        if let last, let index = pages.firstIndex(where: { $0.id == last }) { pages.insert(pages.remove(at: index), at: 0) }
+        for page in pages.prefix(6) {
+            let item = NSMenuItem(title: page.id == last ? "\(page.title) \u{00B7} used last" : page.title,
+                                  action: #selector(notebookPagePicked(_:)), keyEquivalent: "")
+            item.representedObject = [page.id, block, range.location, range.length] as [Any]
+            item.target = self
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let new = NSMenuItem(title: "A new page", action: #selector(notebookPagePicked(_:)), keyEquivalent: "")
+        new.representedObject = ["", block, range.location, range.length] as [Any]
+        new.target = self
+        menu.addItem(new)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
+    }
+
+    @objc private func notebookPagePicked(_ item: NSMenuItem) {
+        guard let values = item.representedObject as? [Any], values.count == 4,
+              let pageID = values[0] as? String, let block = values[1] as? Int,
+              let location = values[2] as? Int, let length = values[3] as? Int else { return }
+        sendHighlight(block: block, range: NSRange(location: location, length: length), toPage: pageID.isEmpty ? nil : pageID)
+    }
+
+    /// Highlights the passage if it is not already, appends it to the page
+    /// (or a new one named after the article) with its source, and answers
+    /// the page's id.
+    @discardableResult
+    func sendHighlight(block: Int, range: NSRange, toPage pageID: String?) -> String? {
+        guard let notebook = GrandLineServices.shared.notebookStore, let id = readingID,
+              var article = articles.store.article(id: id) else { return nil }
+        var highlight = article.highlights.first { $0.block == block && $0.start == range.location && $0.length == range.length }
+            ?? ReaderHighlights.make(article: article, block: block, range: range)
+        guard highlight != nil else { return nil }
+        let quote = ReaderHighlights.notebookQuote(highlight!, article: article)
+        let target: NotebookPage
+        if let pageID, let page = notebook.page(id: pageID) {
+            notebook.updatePage(id: page.id, content: page.content + (page.content.hasSuffix("\n") ? "\n" : "\n\n") + quote)
+            target = page
+        } else {
+            target = notebook.createPage(title: "Reading notes \u{203A} \(article.title)", content: "# Reading notes\n\n" + quote)
+        }
+        highlight!.sentToPageID = target.id
+        article.highlights.removeAll { $0.id == highlight!.id }
+        article.highlights.append(highlight!)
+        articles.store.save(article)
+        AppDefaults.store.set(target.id, forKey: Self.lastNotebookPageKey)
+        showReaderText()
+        rebuildSidebar()
+        Toast.show(in: view, message: "Sent to \(target.title)")
+        return target.id
+    }
+
+    /// The Highlights slice: every highlight, newest first, as quote rows.
+    private func rebuildHighlightsList() {
+        highlightsList.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let all = articles.store.allHighlights()
+        if all.isEmpty {
+            let empty = HelmEmptyState(symbol: "highlighter", title: "No highlights yet",
+                                       body: "Open a saved article, select a passage and choose Highlight.")
+            empty.applyTheme(theme)
+            highlightsList.addArrangedSubview(empty)
+            return
+        }
+        for (article, highlight) in all {
+            let row = HelmAccentRow(chipPlacement: .trailing, trailingAccessory: nil, hover: false)
+            row.configure(HelmAccentRow.Content(tint: .warn, kicker: article.site.uppercased(),
+                                                title: "\u{201C}\(highlight.text)\u{201D}",
+                                                meta: article.title + (highlight.sentToPageID != nil ? " \u{00B7} in Notebook" : ""),
+                                                badgeSymbol: "highlighter", titleWraps: true), theme: theme)
+            highlightsList.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: highlightsList.widthAnchor).isActive = true
+        }
     }
 
     // MARK: Loading
@@ -455,6 +617,8 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
                 switch result {
                 case .success(let metadata):
                     self.store.applyMetadata(id: id, metadata)
+                    // F-03: keep the article's text once its link is known good.
+                    if let link = self.store.link(id: id) { self.articles.enqueue(link) }
                 case .failure(let error):
                     self.store.applyMetadataFailure(id: id, reason: error.message)
                 }
@@ -659,9 +823,16 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         readerTitle.stringValue = link.displayTitle
         readerCard.isHidden = false
         gridScroll.isHidden = true
+        // F-03: the saved text first, when there is some. The page itself
+        // loads only when Original is asked for.
+        let article = articles.store.article(id: id)
+        if article == nil { articles.enqueue(link) }
+        let readsOriginal = article == nil && !articles.isWorking
+        showingOriginal = readsOriginal
+        setShowingOriginal(readsOriginal)
         // R2-SEC-01: WebKit fetches from its own process, where the network
         // gate's URLProtocol cannot see, so a test or tour asks first.
-        if NetworkGate.allowsOutOfProcessLoad(url) {
+        if readsOriginal, NetworkGate.allowsOutOfProcessLoad(url) {
             readerWebView.load(URLRequest(url: url))
         }
         if !link.isRead {
@@ -704,6 +875,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
                 ReadingListQuery.matches(slice, $0, now: now, calendar: calendar)
             }.count
         }
+        counts[ReadingListFilter.highlights.id] = articles.store.highlightCount()
         let tagCounts = ReadingListTags.counts(in: links)
         for entry in tagCounts { counts[ReadingListFilter.tag(entry.tag).id] = entry.count }
 
@@ -714,6 +886,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
                 .init(id: ReadingListFilter.read.id, indicator: .symbol("checkmark.circle"), title: "Read"),
                 .init(id: ReadingListFilter.summarised.id, indicator: .symbol("sparkles"), title: "Summarised"),
                 .init(id: ReadingListFilter.addedToday.id, indicator: .symbol("bolt"), title: "Added today"),
+                .init(id: ReadingListFilter.highlights.id, indicator: .symbol("highlighter"), title: "Highlights"),
             ]),
         ]
         if !tagCounts.isEmpty {
@@ -795,7 +968,11 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
                                }
                            })
         cards = nextCards
-        refreshEmptyState(visibleCount: visible.count)
+        // F-03: the Highlights slice shows highlights, not an empty grid.
+        let showsHighlights = filter == .highlights
+        highlightsList.isHidden = !showsHighlights
+        if showsHighlights { rebuildHighlightsList() }
+        refreshEmptyState(visibleCount: showsHighlights ? 1 : visible.count)
         applyTheme()
     }
 

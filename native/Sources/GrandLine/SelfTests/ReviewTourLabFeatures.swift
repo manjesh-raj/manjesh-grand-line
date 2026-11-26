@@ -20,7 +20,8 @@
 //     ux devservers sheet <name>      D-02: the Add sheet on Dev server
 //     ux runmode <captured|failed|finished>   D-01: Runbooks in run mode (goto runbooks first)
 //     ux memohud <recording|saved|mic> <name>  F-05: the voice memo HUD
-//     ux memopage                     F-05: a memo page open in the Notebook (goto notebook first)
+//     ux memopage seed                F-05: a memo page open in the Notebook (goto notebook first)
+//     ux reader <article|highlights|notext>   F-03: the Reading list's reader (goto readingList first)
 //
 // GL-27: debug builds only.
 
@@ -30,7 +31,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode", "memohud", "memopage"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode", "memohud", "memopage", "reader"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -74,6 +75,8 @@ extension ReviewTourLab {
             notebook.debugOpen(pageID: page.id)
             RunLoop.main.run(until: Date().addingTimeInterval(0.4))
             return "ux memopage (\(page.id))"
+        case "reader":
+            return seedReader(shell, state: name)
         case "runmode":
             return seedRunMode(shell.workspace.runbooks, state: name)
         case "devservers" where name == "seed":
@@ -184,6 +187,46 @@ extension ReviewTourLab {
         let deadline = Date().addingTimeInterval(5)
         while !finished, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
         return "ux expiry seed (\(monitor.store.state.items.count) items, \(monitor.store.state.filed.count) filed)"
+    }
+
+    /// F-03's demo: a saved article with two highlights, opened in the reader;
+    /// the Highlights slice; or a page whose text could not be kept.
+    static func seedReader(_ shell: WorkspaceShellController, state: String) -> String {
+        let page = shell.workspace.readingList
+        _ = page.view
+        let store = shell.workspace.readingListStore
+        _ = store.add("https://blog.example.dev/how-we-cut-p99")
+        _ = store.add("https://status.example.org/postmortem-culture")
+        guard let link = store.links.first(where: { $0.url.contains("cut-p99") }),
+              let spa = store.links.first(where: { $0.url.contains("postmortem") }) else { return "ux reader FAILED - no links" }
+        let paragraphs = [
+            "For a year our checkout API sat at a p99 of 820 ms, and every fix we tried moved the median instead. The tail was never the database. It was the connection pool waiting on a single slow upstream.",
+            "We started by tracing only the slowest one percent of requests. Sampling the tail, not the average, showed that 70 percent of slow requests shared one span: a TLS handshake to the payments gateway.",
+            "Keep-alive had been switched off two years earlier to fix a load-balancer bug nobody remembered. Turning keep-alive back on took p99 from 820 ms to 390 ms in one deploy.",
+            "The rest of this post is about the three things that broke when we did.",
+        ]
+        var article = ReaderArticle(linkID: link.id, url: link.url, title: "How we cut our p99 latency in half",
+                                    site: "blog.example.dev", byline: nil, savedAt: Date(), state: .saved,
+                                    blocks: paragraphs.map { .init(kind: .paragraph, text: $0) }, highlights: [])
+        func range(_ needle: String, in block: Int) -> NSRange { (paragraphs[block] as NSString).range(of: needle) }
+        article.highlights = [
+            ReaderHighlights.make(article: article, block: 1,
+                                  range: range("Sampling the tail, not the average, showed that 70 percent of slow requests shared one span: a TLS handshake to the payments gateway.", in: 1)),
+            ReaderHighlights.make(article: article, block: 2,
+                                  range: range("Turning keep-alive back on took p99 from 820 ms to 390 ms in one deploy.", in: 2)),
+        ].compactMap { $0 }
+        page.articles.store.save(article)
+        page.articles.store.save(ReaderArticle(linkID: spa.id, url: spa.url, title: "Postmortem culture: learning from failure",
+                                               site: "status.example.org", byline: nil, savedAt: Date(), state: .noText,
+                                               blocks: [], highlights: []))
+        page.debugReload()
+        switch state {
+        case "highlights": page.debugSelectFilter(.highlights)
+        case "notext": page.openReader(id: spa.id)
+        default: page.openReader(id: link.id)
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        return "ux reader \(state)"
     }
 
     /// D-01's demo: "Rotate a TLS certificate" in run mode, at step 3 with

@@ -2242,6 +2242,13 @@ enum SelfTestDispatch {
             exit(VoiceMemoSelfTest.run() ? 0 : 1)
         }
 
+        // F-03 of full review 4: reader mode and highlights - the extraction script
+        // in an off-screen web view over local HTML, the no-text state, the queue,
+        // highlights and the Notebook quote. Headless, no network.
+        if ProcessInfo.processInfo.environment["FM_RUN_READER_MODE_TESTS"] == "1" {
+            exit(ReaderModeSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }
