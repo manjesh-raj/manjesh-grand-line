@@ -55,7 +55,8 @@ enum SettingsSplitCardsViewSelfTest {
             defer { window.orderOut(nil) }
             settle(shell)
             let checks: [(MainSplitShellController, NSWindow, inout Bool) -> Void] = [
-                checkEveryPageOpensWithItsCard, checkAppearanceCard, checkNoSettingBecameUnreachable,
+                checkEveryPageOpensWithItsCard, checkAppearanceCard, checkDescriptionsWrapInFull,
+                checkNoSettingBecameUnreachable,
                 checkSideBySideAndStacked, checkCardControlsStillWrite, checkPanelPills, checkShortcutsCard,
                 checkBackupCard, checkPanelWordsAreInk, writeRenders,
             ]
@@ -179,6 +180,45 @@ enum SettingsSplitCardsViewSelfTest {
                   "Appearance: a module switch is not on the page", &ok)
         }
         ThemeManager.shared.setTheme(TasksSecretsHeroViewSelfTest.daylight)
+    }
+
+    /// UI-06 of full review 4: a description on the card is the setting's
+    /// only explanation, so it wraps to as many lines as it needs. It was
+    /// capped at two with the rest in the hover text, and Window layout and
+    /// Profile ended mid-sentence on Appearance. Measured as drawn: each
+    /// description's frame is at least as tall as its whole text at the
+    /// width it was given, at both of the page's widths.
+    private static func checkDescriptionsWrapInFull(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                    _ ok: inout Bool) {
+        var longest = 0
+        for width in [1512, 1100] as [CGFloat] {
+            resize(window, width: width, shell)
+            for category in SettingsController.Category.allCases {
+                let settings = show(category, shell)
+                guard let split = settings.debugSplitCard(category) else { continue }
+                for row in split.list?.rows ?? [] {
+                    guard let label = row.descriptionLabel, !label.isHiddenOrHasHiddenAncestor,
+                          label.frame.width > 0, let font = label.font else { continue }
+                    // The same text in a wrapping label with no line limit:
+                    // the height the whole text takes at the width it is
+                    // drawn at.
+                    let probe = NSTextField(wrappingLabelWithString: "")
+                    probe.font = font
+                    probe.attributedStringValue = label.attributedStringValue
+                    probe.maximumNumberOfLines = 0
+                    let needed = probe.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: label.frame.width,
+                                                                        height: 10_000)).height ?? 0
+                    let lineHeight = font.ascender - font.descender + font.leading
+                    longest = max(longest, Int((needed / lineHeight).rounded()))
+                    check(label.frame.height + 1 >= needed,
+                          "UI-06: \(category.title) at \(Int(width)): \"\(row.titleLabel.stringValue)\" draws "
+                              + "\(label.frame.height)pt of a \(needed)pt description", &ok)
+                }
+            }
+        }
+        // The fixture can fail: some description really needs more than the
+        // two lines it used to get.
+        check(longest > 2, "UI-06: fixture: no description on a card needs more than two lines (\(longest))", &ok)
     }
 
     private static func checkNoSettingBecameUnreachable(_ shell: MainSplitShellController, _ window: NSWindow,
