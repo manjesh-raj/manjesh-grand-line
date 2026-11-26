@@ -1073,21 +1073,26 @@ enum SidebarRedesignsSelfTest {
         shell.workspace.navigator.show(.updates)
         settle(shell)
         _ = waitUntil(timeout: 10) {
-            updates.debugToolsTable.debugRows.filter(\.isRecord).count == DependencyCatalog.items.count
-                && !updates.debugToolsTable.debugRows.contains { row in
+            updates.debugToolRows.filter(\.isRecord).count == DependencyCatalog.items.count
+                && !updates.debugToolRows.contains { row in
                     if case .muted(let text)? = row.cells["available"] { return text.hasPrefix("Checking") }
                     return false
                 }
         }
         check(updates.debugSetupSummary.window != nil, "Updates has no Setup hero", &ok)
-        let rows = updates.debugToolsTable.debugRows
-        let groups = rows.compactMap { row -> String? in
-            if case .group(let name) = row.kind { return name }
-            return nil
-        }
-        check(groups == DependencyCatalog.categoryOrder.filter { category in
-            DependencyCatalog.items.contains { $0.category == category } },
-              "the table's groups are \(groups)", &ok)
+        let rows = updates.debugToolRows
+        // UX-22: the tools are grouped by state, one card each, and each
+        // group's header carries its one action.
+        let shown = UpdatesGroup.allCases.filter { updates.debugGroupCard($0)?.table.card.isHidden == false }
+        check(shown == [.updateAvailable, .notInstalled, .couldNotCheck, .upToDate],
+              "UX-22: the Updates groups shown are \(shown)", &ok)
+        check(updates.debugGroupCard(.notInstalled)?.actionButton.title == "Install 1 in \(PlaceName.short(.bootstrap))"
+                && updates.debugGroupCard(.updateAvailable)?.actionButton.title == "Update 1"
+                && updates.debugGroupCard(.couldNotCheck)?.actionButton.title == "Check again"
+                && updates.debugGroupCard(.upToDate)?.actionButton.isHidden == true,
+              "UX-22: the group actions read \(UpdatesGroup.allCases.map { updates.debugGroupCard($0)?.actionButton.title ?? "-" })", &ok)
+        check(updates.debugGroupCard(.upToDate)?.table.isCollapsed == true,
+              "UX-22: Up to date is not folded to its header", &ok)
         func row(_ id: String) -> HelmDataTable.Row? { rows.first { $0.key == id } }
         if let quota = row("quota-axi") {
             if case .status(let text, let tint)? = quota.cells["available"] {
@@ -1099,7 +1104,8 @@ enum SidebarRedesignsSelfTest {
         } else {
             fail("the table has no quota-axi", &ok)
         }
-        check(row("gh")?.primary?.title == "Install in \(PlaceName.short(.bootstrap))", "gh offers \(row("gh")?.primary?.title ?? "nothing")", &ok)
+        // UX-22: the group says Install once; the row keeps what is its own.
+        check(row("gh")?.primary == nil, "gh still offers \(row("gh")?.primary?.title ?? "nothing") of its own", &ok)
         if let up = row("tasks-axi") {
             check(up.primary == nil, "an up-to-date tool offers \(up.primary?.title ?? "")", &ok)
             if case .muted(let text)? = up.cells["available"] { check(text == "Up to date", "tasks-axi reads \(text)", &ok) }
@@ -1109,12 +1115,12 @@ enum SidebarRedesignsSelfTest {
         // The filter row: Needs Attention, then the tool filter.
         updates.debugSetFilter(needsAttention: true)
         settle(shell)
-        let attention = updates.debugToolsTable.debugRows.compactMap(\.key)
+        let attention = updates.debugToolRows.compactMap(\.key)
         check(Set(attention) == ["quota-axi", "gh", "claude-code"], "Needs Attention lists \(attention)", &ok)
         updates.debugSetFilter(needsAttention: false)
         updates.debugSetQuery("axi")
         settle(shell)
-        let axi = updates.debugToolsTable.debugRows.compactMap(\.key)
+        let axi = updates.debugToolRows.compactMap(\.key)
         check(!axi.isEmpty && axi.allSatisfy { $0.hasSuffix("axi") }, "filtering \"axi\" lists \(axi)", &ok)
         updates.debugSetQuery("")
         settle(shell)
@@ -1126,10 +1132,10 @@ enum SidebarRedesignsSelfTest {
               "the far-right button is \(primary?.title ?? "missing")", &ok)
 
         // A tool's detail and its output are the inspector's.
-        updates.debugToolsTable.debugSelect(key: "quota-axi")
+        updates.debugGroupCard(.updateAvailable)?.table.debugSelect(key: "quota-axi")
         settle(shell)
         check(updates.inspectorContent?.title == "quota-axi", "selecting a tool does not fill the inspector", &ok)
-        updates.debugToolsTable.debugSelect(key: nil)
+        updates.debugGroupCard(.updateAvailable)?.table.debugSelect(key: nil)
     }
 
     private static func checkGitHubSync(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

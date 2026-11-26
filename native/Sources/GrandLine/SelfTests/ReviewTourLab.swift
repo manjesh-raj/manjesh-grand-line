@@ -1087,6 +1087,17 @@ enum ReviewTourLab {
             shell.workspace.navigator.show(.homeCanvas)
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             return "ux tips (\(shell.debugHomeCanvas.debugTipTitle ?? "no tip showing"))"
+        // UX-22: Updates' Check for updates, run and waited for, so the
+        // groups have states to show.
+        case "updatescheck":
+            let updates = shell.workspace.updates
+            updates.debugCheckForUpdatesButton.performClick(nil)
+            let deadline = Date().addingTimeInterval(8)
+            while Date() < deadline, updates.debugToolRows.contains(where: { row in
+                if case .muted(let text)? = row.cells["available"] { return text.hasPrefix("Checking") || text == "Not checked" }
+                return false
+            }) { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+            return "ux updatescheck"
         // UX-13: two links saved through the page's own paste well.
         case "readinglinks":
             let page = shell.workspace.readingList

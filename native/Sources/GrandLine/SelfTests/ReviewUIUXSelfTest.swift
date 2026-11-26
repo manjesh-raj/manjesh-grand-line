@@ -792,7 +792,7 @@ enum ReviewUIUXSelfTest {
             // buttons went with it, so U10 is asked of the Tools table's own
             // row action - the one control a row carries.
             func actions() -> [String?] {
-                controller.debugToolsTable.debugRows.filter(\.isRecord).map { $0.primary?.title }
+                controller.debugToolRows.filter(\.isRecord).map { $0.primary?.title }
             }
             let states = actions()
             guard states.count > 5 else {

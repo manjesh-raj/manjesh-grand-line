@@ -22,6 +22,7 @@ enum ReviewFourUXSelfTest {
         checkTheToolbarNamesItsShortcuts(&ok)
         checkSettingsStaysInReach(&ok)
         checkHomeHealthIsAHeroCard(&ok)
+        checkUpdatesGroupByState(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -171,6 +172,26 @@ enum ReviewFourUXSelfTest {
             card.layoutSubtreeIfNeeded()
             check(card.debugKPIStrip?.superview == nil, "UX-02: the healthy tile still draws an empty strip", &ok)
         }
+    }
+
+    // MARK: UX-22
+
+    /// Each state lands in one group, in the order a captain acts on them,
+    /// and only the groups with something to do carry an action.
+    private static func checkUpdatesGroupByState(_ ok: inout Bool) {
+        let statuses: [DependencyStatus] = [.unknown, .checking, .upToDate, .updateAvailable, .notInstalled,
+                                            .checkFailed, .updating, .updateFailed]
+        check(statuses.map(UpdatesGroup.init) == [.notChecked, .notChecked, .upToDate, .updateAvailable,
+                                                    .notInstalled, .couldNotCheck, .notChecked, .updateAvailable],
+              "UX-22: the states group as \(statuses.map(UpdatesGroup.init))", &ok)
+        check(UpdatesGroup.allCases == [.updateAvailable, .notInstalled, .couldNotCheck, .notChecked, .upToDate],
+              "UX-22: the groups are not in the order a captain acts on them", &ok)
+        check(UpdatesGroup.actionTitle(.notInstalled, count: 7, setupName: "Setup steps") == "Install 7 in Setup steps"
+                && UpdatesGroup.actionTitle(.updateAvailable, count: 2, setupName: "x") == "Update 2"
+                && UpdatesGroup.actionTitle(.couldNotCheck, count: 3, setupName: "x") == "Check again"
+                && UpdatesGroup.actionTitle(.upToDate, count: 3, setupName: "x") == nil
+                && UpdatesGroup.actionTitle(.notChecked, count: 3, setupName: "x") == nil,
+              "UX-22: the group actions are wrong", &ok)
     }
 }
 

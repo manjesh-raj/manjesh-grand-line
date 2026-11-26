@@ -104,7 +104,7 @@ enum UpdatesActionVisibilitySelfTest {
 
     /// The table row for `id`, as the page last rendered it.
     private static func tableRow(_ c: UpdatesController, id: String) -> HelmDataTable.Row? {
-        c.debugToolsTable.debugRows.first { $0.key == id }
+        c.debugToolRows.first { $0.key == id }
     }
 
     private static func words(_ cell: HelmDataTable.Cell?) -> String {
