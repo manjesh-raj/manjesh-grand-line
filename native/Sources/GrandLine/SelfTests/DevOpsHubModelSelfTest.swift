@@ -42,6 +42,10 @@
 //      key in a cookie or 403, a fresh key per run, none with "Allow my
 //      browser", the build folder served in place of the repository, and a
 //      real web view that loads the site with the key it was handed.
+//   11. **The site stays on its own address** (S-04): the CSP on every
+//      answer, the switch on by default and carried to the run, and a real
+//      page whose request to another loopback server is blocked by the
+//      content rules alone and by the CSP alone, and reaches it with both off.
 //   9. **The site's own dialogs and a site that keeps crashing** (full
 //      review 2026-11-25, B-04 and B-05), on a real `DevOpsHubWebView` with
 //      no window: `confirm`, `prompt` and `alert` reach `HelmConfirm` from
@@ -62,7 +66,7 @@ enum DevOpsHubModelSelfTest {
                       checkStartNeverWalksTheFolderOnMain, checkRangesAndMedia, checkConnectionLimits, checkRunner,
                       checkWords, checkSidebar, checkCardsWords, checkAddAndRemove, checkProfileAndSettle,
                       checkSettingsAndWebRules, checkSiteDialogs, checkASiteThatKeepsCrashing,
-                      checkOnlyGrandLineReadsTheSite] {
+                      checkOnlyGrandLineReadsTheSite, checkTheSiteStaysOnItsOwnAddress] {
             var caseOK = true
             check(&caseOK)
             ok = ok && caseOK
@@ -968,7 +972,8 @@ enum DevOpsHubModelSelfTest {
         let bare = serve(request("/"))
         check(bare.status == 403 && String(data: bare.body, encoding: .utf8)?.contains("Allow my browser") == true,
               "a request with no key is \(bare.status), want 403 that says how to allow the browser", &ok)
-        check(serve(request("/", extra: "Cookie: \(cookie)=\(String(key.dropLast()))0\r\n")).status == 403,
+        let wrong = String(key.dropLast()) + (key.hasSuffix("0") ? "1" : "0")
+        check(serve(request("/", extra: "Cookie: \(cookie)=\(wrong)\r\n")).status == 403,
               "a wrong key was answered", &ok)
         check(serve(request("/", extra: "Cookie: \(LocalStaticServer.cookieName(port: 7421))=\(key)\r\n")).status == 403,
               "another port's cookie was answered", &ok)
@@ -1064,6 +1069,103 @@ enum DevOpsHubModelSelfTest {
         }
         check(title(loading: key) == "hub", "the web view given the run's key did not load the site", &ok)
         check(title(loading: nil) == "Open in Grand Line", "a web view with no key was served the site", &ok)
+    }
+
+    // MARK: 11 - the site stays on its own address (full review 4, S-04)
+
+    private static func checkTheSiteStaysOnItsOwnAddress(_ ok: inout Bool) {
+        print("\n-- S-04: a site is kept to its own address --")
+        let (root, _) = makeSite()
+        let csp = LocalStaticServer.Policy.confinedCSP
+        check(csp == "default-src 'self' 'unsafe-inline' data: blob:", "the policy reads \(csp)", &ok)
+        let confined = LocalStaticServer.Policy(contentSecurityPolicy: csp)
+        for (target, status) in [("/", 200), ("/missing.js", 404), ("/.git/config", 404)] {
+            let response = LocalStaticServer.response(forRequest: request(target), root: root, port: 7420, policy: confined)
+            check(response.status == status && response.header("Content-Security-Policy") == csp,
+                  "\(target) is \(response.status) with CSP \(response.header("Content-Security-Policy") ?? "none")", &ok)
+        }
+        check(LocalStaticServer.response(forRequest: request("/"), root: root, port: 7420)
+                .header("Content-Security-Policy") == nil, "an unconfined site was sent a CSP", &ok)
+        let rules = DevOpsHubWebView.contentRules(for: LocalStaticServer.origin(port: 7420))
+        check(rules.contains(#"^http:\/\/127\\.0\\.0\\.1:7420\/"#) || rules.contains(#"^http://127\\.0\\.0\\.1:7420/"#),
+              "the rules do not let the project's own origin through: \(rules)", &ok)
+
+        // On by default, an older file reads it as on, and the run carries it.
+        check(LocalProject.devopsAtlas.confinesNetwork, "a project is not kept to its address by default", &ok)
+        let url = AppPaths.dataRoot().appendingPathComponent("lp-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try? Data(#"{"projects":[{"id":"old"}]}"#.utf8).write(to: url)
+        check(LocalProjectStore.load(at: url).first?.confinesNetwork == true, "an older file reads the switch as off", &ok)
+        var project = LocalProject.devopsAtlas
+        project.folderOverride = root.path
+        LocalProjectStore.save([project], at: url)
+        var setups: [ServerSetup] = []
+        let registry = LocalProjectRegistry(storeURL: url, makeServer: { setups.append($0); return StubServer() },
+                                            lookUpPortHolder: { _, done in done(nil) })
+        registry.start(project.id)
+        check(setups.last?.policy.contentSecurityPolicy == csp && registry.confinesNetwork(of: project.id),
+              "a confined run did not carry the CSP and the rules", &ok)
+        registry.stop(project.id)
+        project.confinesNetwork = false
+        registry.update(project)
+        registry.start(project.id)
+        check(setups.last?.policy.contentSecurityPolicy == nil && !registry.confinesNetwork(of: project.id),
+              "with the switch off the run is still confined", &ok)
+        registry.stop(project.id)
+        check(DevOpsHubSettingsSheet.edited(LocalProject.devopsAtlas, folderText: "", portText: "7420", opensWhenReady: true,
+                                            startsAtLaunch: false, confinesNetwork: false).0?.confinesNetwork == false,
+              "the sheet dropped the switch", &ok)
+
+        // End to end: a page that asks another loopback server for a file.
+        // That server's own count says whether the request reached it.
+        var otherPort = freePort()
+        var other = LocalStaticServer(root: root, port: otherPort)
+        if case .failure(.portInUse)? = start(other) {
+            otherPort = freePort()
+            other = LocalStaticServer(root: root, port: otherPort)
+            _ = start(other)
+        }
+        defer { other.stop() }
+        let probe = "<!doctype html><title>hub</title><script>window.__probe = 'pending';"
+            + "fetch('http://127.0.0.1:\(otherPort)/index.html', {mode: 'no-cors', cache: 'no-store'})"
+            + ".then(() => { window.__probe = 'reached' }).catch(() => { window.__probe = 'blocked' });</script>"
+        try? Data(probe.utf8).write(to: root.appendingPathComponent("index.html"))
+        func run(rules: Bool, sendsCSP: Bool) -> (probe: String?, reachedOther: Bool) {
+            let policy = LocalStaticServer.Policy(contentSecurityPolicy: sendsCSP ? csp : nil)
+            var port = freePort()
+            var server = LocalStaticServer(root: root, port: port, policy: policy)
+            if case .failure(.portInUse)? = start(server) {
+                port = freePort()
+                server = LocalStaticServer(root: root, port: port, policy: policy)
+                _ = start(server)
+            }
+            defer { server.stop() }
+            let before = other.currentCounters.served
+            let web = DevOpsHubWebView(projectID: "atlas-confine-\(UUID().uuidString)")
+            var loaded = false
+            web.onFinished = { loaded = true }
+            web.load(origin: LocalStaticServer.origin(port: port), confined: rules)
+            guard waitUntil(timeout: 15, { loaded }) else { return (nil, false) }
+            var answer: String?
+            _ = waitUntil(timeout: 10) {
+                answer = evaluate("String(window.__probe)", in: web)
+                return answer == "reached" || answer == "blocked"
+            }
+            // Give a request that got out time to be counted.
+            _ = waitUntil(timeout: 1) { other.currentCounters.served > before }
+            return (answer, other.currentCounters.served > before)
+        }
+        let open = run(rules: false, sendsCSP: false)
+        check(open.probe == "reached" && open.reachedOther,
+              "fixture: with nothing confining it the page's request did not reach the other server (\(open))", &ok)
+        let byRules = run(rules: true, sendsCSP: false)
+        check(byRules.probe == "blocked" && !byRules.reachedOther,
+              "the content rules let the page reach another port on this Mac (\(byRules))", &ok)
+        let byCSP = run(rules: false, sendsCSP: true)
+        check(byCSP.probe == "blocked" && !byCSP.reachedOther,
+              "the CSP let the page reach another port on this Mac (\(byCSP))", &ok)
+        let both = run(rules: true, sendsCSP: true)
+        check(both.probe == "blocked" && !both.reachedOther, "a confined site reached another port (\(both))", &ok)
     }
 
     // MARK: 9 - the site's dialogs, and a site that keeps crashing

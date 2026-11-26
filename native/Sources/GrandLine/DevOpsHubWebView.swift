@@ -25,6 +25,15 @@
 // cookie in this view's store (HttpOnly, so the page's own script cannot
 // read it) before the first request.
 //
+// And (S-04) **a project kept to its own address stays there.** The
+// navigation policy only governs navigations; `fetch`, images and web sockets
+// went anywhere, so a cloned site could call any internet host and every
+// other loopback port on this Mac. With the project's switch on (the
+// default), `load` installs a `WKContentRuleList` that blocks every request
+// not to the project's own origin before the first one, and the server
+// sends a matching Content-Security-Policy. If the rules cannot be compiled
+// the site is not loaded: this fails closed.
+//
 // Full review 2026-11-25 added two more (B-04, B-05):
 //
 //   - **A site's own dialogs work.** `alert`, `confirm` and `prompt` are the
@@ -135,18 +144,88 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
     // MARK: Loading
 
     /// Load the site at `origin` from its start page, carrying the run's
-    /// key when there is one (S-02).
-    func load(origin: URL, accessToken: String? = nil) {
+    /// key when there is one (S-02), and kept to its own address when
+    /// `confined` (S-04). Both are in place before the first request.
+    func load(origin: URL, accessToken: String? = nil, confined: Bool = false) {
         self.origin = origin
         resetCrashCount()
         loadGeneration &+= 1
         let generation = loadGeneration
-        let start = { [weak self] in
-            guard let self, self.loadGeneration == generation, self.origin == origin else { return }
+        let current = { [weak self] in self.map { $0.loadGeneration == generation && $0.origin == origin } ?? false }
+        let content = webView.configuration.userContentController
+        content.removeAllContentRuleLists()
+        confinedTo = nil
+        let cookie = accessToken.flatMap { Self.accessCookie(token: $0, origin: origin) }
+        // Nothing to put in place first: load now, as before S-02.
+        guard cookie != nil || confined else { return open(origin) }
+        let group = DispatchGroup()
+        var rulesFailed = false
+        if let cookie {
+            group.enter()
+            webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { group.leave() }
+        }
+        if confined {
+            group.enter()
+            Self.compileRules(for: origin) { [weak self] list in
+                if let self, current(), let list {
+                    content.add(list)
+                    self.confinedTo = origin
+                } else if list == nil {
+                    rulesFailed = true
+                }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self, current() else { return }
+            guard !rulesFailed else {
+                AppLog.ui.error("DevOps Hub: the content rules did not compile, so the site was not loaded")
+                self.onFinished?()
+                return
+            }
             self.open(origin)
         }
-        guard let accessToken, let cookie = Self.accessCookie(token: accessToken, origin: origin) else { return start() }
-        webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { start() }
+    }
+
+    /// The origin the installed content rules keep the site to, if any.
+    private(set) var confinedTo: URL?
+
+    /// S-04: block everything, then let the project's own origin and the
+    /// page-local schemes back through.
+    static func contentRules(for origin: URL) -> String {
+        let host = (origin.host ?? LocalStaticServer.loopbackHost).replacingOccurrences(of: ".", with: "\\.")
+        let port = origin.port.map { ":\($0)" } ?? ""
+        let allowed = ["^http://\(host)\(port)/", "^data:", "^blob:", "^about:"]
+        let rules: [[String: Any]] = [["trigger": ["url-filter": ".*"], "action": ["type": "block"]]]
+            + allowed.map { ["trigger": ["url-filter": $0], "action": ["type": "ignore-previous-rules"]] }
+        let data = (try? JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys])) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+
+    static func ruleListIdentifier(for origin: URL) -> String {
+        "grandline.devopshub.confine.\(origin.port ?? 0)"
+    }
+
+    /// Compiles the rules for `origin`, calling back on main with the list,
+    /// or nil when WebKit refused them.
+    static func compileRules(for origin: URL, completion: @escaping (WKContentRuleList?) -> Void) {
+        guard let store = ruleListStore() else { return completion(nil) }
+        store.compileContentRuleList(forIdentifier: ruleListIdentifier(for: origin),
+                                     encodedContentRuleList: contentRules(for: origin)) { list, error in
+            if let error {
+                AppLog.ui.error("DevOps Hub content rules: \(error.localizedDescription, privacy: .public)")
+            }
+            DispatchQueue.main.async { completion(list) }
+        }
+    }
+
+    /// WebKit's own store, or a scratch one in a self-test or tour process,
+    /// so a suite never writes compiled rules into the real one.
+    private static func ruleListStore() -> WKContentRuleListStore? {
+        guard ExternalToolGuard.isActive else { return .default() }
+        let folder = AppPaths.dataRoot().appendingPathComponent("webkit-content-rules", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return WKContentRuleListStore(url: folder)
     }
 
     /// A newer `load` or an `unload` supersedes a load still setting its cookie.

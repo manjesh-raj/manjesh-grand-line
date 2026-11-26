@@ -103,8 +103,13 @@ final class LocalStaticServer {
         /// `cookieName(port:)` cookie holds this. `nil` answers anyone on
         /// this Mac ("Allow my browser").
         var accessToken: String?
+        /// S-04: sent on every answer when set, so the site's own requests
+        /// stay on its origin in any client, the browser included.
+        var contentSecurityPolicy: String?
 
         static let open = Policy()
+        /// What a project kept to its own address sends.
+        static let confinedCSP = "default-src 'self' 'unsafe-inline' data: blob:"
     }
 
     /// S-03's two bounds. A suite passes smaller ones.
@@ -426,6 +431,14 @@ final class LocalStaticServer {
         #if FM_SELFTESTS
         if DispatchQueue.getSpecific(key: listenerQueueKey) == true { debugResponsesOnListenerQueue.increment() }
         #endif
+        var response = answer(raw, root: root, port: port, policy: policy)
+        if let csp = policy.contentSecurityPolicy {
+            response.headers.insert(("Content-Security-Policy", csp), at: min(1, response.headers.count))
+        }
+        return response
+    }
+
+    private static func answer(_ raw: Data, root: URL, port: UInt16, policy: Policy) -> Response {
         guard raw.count <= maxRequestHead, let text = String(data: raw, encoding: .utf8),
               let headEnd = text.range(of: "\r\n\r\n") else {
             return plain(431, "Request Header Fields Too Large")

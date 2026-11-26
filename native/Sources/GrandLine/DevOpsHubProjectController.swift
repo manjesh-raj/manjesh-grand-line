@@ -415,7 +415,7 @@ final class DevOpsHubProjectController: NSViewController {
             finished.remove(project.id)
             crashing.remove(project.id)
             progress[project.id] = 0
-            web.load(origin: project.origin, accessToken: token)
+            web.load(origin: project.origin, accessToken: token, confined: registry.confinesNetwork(of: project.id))
         } else if loadedOrigin[project.id] != nil {
             loadedOrigin[project.id] = nil
             loadedToken[project.id] = nil

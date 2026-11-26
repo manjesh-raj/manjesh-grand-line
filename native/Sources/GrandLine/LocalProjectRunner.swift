@@ -83,6 +83,8 @@ final class LocalProjectRegistry {
     private var countTokens: [String: UUID] = [:]
     /// S-02: each run's key, which the page's web view sends as a cookie.
     private var accessTokens: [String: String] = [:]
+    /// S-04: whether each run keeps its site to its own address.
+    private var confinedRuns: Set<String> = []
 
     private let storeURL: URL
     private let makeServer: (ServerSetup) -> LocalServing
@@ -112,6 +114,10 @@ final class LocalProjectRegistry {
     /// The key the current run of `id` answers to, for Grand Line's own web
     /// view. Nil when it is not starting or running.
     func accessToken(of id: String) -> String? { accessTokens[id] }
+
+    /// Whether the current run of `id` keeps its site to its own address,
+    /// so the web view installs the matching content rules (S-04).
+    func confinesNetwork(of id: String) -> Bool { confinedRuns.contains(id) }
 
     /// The files and bytes the last Start counted, once the count has landed.
     func folderCount(of id: String) -> (files: Int, bytes: Int64)? { folderCounts[id] }
@@ -231,7 +237,10 @@ final class LocalProjectRegistry {
         // it; the server asks for it unless the browser is allowed.
         let accessToken = LocalStaticServer.makeAccessToken()
         accessTokens[id] = accessToken
-        let policy = LocalStaticServer.Policy(accessToken: project.allowsBrowser ? nil : accessToken)
+        let policy = LocalStaticServer.Policy(
+            accessToken: project.allowsBrowser ? nil : accessToken,
+            contentSecurityPolicy: project.confinesNetwork ? LocalStaticServer.Policy.confinedCSP : nil)
+        if project.confinesNetwork { confinedRuns.insert(id) } else { confinedRuns.remove(id) }
         let token = UUID()
         startTokens[id] = token
         states[id] = .starting
@@ -251,6 +260,7 @@ final class LocalProjectRegistry {
             case .failure(let error):
                 self.servers[id] = nil
                 self.accessTokens[id] = nil
+                self.confinedRuns.remove(id)
                 switch error {
                 case .portInUse:
                     self.states[id] = .failed(.portInUse(holder: nil))
@@ -297,6 +307,7 @@ final class LocalProjectRegistry {
         servers[id]?.stop()
         servers[id] = nil
         accessTokens[id] = nil
+        confinedRuns.remove(id)
         states[id] = .notStarted
         if case .running(let since) = wasRunning, let index = projects.firstIndex(where: { $0.id == id }) {
             projects[index].lastRun = LocalProject.LastRun(startedAt: since, endedAt: clock(), reason: reason.rawValue)

@@ -44,6 +44,10 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
                                          subtitle: "Start on the page opens the site here once it has loaded.")
     private let launchRow = HelmToggleRow(title: "Start when Grand Line opens",
                                           subtitle: "Once the window is up. Off by default.")
+    /// S-04 (full review 4). On by default.
+    private let confineRow = HelmToggleRow(title: "Keep the site to its own address",
+                                           subtitle: "Blocks requests to the internet and to other ports on this Mac. "
+                                               + "Turn off for a site that needs a CDN or an API.")
     /// S-02 (full review 4).
     private let browserRow = HelmToggleRow(title: "Allow my browser",
                                            subtitle: "Off, only Grand Line\u{2019}s own view can read the site. On, your "
@@ -122,6 +126,8 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
                                      : "The site saves your progress per address, so a new port starts it with no progress.")
         browserRow.isOn = project.allowsBrowser
         form.addRow(browserRow)
+        confineRow.isOn = project.confinesNetwork
+        form.addRow(confineRow)
 
         form.addSection("Starting")
         opensRow.isOn = project.opensWhenReady
@@ -217,7 +223,7 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
     /// project's own. `takenPorts` are the other projects' ports.
     static func edited(_ project: LocalProject, name: String? = nil, folderText: String, portText: String,
                        opensWhenReady: Bool, startsAtLaunch: Bool, allowsBrowser: Bool? = nil,
-                       takenPorts: Set<UInt16> = [], requiresFolder: Bool = false) -> (LocalProject?, String?) {
+                       confinesNetwork: Bool? = nil, takenPorts: Set<UInt16> = [], requiresFolder: Bool = false) -> (LocalProject?, String?) {
         let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let trimmedName, trimmedName.isEmpty { return (nil, "Give the project a name.") }
         let folder = folderText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -242,6 +248,7 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         edited.opensWhenReady = opensWhenReady
         edited.startsAtLaunch = startsAtLaunch
         if let allowsBrowser { edited.allowsBrowser = allowsBrowser }
+        if let confinesNetwork { edited.confinesNetwork = confinesNetwork }
         return (edited, nil)
     }
 
@@ -251,7 +258,7 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
                                             folderText: folderField.stringValue,
                                             portText: portField.stringValue,
                                             opensWhenReady: opensRow.isOn, startsAtLaunch: launchRow.isOn,
-                                            allowsBrowser: browserRow.isOn,
+                                            allowsBrowser: browserRow.isOn, confinesNetwork: confineRow.isOn,
                                             takenPorts: takenPorts, requiresFolder: adding)
         guard let edited else {
             let field: HelmTextField
@@ -300,6 +307,7 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
     }
     func debugSetName(_ name: String) { nameField.stringValue = name }
     var debugBrowserRow: HelmToggleRow { browserRow }
+    var debugConfineRow: HelmToggleRow { confineRow }
     func debugCheckFolder() { checkFolder() }
     func debugSave() { save() }
     #endif

@@ -46,6 +46,12 @@ struct LocalProject: Equatable {
     /// loopback port, so without this it refuses a request that does not
     /// carry the run's key (`LocalStaticServer.Policy`).
     var allowsBrowser = false
+    /// S-04 (full review 4): keep the site to its own address. On by
+    /// default. A project is often a cloned third-party repository, and its
+    /// scripts run inside Grand Line; with this on, the web view blocks every
+    /// request that is not to the project's own origin and the server sends
+    /// a Content-Security-Policy that says the same.
+    var confinesNetwork = true
     /// Keys a newer build wrote that this one does not know, kept as they were.
     var passthrough: [String: LocalProjectJSON] = [:]
 
@@ -137,6 +143,7 @@ extension LocalProject: Codable {
     /// `passthrough` and written back as it was.
     static let knownKeys: Set<String> = [
         "id", "name", "kind", "folder", "port", "opensWhenReady", "startsAtLaunch", "lastRun", "allowsBrowser",
+        "confinesNetwork",
     ]
 
     private struct Key: CodingKey {
@@ -161,6 +168,7 @@ extension LocalProject: Codable {
         startsAtLaunch = try c.decodeIfPresent(Bool.self, forKey: Key("startsAtLaunch")) ?? false
         lastRun = try? c.decodeIfPresent(LastRun.self, forKey: Key("lastRun"))
         allowsBrowser = try c.decodeIfPresent(Bool.self, forKey: Key("allowsBrowser")) ?? false
+        confinesNetwork = try c.decodeIfPresent(Bool.self, forKey: Key("confinesNetwork")) ?? true
         var extra: [String: LocalProjectJSON] = [:]
         for key in c.allKeys where !Self.knownKeys.contains(key.stringValue) {
             if let value = try? c.decode(LocalProjectJSON.self, forKey: key) { extra[key.stringValue] = value }
@@ -179,6 +187,7 @@ extension LocalProject: Codable {
         try c.encode(startsAtLaunch, forKey: Key("startsAtLaunch"))
         try c.encodeIfPresent(lastRun, forKey: Key("lastRun"))
         try c.encode(allowsBrowser, forKey: Key("allowsBrowser"))
+        try c.encode(confinesNetwork, forKey: Key("confinesNetwork"))
         for (key, value) in passthrough where !Self.knownKeys.contains(key) {
             try c.encode(value, forKey: Key(key))
         }
