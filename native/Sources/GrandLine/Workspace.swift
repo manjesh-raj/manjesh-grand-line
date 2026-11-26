@@ -1004,6 +1004,14 @@ final class Workspace {
             self?.chrome?.workspaceSessionsDidChange(registry)
         }
         console.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        // UX-11: the start page's hosts, and a tile's connect, the way
+        // Connections connects.
+        console.startHosts = { [weak self] in self?.hostStore.hosts ?? [] }
+        console.offersStartPage = true
+        console.onConnectStartHost = { [weak self] id in
+            guard let self, let host = self.hostStore.host(id: id) else { return }
+            self.hostsPanel.connect(host)
+        }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh

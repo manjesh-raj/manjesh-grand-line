@@ -1127,6 +1127,21 @@ enum ReviewTourLab {
             shell.workspace.devopsHub.showCards()
             RunLoop.main.run(until: Date().addingTimeInterval(0.4))
             return "ux devopsrunning"
+        // UX-11: two saved hosts connected lately, and the Console's start
+        // page re-read.
+        case "hostlastconnected":
+            let store = shell.workspace.hostStore
+            for (index, host) in store.hosts.prefix(3).enumerated() {
+                var updated = host
+                updated.lastConnectedAt = Date().addingTimeInterval(-Double(index + 1) * 86_400)
+                store.update(updated)
+            }
+            shell.workspace.console.refreshStartPage()
+            return "ux hostlastconnected"
+        // UX-11: the Console's tab count and whether its start page shows.
+        case "consolestate":
+            let console = shell.workspace.console
+            return "ux consolestate tabs=\(console.tabs.count) start=\(!console.startPage.isHidden)"
         // UX-21: Code's Sandboxed chip, which opens the facts in the inspector.
         case "sandboxchip":
             shell.workspace.codePreview.sandboxChip.performClick(nil)

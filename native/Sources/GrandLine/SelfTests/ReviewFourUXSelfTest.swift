@@ -27,6 +27,7 @@ enum ReviewFourUXSelfTest {
         checkTheHostSheetHasTwoColumns(&ok)
         checkTheCrewLogIsATimeline(&ok)
         checkAskTheCrewStartsWithThingsToAsk(&ok)
+        checkTheConsoleStartPage(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -320,6 +321,41 @@ enum ReviewFourUXSelfTest {
                   "UX-08: the empty thread does not show six starters in place of the paragraph", &ok)
             chat.debugStarterGrid.debugPick(1)
             check(chat.debugComposerText == busy[1].question, "UX-08: a starter did not fill the composer", &ok)
+        }
+    }
+
+    // MARK: UX-11
+
+    /// The hosts connected to most recently, newest first; the tiles and the
+    /// snippets do what they say; Return opens the first.
+    private static func checkTheConsoleStartPage(_ ok: inout Bool) {
+        let now = Date()
+        func host(_ label: String, daysAgo: Double?) -> Host {
+            var h = Host(label: label, address: "\(label).example.test")
+            h.lastConnectedAt = daysAgo.map { now.addingTimeInterval(-$0 * 86_400) }
+            return h
+        }
+        let tiles = ConsoleStartWords.hosts([host("old", daysAgo: 9), host("never", daysAgo: nil), host("new", daysAgo: 1),
+                                             host("mid", daysAgo: 3), host("older", daysAgo: 20)], now: now)
+        check(tiles.map(\.title) == ["new", "mid", "old"] && tiles.first?.detail.hasPrefix("connected ") == true,
+              "UX-11: the start page's hosts are \(tiles.map(\.title))", &ok)
+        autoreleasepool {
+            let page = ConsoleStartPage()
+            var did: [String] = []
+            page.onNewShell = { did.append("shell") }
+            page.onHost = { _ in did.append("host") }
+            page.onSnippet = { did.append("snippet \($0.label)") }
+            page.configure(hosts: tiles, snippets: [Snippet(label: "Disk usage", command: "du -sh *")])
+            check(page.debugTileTitles == ["New shell on this Mac", "new", "mid", "old"] && page.debugSnippetTitles == ["Disk usage"],
+                  "UX-11: the start page offers \(page.debugTileTitles) and \(page.debugSnippetTitles)", &ok)
+            page.debugClickTile(1)
+            page.debugClickSnippet(0)
+            if let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                            context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+                                            isARepeat: false, keyCode: 36) {
+                page.keyDown(with: enter)
+            }
+            check(did == ["host", "snippet Disk usage", "shell"], "UX-11: the start page did \(did)", &ok)
         }
     }
 }

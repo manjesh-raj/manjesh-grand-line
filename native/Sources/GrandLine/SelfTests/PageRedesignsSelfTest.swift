@@ -1376,32 +1376,37 @@ enum PageRedesignsSelfTest {
               "CR-1: Log's filter is not on the band's foot (foot \(logBand.debugFootViews))", &ok)
         check(tabs.heroInk == logBand.ink && tabs.heroSelection == navInk.selectedInk,
               "CR-1: the filter is not in the band's ink: \(String(describing: tabs.heroInk)) for \(logBand.ink)", &ok)
-        check(pillTitles(tabs) == ["All\u{2002}10", "Merges\u{2002}3", "Tasks\u{2002}3", "Sync\u{2002}1",
+        check(pillTitles(tabs) == ["Today\u{2002}5", "All\u{2002}10", "Merges\u{2002}3", "Tasks\u{2002}3", "Sync\u{2002}1",
                                    "Investigations\u{2002}1", "Incidents\u{2002}2"],
               "CR-1: the filter's segments read \(pillTitles(tabs))", &ok)
         let pills = tabs.debugPillsForAccessibilityTests()
-        check(pills.count == 6 && pills.allSatisfy { $0.accessibilityRole() == .radioButton }
-                && pills.map { $0.accessibilityLabel() ?? "" } == ["All", "Merges", "Tasks", "Sync", "Investigations", "Incidents"]
-                && pills.map { ($0.accessibilityValue() as? String) ?? "" }.first == "selected",
-              "CR-1: the filter's segments are not six radio buttons named as before", &ok)
+        // UX-07 put Today in front of All. All stays the chosen segment, so
+        // a first visit still shows everything.
+        check(pills.count == 7 && pills.allSatisfy { $0.accessibilityRole() == .radioButton }
+                && pills.map { $0.accessibilityLabel() ?? "" }
+                    == ["Today", "All", "Merges", "Tasks", "Sync", "Investigations", "Incidents"]
+                && pills.map { ($0.accessibilityValue() as? String) ?? "" }[1] == "selected",
+              "CR-1: the filter's segments are not seven radio buttons, Today then the six named as before", &ok)
         let colors = tabs.debugPillLabelColors
-        if colors.count == 6 {
-            let chosen = HelmContrast.ratio(colors[0], logBand.ink)
-            check(colors[0] == navInk.selectedInk && colors.dropFirst().allSatisfy { $0 == logBand.ink }
+        if colors.count == 7 {
+            let chosen = HelmContrast.ratio(colors[1], logBand.ink)
+            check(colors[1] == navInk.selectedInk
+                    && colors.enumerated().allSatisfy { $0.offset == 1 || $0.element == logBand.ink }
                     && chosen >= HelmContrast.textTarget,
-                  "CR-1: the chosen segment's words are \(colors[0]) (\(String(format: "%.2f", chosen)):1 on the ink)", &ok)
+                  "CR-1: the chosen segment's words are \(colors[1]) (\(String(format: "%.2f", chosen)):1 on the ink)", &ok)
         }
-        // The feed sits straight under the band, as it always read.
+        // The feed is a timeline card under the band (UX-07): a day heading,
+        // an hour heading, then the lines and runs under it.
         let list = fleet.debugLogList
-        check(fleet.debugLogListShowing && list.debugRowCount == 13 && onScreen(list),
+        check(fleet.debugLogListShowing && list.debugRowCount == 21 && onScreen(list),
               "CR-1: the feed under Log's band has \(list.debugRowCount) rows, showing \(fleet.debugLogListShowing)", &ok)
         let bandBottom = logBand.convert(NSPoint(x: 0, y: logBand.isFlipped ? logBand.bounds.height : 0), to: nil).y
         let listTop = list.convert(NSPoint(x: 0, y: list.isFlipped ? 0 : list.bounds.height), to: nil).y
-        // The first day sits right under the band (its header row holds its
-        // own space above the day's name), and the last card is whole: the
-        // table is as tall as its rows. It was 16pt short before CR-1, and
-        // the last card was cut 13pt.
-        check(bandBottom >= listTop - 0.5 && bandBottom - listTop < HelmMetrics.s1,
+        // Since UX-07 the feed is a card of its own, so it sits the page's
+        // usual card gap under the band rather than butting against it. The
+        // last row is whole: the table is as tall as its rows (the last card
+        // was cut 13pt before CR-1).
+        check(abs(bandBottom - listTop - HelmMetrics.s4) < 0.5,
               "CR-1: the feed starts \(bandBottom - listTop)pt under the band", &ok)
         func feedIsWhole() -> Bool {
             let rows = list.tableView.numberOfRows
@@ -1419,27 +1424,27 @@ enum PageRedesignsSelfTest {
             pill.keyDown(with: event)
             settle(shell)
         }
-        window.makeFirstResponder(pills[0])
-        arrow(124, on: pills[0])
-        check(tabs.selected == "merge" && window.firstResponder === pills[1] && list.debugRowCount == 6
+        window.makeFirstResponder(pills[1])
+        arrow(124, on: pills[1])
+        check(tabs.selected == "merge" && window.firstResponder === pills[2] && list.debugRowCount == 9
                 && band(fleet) === logBand && logBand.debugHeadline == "5 events today" && feedIsWhole(),
               "CR-1: → from All moved to \(tabs.selected) with \(list.debugRowCount) rows", &ok)
         check(tabs.debugHeroRing.isShowing && !tabs.debugHeroRing.systemRingIsOn,
               "CR-1: a keyed focus on the filter draws no ink ring", &ok)
         // Reduce Motion (pinned on for this suite): the thumb is already
         // under the chosen pill, with nothing sliding.
-        let pillFrame = pills[1].convert(pills[1].bounds, to: tabs)
+        let pillFrame = pills[2].convert(pills[2].bounds, to: tabs)
         check(abs(tabs.debugThumbFrame.width - pillFrame.width) < 0.5,
               "CR-1: under Reduce Motion the filter's thumb is \(tabs.debugThumbFrame) for \(pillFrame)", &ok)
-        arrow(124, on: pills[1])
-        check(tabs.selected == "task" && list.debugRowCount == 6, "CR-1: → to Tasks shows \(list.debugRowCount) rows", &ok)
+        arrow(124, on: pills[2])
+        check(tabs.selected == "task" && list.debugRowCount == 9, "CR-1: → to Tasks shows \(list.debugRowCount) rows", &ok)
+        arrow(123, on: pills[3])
         arrow(123, on: pills[2])
-        arrow(123, on: pills[1])
-        check(tabs.selected == "all" && window.firstResponder === pills[0] && list.debugRowCount == 13,
+        check(tabs.selected == "all" && window.firstResponder === pills[1] && list.debugRowCount == 21,
               "CR-1: ← back to All shows \(list.debugRowCount) rows on \(tabs.selected)", &ok)
         tabs.debugClickTab(id: "incident")
         settle(shell)
-        check(list.debugRowCount == 3 && pills.map { ($0.accessibilityValue() as? String) ?? "" }[5] == "selected",
+        check(list.debugRowCount == 5 && pills.map { ($0.accessibilityValue() as? String) ?? "" }[6] == "selected",
               "CR-1: Incidents shows \(list.debugRowCount) rows", &ok)
         tabs.debugClickTab(id: "all")
         window.makeFirstResponder(nil)
@@ -1476,7 +1481,7 @@ enum PageRedesignsSelfTest {
         settle(shell)
         check(logBand.debugHeadline == "Quiet so far today"
                 && logBand.debugBody == "The last event was yesterday at \(CrewBand.time(at(-1, 18, 18)))."
-                && pillTitles(tabs).first == "All\u{2002}1" && fleet.debugLogListShowing,
+                && pillTitles(tabs).prefix(2) == ["Today\u{2002}0", "All\u{2002}1"] && fleet.debugLogListShowing,
               "CR-1: a quiet log reads \(logBand.debugHeadline) / \(logBand.debugBody ?? "-")", &ok)
 
         // An empty log: the band is the empty state, with no filter and no
@@ -1508,7 +1513,7 @@ enum PageRedesignsSelfTest {
         tabs.debugClickTab(id: "investigation")
         settle(shell)
         check(isDimmed(logBand) && logBand.debugHeadline.hasPrefix("Couldn\u{2019}t read all of the log at ")
-                && pillTitles(tabs) == ["All", "Merges", "Tasks\u{2002}0", "Sync", "Investigations", "Incidents"]
+                && pillTitles(tabs) == ["Today", "All", "Merges", "Tasks\u{2002}0", "Sync", "Investigations", "Incidents"]
                 && list.debugEmptyText.title == "Couldn\u{2019}t read the log"
                 && list.debugEmptyText.body.hasPrefix("Saved investigations could not be read at "),
               "CR-1: a partly read log drew \(logBand.debugHeadline), segments \(pillTitles(tabs)), "

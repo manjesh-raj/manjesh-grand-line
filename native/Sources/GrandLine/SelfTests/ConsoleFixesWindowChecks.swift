@@ -17,6 +17,27 @@ enum ConsoleFixesWindowChecks {
         defer { ThemeManager.shared.setTheme(savedTheme) }
         checkTheTopEdge(shell, window, &ok)
         checkTheCaretShowsOnFocus(window, &ok)
+        checkTheStartPage(shell, &ok)
+    }
+
+    // MARK: UX-11 - the start page
+
+    /// With no tab open the main Console shows its start page in the card,
+    /// its first tile the new shell; a host page never does.
+    private static func checkTheStartPage(_ shell: MainSplitShellController, _ ok: inout Bool) {
+        let console = shell.workspace.console
+        shell.workspace.navigator.show(.console)
+        shell.view.layoutSubtreeIfNeeded()
+        guard console.tabs.isEmpty else {
+            print("  SKIP UX-11: this fixture's Console has a tab, so it shows no start page")
+            return
+        }
+        check(console.offersStartPage && !console.startPage.isHidden && console.startPage.window != nil,
+              "UX-11: an empty Console shows no start page", &ok)
+        check(console.startPage.debugTileTitles.first == "New shell on this Mac",
+              "UX-11: the start page's first tile is \(console.startPage.debugTileTitles.first ?? "missing")", &ok)
+        check(console.startPage.frame.width > 300 && console.startPage.frame.height > 200,
+              "UX-11: the start page does not fill the card (\(console.startPage.frame))", &ok)
     }
 
     // MARK: Item 1 - the dead space

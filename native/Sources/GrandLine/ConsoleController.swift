@@ -232,6 +232,16 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// topmost subview of `content`, hidden unless the current tab has SRE
     /// Lead active.
     let cardChrome = ConsoleCardChrome(frame: .zero)
+    /// UX-11: the main Console's start page, while no tab is open.
+    let startPage = ConsoleStartPage()
+    /// UX-11: set on the workspace's own Console, never on a host page.
+    var offersStartPage = false {
+        didSet { if isViewLoaded { refreshStartPage() } }
+    }
+    /// UX-11: the saved hosts, read when the start page shows.
+    var startHosts: (() -> [Host])?
+    /// UX-11: a start page host tile, connected the way Connections does.
+    var onConnectStartHost: ((UUID) -> Void)?
 
     /// Set by `AppShellController`: "my live numbers changed, re-read my
     /// subtitle" (Daylight §6.4). Fired from `styleChips()`, which is already
@@ -641,6 +651,12 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         cardChrome.pad = cardMargin
         cardChrome.isHidden = true
         content.addSubview(cardChrome)
+        // UX-11: inside the card, while there is no tab.
+        startPage.isHidden = true
+        startPage.onNewShell = { [weak self] in self?.newShellTab() }
+        startPage.onHost = { [weak self] id in self?.onConnectStartHost?(id) }
+        startPage.onSnippet = { [weak self] snippet in self?.startWithSnippet(snippet) }
+        content.addSubview(startPage)
 
         buildSRELeadPane()
         root.addSubview(sreLeadPane)
@@ -709,6 +725,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
             cardChrome.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             cardChrome.topAnchor.constraint(equalTo: content.topAnchor),
             cardChrome.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+
+            startPage.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: cardMargin),
+            startPage.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -cardMargin),
+            startPage.topAnchor.constraint(equalTo: content.topAnchor, constant: cardMargin),
+            startPage.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -cardMargin),
 
             sreLeadPane.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             sreLeadPane.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
@@ -782,6 +803,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
         // the page builds its sidebar presentation as part of loading.
         buildSidebarPresentation()
+        // UX-11: a Console that opened with no tab shows its start page.
+        refreshStartPage()
     }
 
     var themeObservation: ThemeObservation?
@@ -813,6 +836,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     override func viewDidAppear() {
         super.viewDidAppear()
         pageIsOutOfSight = false
+        // UX-11: the hosts' last connections may have moved since.
+        refreshStartPage()
         syncBackgroundScrollback()
         // `refreshPeriodicWorkGating` is unconditional: it only *computes*
         // whether cadenced background work may run, and a locked app wants
