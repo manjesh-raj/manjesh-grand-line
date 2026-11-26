@@ -96,9 +96,18 @@ enum SnippetExpanderViewSelfTest {
 
     // MARK: The strip is on the Snippets tab, and only on that tab
 
+    /// UI-10 of full review 4: beside Connections' hero column the switch is
+    /// the column's, so the strip is checked with the column put away
+    /// (Toggle Sidebar's own path) - where the strip is the switch.
     private static func checkCardVisibility(_ check: (Bool, String) -> Void) {
         autoreleasepool {
             let (controller, window) = page([signature, drain])
+            check(controller.heroColumnShowing && controller.debugExpansionStrip.isHiddenOrHasHiddenAncestor,
+                  "UI-10: beside the hero column the strip is in the page body too")
+            controller.splitPage?.toggleSidebar(nil)
+            for _ in 0..<5 { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+            controller.view.layoutSubtreeIfNeeded()
+            check(!controller.heroColumnShowing, "UI-10: fixture: Toggle Sidebar left the hero column showing")
             window.orderFront(nil)
             defer { window.orderOut(nil) }
             let strip = controller.debugExpansionStrip
