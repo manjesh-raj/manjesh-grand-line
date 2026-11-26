@@ -1755,9 +1755,15 @@ enum CredentialVaultViewSelfTest {
             //    already share one coordinate space - no conversion needed,
             //    and none would paper over a real mismatch the way converting
             //    to a common but differently-scaled ancestor might.
-            check(abs(touchID.frame.midY - reveal.frame.midY) < 0.5,
+            //    Auto Layout aligns each frame to the backing store, so two
+            //    centred views of different heights can sit one *device*
+            //    pixel apart: 0.5pt on a retina Mac, 1.0pt on CI's 1x runner
+            //    (AGENTS.md, "a GitHub runner's backing scale factor is 1x").
+            //    The tolerance is that one pixel, never a hard-coded 0.5pt.
+            let onePixel = 1.0 / (touchID.window?.backingScaleFactor ?? 2)
+            check(abs(touchID.frame.midY - reveal.frame.midY) <= onePixel,
                   "\(themeID): the fingerprint should share the Reveal button's centerY, got \(touchID.frame.midY) vs \(reveal.frame.midY)")
-            check(abs(touchID.frame.midY - copy.frame.midY) < 0.5,
+            check(abs(touchID.frame.midY - copy.frame.midY) <= onePixel,
                   "\(themeID): the fingerprint should share the Copy button's centerY too, got \(touchID.frame.midY) vs \(copy.frame.midY)")
 
             // 2. Ordering inside the cluster: fingerprint, then Reveal, then
