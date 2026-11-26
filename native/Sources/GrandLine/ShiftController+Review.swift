@@ -195,7 +195,7 @@ extension ShiftController {
         walk.saved = true
         reviewWalk = walk
         renderReviewWalk()
-        Toast.show(in: view, message: "Saved to the Notebook as \u{201C}\(title)\u{201D}")
+        Toast.show(in: view, message: "Saved to \(PlaceName.of(.notebook)) as \u{201C}\(title)\u{201D}")
     }
 
     /// The whole tab again: a decision changes the verdict, the pushed-back

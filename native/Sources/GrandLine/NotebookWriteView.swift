@@ -341,9 +341,8 @@ final class NotebookWriteView: NSView, NSTextViewDelegate {
             onOpenLink?(target.removingPercentEncoding ?? target)
             return true
         }
-        // A web link opens in the browser, as the preview's do.
-        guard url.scheme == "https" || url.scheme == "http" else { return true }
-        NSWorkspace.shared.open(url)
+        // A web link opens in the browser, through the app's one scheme check.
+        _ = WebNavigationPolicy.openExternally(url, from: "the Notebook's Write pane")
         return true
     }
 

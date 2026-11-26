@@ -117,8 +117,8 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// UX-22: the tools grouped by state, one card per group, each header
     /// carrying the group's one action ("Update 2", "Install 7 in Setup
     /// steps", "Check again"). Built once each, shown while they hold a row.
-    private lazy var groupCards: [UpdatesGroup: UpdatesGroupCard] = Dictionary(uniqueKeysWithValues:
-        UpdatesGroup.allCases.map { group in (group, makeGroupCard(group)) })
+    private lazy var groupCards: [UpdatesGroup: UpdatesGroupCard] = Dictionary(
+        UpdatesGroup.allCases.map { group in (group, makeGroupCard(group)) }, uniquingKeysWith: { first, _ in first })
     private let groupsStack = NSStackView()
     /// Up to date folds to its header until the captain opens it.
     private var showsUpToDate = false

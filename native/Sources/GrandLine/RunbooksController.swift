@@ -543,6 +543,8 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
             guard let self, self.isViewLoaded, !self.view.isHiddenOrHasHiddenAncestor else { return }
             self.renderDetail()
         }
+        // Audit 3.4: a repeating timer says how late it may fire.
+        sessionTimer?.tolerance = 5
     }
 
     /// The Command Library's own risk gate decides whether a step's command

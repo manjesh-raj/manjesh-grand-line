@@ -375,7 +375,7 @@ final class ShiftReviewWalkCard: NSView {
     let rescheduleButton = HelmButton(title: "Reschedule\u{2026}", variant: .secondary, size: .small)
     let dropButton = HelmButton(title: "Drop it", variant: .secondary, size: .small)
     let skipButton = HelmButton(title: "Skip", variant: .quiet, size: .small)
-    let saveButton = HelmButton(title: "Save to Notebook", variant: .secondary, size: .small, symbol: "book")
+    let saveButton = HelmButton(title: "Save to \(PlaceName.short(.notebook))", variant: .secondary, size: .small, symbol: "book")
     let closeButton = HelmButton(title: "Close", variant: .quiet, size: .small)
     private let progressRow = NSStackView()
     private let decisionRow = NSStackView()
@@ -448,7 +448,7 @@ final class ShiftReviewWalkCard: NSView {
 
         saveButton.target = self
         saveButton.action = #selector(saveTapped)
-        saveButton.toolTip = "Keep this summary as a note in the Notebook"
+        saveButton.toolTip = "Keep this summary as a page in \(PlaceName.of(.notebook))"
         closeButton.target = self
         closeButton.action = #selector(stopTapped)
         let finishedSpacer = NSView()
@@ -502,7 +502,7 @@ final class ShiftReviewWalkCard: NSView {
             setAccessibilityLabel("Review, \(index + 1) of \(total): \(decision.title)")
         case let .finished(summary, saved):
             titleLabel.stringValue = summary
-            metaLabel.stringValue = saved ? "Saved to the Notebook." : "Next week\u{2019}s list is below."
+            metaLabel.stringValue = saved ? "Saved to \(PlaceName.of(.notebook))." : "Next week\u{2019}s list is below."
             metaLabel.isHidden = false
             progressRow.isHidden = true
             decisionRow.isHidden = true
