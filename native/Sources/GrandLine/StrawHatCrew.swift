@@ -175,6 +175,19 @@ enum StrawHatMember: String, CaseIterable {
     ///  - Nami, Usopp and Franky's reference phrases were already accurate
     ///    descriptions of their real, built capabilities and are used
     ///    verbatim.
+    /// UX-08: the role in one word, under the portrait on Ask the crew.
+    var roleWord: String {
+        switch self {
+        case .luffy: return "captain"
+        case .nami: return "plans"
+        case .chopper: return "health"
+        case .robin: return "research"
+        case .zoro: return "commands"
+        case .usopp: return "ideas"
+        case .franky: return "automations"
+        }
+    }
+
     var role: String {
         switch self {
         case .luffy: return "General Assistant / Conversation"

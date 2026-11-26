@@ -26,6 +26,7 @@ enum ReviewFourUXSelfTest {
         checkTheWelcomeShowsEachSidebar(&ok)
         checkTheHostSheetHasTwoColumns(&ok)
         checkTheCrewLogIsATimeline(&ok)
+        checkAskTheCrewStartsWithThingsToAsk(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -290,6 +291,36 @@ enum ReviewFourUXSelfTest {
               "UX-07: the scopes read \(segments.prefix(2).map(\.label))", &ok)
         check(FleetLogListView.filterItems.prefix(2).map(\.id) == [FleetLogListView.todayFilterID, FleetLogListView.allFilterID],
               "UX-07: the filter does not open on Today and All", &ok)
+    }
+
+    // MARK: UX-08
+
+    /// Six starters from the captain's own data, a role under every
+    /// portrait, and a starter fills the composer rather than sending.
+    private static func checkAskTheCrewStartsWithThingsToAsk(_ ok: inout Bool) {
+        let busy = StrawHatStarters.make(.init(openTasks: 7, overdueTasks: 1, dueToday: 1, pendingFollowUps: 2,
+                                               failingService: "Docs & runbooks sync", servicesReporting: 8, schedules: 3))
+        check(busy.count == StrawHatStarters.count && busy[0].question == "What is overdue, and what can wait?"
+                && busy[0].detail == "From your 7 open tasks"
+                && busy[2].question == "Why does Docs & runbooks sync keep failing?"
+                && busy[4].detail == "From your 2 follow-ups",
+              "UX-08: a busy captain's starters read \(busy.map(\.question))", &ok)
+        let quiet = StrawHatStarters.make(.init())
+        check(quiet.count == StrawHatStarters.count && !quiet.contains { $0.detail.contains(" 0 ") },
+              "UX-08: a new captain's starters count zeros: \(quiet.map(\.detail))", &ok)
+        check(Set(StrawHatMember.allCases.map(\.roleWord)).count == StrawHatMember.allCases.count
+                && StrawHatMember.allCases.allSatisfy { !$0.roleWord.contains(" ") },
+              "UX-08: a crew member's role is not one word of its own", &ok)
+        autoreleasepool {
+            let chat = StrawHatChatView()
+            chat.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+            chat.setStarters(busy)
+            chat.layoutSubtreeIfNeeded()
+            check(!chat.debugStarterGrid.isHidden && chat.debugEmptyStateHidden && chat.debugStarterGrid.debugCards.count == 6,
+                  "UX-08: the empty thread does not show six starters in place of the paragraph", &ok)
+            chat.debugStarterGrid.debugPick(1)
+            check(chat.debugComposerText == busy[1].question, "UX-08: a starter did not fill the composer", &ok)
+        }
     }
 }
 

@@ -214,6 +214,8 @@ final class StrawHatPortraitTile: NSView {
 final class StrawHatCrewStrip: NSView {
 
     private var tiles: [StrawHatMember: StrawHatPortraitTile] = [:]
+    private var nameLabels: [NSTextField] = []
+    private var roleLabels: [NSTextField] = []
     private let caption = NSTextField(labelWithString: "")
     private var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -226,13 +228,28 @@ final class StrawHatCrewStrip: NSView {
             let tile = StrawHatPortraitTile(member: member, side: StrawHatPortraitTile.stripSize)
             tile.toolTip = "\(member.displayName) \u{00B7} \(member.role)"
             tiles[member] = tile
-            views.append(tile)
+            // UX-08: each portrait says who it is and what it does.
+            let name = NSTextField(labelWithString: member.displayName)
+            name.font = .systemFont(ofSize: HelmType.scaled(11), weight: .semibold)
+            let role = NSTextField(labelWithString: member.roleWord)
+            role.font = .systemFont(ofSize: HelmType.scaled(10.5))
+            nameLabels.append(name)
+            roleLabels.append(role)
+            let column = NSStackView(views: [tile, name, role])
+            column.orientation = .vertical
+            column.alignment = .centerX
+            column.spacing = 1
+            column.setCustomSpacing(HelmMetrics.s1, after: tile)
+            column.setAccessibilityElement(true)
+            column.setAccessibilityRole(.group)
+            column.setAccessibilityLabel("\(member.displayName), \(member.roleWord)")
+            views.append(column)
         }
 
         let row = NSStackView(views: views)
         row.orientation = .horizontal
-        row.spacing = HelmMetrics.s2
-        row.alignment = .centerY
+        row.spacing = HelmMetrics.s4
+        row.alignment = .top
         row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false
 
@@ -298,6 +315,8 @@ final class StrawHatCrewStrip: NSView {
         self.theme = theme
         caption.textColor = HelmTheme.mutedInk(theme)
         tiles.values.forEach { $0.applyTheme(theme) }
+        for label in nameLabels { label.textColor = HelmTheme.nsColor(theme.chromeInkHex) }
+        for label in roleLabels { label.textColor = HelmTheme.mutedInk(theme) }
     }
 
     #if FM_SELFTESTS

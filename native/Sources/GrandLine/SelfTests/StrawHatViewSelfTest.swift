@@ -347,7 +347,11 @@ enum StrawHatViewSelfTest {
         // transcript area (so its own content centres in it) rather than sit
         // as a card at the top of a tall blank space, which is exactly how it
         // rendered before a real off-screen render caught it.
-        check(!chat.debugEmptyStateHidden, "an empty thread shows the empty state", &ok)
+        // UX-08: the page hands an empty thread its starters, which take the
+        // paragraph's place at the top of the transcript area.
+        check(chat.debugEmptyStateHidden && !chat.debugStarterGrid.isHidden
+                && chat.debugStarterGrid.starters.count == StrawHatStarters.count,
+              "an empty thread shows its starters", &ok)
         check(chat.debugEmptyStateFrame.height > chat.frame.height * 0.5,
               "the empty state fills the transcript area (so it centres) - got \(chat.debugEmptyStateFrame.height) of \(chat.frame.height)", &ok)
 
@@ -644,7 +648,7 @@ enum StrawHatViewSelfTest {
         m.controller.debugNewButton.performClick(nil)
         m.controller.view.layoutSubtreeIfNeeded()
         check(chat.debugMessageCount == 0, "\"New conversation\" clears the transcript", &ok)
-        check(!chat.debugEmptyStateHidden, "...and brings the empty state back", &ok)
+        check(!chat.debugStarterGrid.isHidden, "...and brings the starters back", &ok)
         check(!m.controller.debugNewButton.isEnabled, "...and disables itself again", &ok)
 
         // The next turn genuinely starts a new session rather than resuming
