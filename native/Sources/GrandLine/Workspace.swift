@@ -515,7 +515,26 @@ final class Workspace {
         runbooks.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
         runbooks.onDrillActionsChanged = { [weak self] in self?.chromeActionsMayHaveChanged() }
         // UX-17: a run's step sends its command to the Console's active tab.
-        runbooks.onSendCommand = { [weak self] command in self?.console.sendCommandLibraryTextToActiveTab(command) }
+        // D-01: run mode types a step into the same tab "Send to terminal"
+        // does, and reads its output back from it.
+        runbooks.stepTerminal = { [weak self] in
+            guard let tab = self?.console.currentTab else { return nil }
+            return (tab, tab.name)
+        }
+        runbooks.onOpenConsole = { [weak self] in self?.navigator.show(.console) }
+        // D-01: a finished run lands on the timeline of whichever host has an
+        // active incident - the same entry SRE Lead's runbook runs make.
+        runbooks.onRunFinished = { [weak self] run in
+            var attached: String?
+            self?.hosts.forEachConsole { console in
+                guard attached == nil, let incident = console.activeIncident() else { return }
+                let failed = run.steps.contains { $0.outcome == .failed }
+                console.noteRunbookRun(name: run.runbookTitle, ran: run.finishedCount, total: run.steps.count,
+                                       ok: run.finishedCount == run.steps.count && !failed, refused: false)
+                attached = incident.id
+            }
+            return attached
+        }
         return built(.runbooks, runbooks)
     }()
 

@@ -252,7 +252,6 @@ final class RunbookDetailView: NSView {
     var onEdit: (() -> Void)?
     /// The step on screen is done.
     var onTick: (() -> Void)?
-    var onSendCommand: ((String) -> Void)?
 
     private let titleLabel = NSTextField(wrappingLabelWithString: "")
     let runButton = HelmButton(title: "Run", variant: .primary, size: .small, symbol: "play.fill")
@@ -265,6 +264,8 @@ final class RunbookDetailView: NSView {
     private var fillWidth: NSLayoutConstraint?
     private let soFarLabel = NSTextField(labelWithString: "")
     private let stepsStack = NSStackView()
+    /// D-01: the current step's panel, and the finished run's.
+    let stepPanel = RunbookStepPanel()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var fraction: CGFloat = 0
@@ -331,7 +332,8 @@ final class RunbookDetailView: NSView {
         emptyLabel.stringValue = "This runbook has no steps yet. A numbered or bulleted line in its Markdown is a step, "
             + "and a fenced block under a step is its command."
 
-        let stack = NSStackView(views: [header, progressRow, stepsStack, emptyLabel])
+        stepPanel.render(.hidden, theme: theme)
+        let stack = NSStackView(views: [header, progressRow, stepsStack, stepPanel, emptyLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = HelmMetrics.s3
@@ -349,6 +351,7 @@ final class RunbookDetailView: NSView {
             header.widthAnchor.constraint(equalTo: stack.widthAnchor),
             progressRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             stepsStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stepPanel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             emptyLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
     }
@@ -423,17 +426,8 @@ final class RunbookDetailView: NSView {
                 chip.configure(text: RunbookWords.stepTime(session.durations[index]), tint: .good, theme: theme)
                 views.append(chip)
             }
-            if current, let command = step.command {
-                let send = HelmButton(title: "Send to terminal", variant: .secondary, size: .small, symbol: "terminal")
-                send.toolTip = "Type this step's command into the Console's active tab: \(command)"
-                let sleeve = ClosureSleeve { [weak self] in self?.onSendCommand?(command) }
-                sleeves.append(sleeve)
-                send.target = sleeve
-                send.action = #selector(ClosureSleeve.invoke)
-                send.setContentHuggingPriority(.required, for: .horizontal)
-                send.setContentCompressionResistancePriority(.required, for: .horizontal)
-                views.append(send)
-            }
+            // D-01: the step panel under the checklist carries the step's
+            // command and "Run in Console", so the row has no send button.
             let row = NSStackView(views: views)
             row.orientation = .horizontal
             row.alignment = .centerY

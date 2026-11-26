@@ -286,7 +286,7 @@ final class ScreenTextResultView: NSView {
         let titles = NSStackView(views: [titleLabel, subtitleLabel])
         titles.orientation = .vertical
         titles.alignment = .leading
-        titles.spacing = 1
+        titles.spacing = HelmMetrics.s0
         titles.setHuggingPriority(.defaultLow, for: .horizontal)
         let close = HelmButton(title: "", variant: .quiet, size: .small, symbol: "xmark",
                                target: self, action: #selector(closeTapped))

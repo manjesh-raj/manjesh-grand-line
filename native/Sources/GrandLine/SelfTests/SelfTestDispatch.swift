@@ -2228,6 +2228,13 @@ enum SelfTestDispatch {
             exit(DevServerSelfTest.run() ? 0 : 1)
         }
 
+        // D-01 of full review 4: runbook run mode - marker capture against a fake
+        // shell, the evidence and its Markdown, and the page end to end through
+        // attaching to a postmortem. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_RUNBOOK_RUN_MODE_TESTS"] == "1" {
+            exit(RunbookRunModeSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }

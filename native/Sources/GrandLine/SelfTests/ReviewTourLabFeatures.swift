@@ -18,6 +18,7 @@
 //     ux devservers open <id>         D-02: show one project's page
 //     ux devservers logtab            D-02: the shown dev server's Log tab
 //     ux devservers sheet <name>      D-02: the Add sheet on Dev server
+//     ux runmode <captured|failed|finished>   D-01: Runbooks in run mode (goto runbooks first)
 //
 // GL-27: debug builds only.
 
@@ -27,7 +28,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -38,6 +39,8 @@ extension ReviewTourLab {
         }
         guard let name = rest.first else { return "ux \(verb) FAILED - want a name" }
         switch verb {
+        case "runmode":
+            return seedRunMode(shell.workspace.runbooks, state: name)
         case "devservers" where name == "seed":
             return seedDevServers(shell)
         case "devservers" where name == "open":
@@ -146,6 +149,68 @@ extension ReviewTourLab {
         let deadline = Date().addingTimeInterval(5)
         while !finished, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
         return "ux expiry seed (\(monitor.store.state.items.count) items, \(monitor.store.state.filed.count) filed)"
+    }
+
+    /// D-01's demo: "Rotate a TLS certificate" in run mode, at step 3 with
+    /// captured output, at step 4 failed, or finished with a retry and a skip.
+    static func seedRunMode(_ page: RunbooksController, state: String) -> String {
+        let store = DocsRunbookStore()
+        let content = """
+        # Rotate a TLS certificate
+
+        1. Check the current expiry
+        ```
+        openssl x509 -enddate -noout -in /etc/ssl/edge.pem
+        ```
+        2. Generate the CSR and sign it
+        ```
+        openssl req -new -key edge.key -out edge.csr
+        ```
+        3. Deploy to edge-proxy-01
+        ```
+        scp edge.pem ops@edge-01.example.test:/etc/ssl/edge.pem
+        ssh ops@edge-01.example.test 'sudo systemctl reload haproxy'
+        ```
+        4. Deploy to edge-proxy-02
+        ```
+        scp edge.pem ops@edge-02.example.test:/etc/ssl/edge.pem
+        ```
+        5. Verify from outside
+        """
+        let runbook = store.listRunbooks().first { $0.title == "Rotate a TLS certificate" }
+            ?? store.createRunbook(title: "Rotate a TLS certificate", content: content)
+        page.debugReloadRunbooks()
+        page.debugSelect(runbook.id)
+        let shell = RunbookRunModeSelfTest.FakeShell(output: ["notAfter=Nov 30 23:59:59 2026 GMT"], status: 0)
+        page.stepTerminal = { (shell, "DEV Bastion") }
+        page.debugStartRun()
+        func capture(_ index: Int, _ command: String, _ output: [String], _ status: Int32) {
+            shell.output = output
+            shell.status = status
+            let before = page.evidence?.steps[index].attempts.count ?? 0
+            page.startCapture(command: command, index: index, terminal: shell)
+            let deadline = Date().addingTimeInterval(3)
+            while (page.evidence?.steps[index].attempts.count ?? 0) <= before, Date() < deadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            }
+        }
+        capture(0, "openssl x509 -enddate -noout -in /etc/ssl/edge.pem", ["notAfter=Nov 30 23:59:59 2026 GMT"], 0)
+        page.debugDetail.stepPanel.debugPress("Mark done, next step")
+        capture(1, "openssl req -new -key edge.key -out edge.csr", ["Signature ok", "subject=CN = edge.example.test"], 0)
+        page.debugDetail.stepPanel.debugPress("Mark done, next step")
+        capture(2, "scp edge.pem ops@edge-01.example.test:/etc/ssl/edge.pem\nssh ops@edge-01.example.test 'sudo systemctl reload haproxy'",
+                ["edge.pem                100% 3.2KB   1.1MB/s   00:00", "\u{25CF} haproxy.service reloaded",
+                 "notAfter=Feb 23 10:44:02 2027 GMT"], 0)
+        if state == "captured" { return "ux runmode captured" }
+        page.debugDetail.stepPanel.debugPress("Mark done, next step")
+        capture(3, "scp edge.pem ops@edge-02.example.test:/etc/ssl/edge.pem",
+                ["[ALERT] (1) : config : parsing [/etc/haproxy/haproxy.cfg:41] : unable to load SSL certificate '/etc/ssl/edge.pem'",
+                 "Job for haproxy.service failed."], 1)
+        if state == "failed" { return "ux runmode failed" }
+        capture(3, "scp edge.pem ops@edge-02.example.test:/etc/ssl/edge.pem", ["edge.pem 100% 3.2KB", "reloaded"], 0)
+        page.debugDetail.stepPanel.debugPress("Mark done, next step")
+        page.skipCurrentStep(reason: "the outside probe host is down")
+        return "ux runmode finished"
     }
 
     /// D-02's demo: devops-atlas as a running static site, checkout-web as a

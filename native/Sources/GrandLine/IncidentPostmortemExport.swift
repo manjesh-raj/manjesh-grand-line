@@ -285,7 +285,7 @@ final class IncidentExportPanel: NSView {
         let header = NSStackView(views: [titleLabel, kickerLabel])
         header.orientation = .vertical
         header.alignment = .leading
-        header.spacing = 1
+        header.spacing = HelmMetrics.s0
 
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
