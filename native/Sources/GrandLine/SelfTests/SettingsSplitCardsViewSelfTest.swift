@@ -219,6 +219,21 @@ enum SettingsSplitCardsViewSelfTest {
         // The fixture can fail: some description really needs more than the
         // two lines it used to get.
         check(longest > 2, "UI-06: fixture: no description on a card needs more than two lines (\(longest))", &ok)
+
+        // Terminal's working-directory field has no intrinsic width, so it
+        // and the description tied for the row's slack, and which one won
+        // varied by run (gotcha (10)): measured once at 320pt, which cut the
+        // description to four words. A preferred width in gotcha (13)'s
+        // 251-499 band settles the tie toward the words.
+        let terminal = show(.terminal, shell)
+        let field = terminal.debugSplitCard(.terminal)?.list?.rows
+            .first { $0.titleLabel.stringValue == "Working directory" }
+            .flatMap { ($0.control as? NSStackView)?.arrangedSubviews.first }
+        let preference = field?.constraints.first { constraint in
+            constraint.firstAttribute == .width && constraint.relation == .equal && constraint.secondItem == nil
+                && constraint.priority.rawValue > 250 && constraint.priority.rawValue < 500
+        }
+        check(preference != nil, "UI-06: the working-directory field has no preferred width over the description's hug", &ok)
     }
 
     private static func checkNoSettingBecameUnreachable(_ shell: MainSplitShellController, _ window: NSWindow,
