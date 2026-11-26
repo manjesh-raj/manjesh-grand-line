@@ -27,6 +27,7 @@ enum ReviewTourLabSelfTest {
         print("== ReviewTourLabSelfTest ==")
         ok = checkTheGrammar() && ok
         ok = checkATourDrivesAShellAndRenders() && ok
+        ok = checkTheSurfaceVerbsRender() && ok
         print(ok ? "ReviewTourLabSelfTest: OK" : "ReviewTourLabSelfTest: FAILED")
         return ok
     }
@@ -201,6 +202,52 @@ enum ReviewTourLabSelfTest {
             check(distinct.count >= 3,
                   "a 7x7 sweep of the render found \(distinct.count) distinct colour(s) - "
                   + "the page did not draw", &ok)
+        }
+        return ok
+    }
+
+    /// Full review 4, T-03: every surface verb renders its real controller to
+    /// a PNG with something drawn in it, and none of them fails quietly.
+    private static func checkTheSurfaceVerbsRender() -> Bool {
+        var ok = true
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gl-review-tour-surfaces-\(ProcessInfo.processInfo.processIdentifier)",
+                                    isDirectory: true)
+        try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: out) }
+        let verbs: [(line: String, png: String)] = [
+            ("lock s-lock lit", "s-lock"), ("chest s-chest open", "s-chest"), ("palette s-palette rotate", "s-palette"),
+            ("capture s-capture a note", "s-capture"), ("tasksheet s-task", "s-task"), ("toast done s-toast", "s-toast"),
+            ("hud listening s-hud", "s-hud"), ("menubar s-menubar", "s-menubar"), ("clipboard s-clipboard", "s-clipboard"),
+            ("confirm s-confirm destructive", "s-confirm"),
+        ]
+        // The list covers every verb the file answers, so a new one is not
+        // left out of this check.
+        check(Set(verbs.map { String($0.line.split(separator: " ")[0]) }) == ReviewTourLab.surfaceVerbs,
+              "the check covers \(verbs.count) verbs, not all of \(ReviewTourLab.surfaceVerbs.sorted())", &ok)
+        autoreleasepool {
+            let (window, shell) = ReviewTourLab.makeOffScreenShell()
+            _ = ReviewTourLab.run(steps: [.demoTasks], shell: shell, window: window, outputDirectory: out)
+            for verb in verbs {
+                let line = ReviewTourLab.applyUXState(verb.line, shell: shell, outputDirectory: out)
+                check(!line.contains("FAILED"), "ux \(verb.line): \(line)", &ok)
+                guard let data = try? Data(contentsOf: out.appendingPathComponent("\(verb.png).png")),
+                      let rep = NSBitmapImageRep(data: data) else {
+                    fail("ux \(verb.line) wrote no readable PNG", &ok)
+                    continue
+                }
+                var distinct = Set<String>()
+                for row in 1..<8 {
+                    for column in 1..<8 {
+                        let x = min(rep.pixelsWide * column / 8, rep.pixelsWide - 1)
+                        let y = min(rep.pixelsHigh * row / 8, rep.pixelsHigh - 1)
+                        if let colour = rep.colorAt(x: x, y: y) { distinct.insert(String(describing: colour)) }
+                    }
+                }
+                check(distinct.count >= 2, "ux \(verb.line) rendered one flat colour - nothing drew", &ok)
+            }
+            check(ReviewTourLab.applyUXState("hud nonsense s-x", shell: shell, outputDirectory: out).contains("FAILED"),
+                  "an unknown HUD state did not say FAILED", &ok)
         }
         return ok
     }
