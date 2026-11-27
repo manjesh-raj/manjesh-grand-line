@@ -25,6 +25,14 @@
 // and calls back when the answer changes; each scene decides what "still"
 // means for its own layers, because only it knows its Reduce Motion picture.
 //
+// **Low Power Mode is the odd one out**, because it is the one condition
+// that holds while somebody *is* looking. So the gate also says when Low
+// Power Mode is the only thing holding the scene still
+// (`heldOnlyByLowPower`), and a scene may keep its signature motion then.
+// The lighthouse keeps its lens turning (`LockScreenController.beamHoldsStill`)
+// and pauses the rest. The chest has no such motion: its seam, rays and
+// twinkles all pause.
+//
 // **Attach and detach with the scene.** `attach(to:)` registers the
 // observers for one window and `detach()` removes them, so a scene that is
 // hidden costs no notifications either (GL-13).
@@ -41,10 +49,16 @@ final class DecorativeMotionGate {
         var lowPower: Bool
 
         var allowsMotion: Bool { !reduceMotion && appActive && windowVisible && !lowPower }
+
+        /// Someone is looking and nothing but Low Power Mode holds the
+        /// scene still.
+        var heldOnlyByLowPower: Bool { lowPower && !reduceMotion && appActive && windowVisible }
     }
 
     /// True while the scene should show its still picture.
     private(set) var holdsStill: Bool
+    /// True while Low Power Mode is the only reason `holdsStill` is true.
+    private(set) var heldOnlyByLowPower = false
     private let onChange: (_ holdsStill: Bool) -> Void
     private weak var window: NSWindow?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
@@ -63,7 +77,7 @@ final class DecorativeMotionGate {
     /// is about to draw its scene and reads `holdsStill` to decide how.
     func attach(to window: NSWindow) {
         if isAttached, self.window === window {
-            holdsStill = !conditions.allowsMotion
+            settle(conditions)
             return
         }
         detach()
@@ -84,7 +98,12 @@ final class DecorativeMotionGate {
                 self?.reevaluate()
             }),
         ]
-        holdsStill = !conditions.allowsMotion
+        settle(conditions)
+    }
+
+    private func settle(_ now: Conditions) {
+        holdsStill = !now.allowsMotion
+        heldOnlyByLowPower = now.heldOnlyByLowPower
     }
 
     /// Stops watching. The scene is gone, so nothing calls back.
@@ -94,12 +113,12 @@ final class DecorativeMotionGate {
         window = nil
     }
 
-    /// Reads the conditions again and calls back if the answer changed.
+    /// Reads the conditions again and calls back if either answer changed.
     func reevaluate() {
-        let still = !conditions.allowsMotion
-        guard still != holdsStill else { return }
-        holdsStill = still
-        onChange(still)
+        let now = conditions
+        guard !now.allowsMotion != holdsStill || now.heldOnlyByLowPower != heldOnlyByLowPower else { return }
+        settle(now)
+        onChange(holdsStill)
     }
 
     var conditions: Conditions {

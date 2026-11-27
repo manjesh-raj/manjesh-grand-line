@@ -369,13 +369,14 @@ final class LockScreenController: NSViewController {
     /// **Always visible, enabled only while Automic Vault cannot check the
     /// password** (`.serviceNotRunning`, `.transientFailure`) - the captain's
     /// option 3, which keeps the lock policy exactly as X1 set it. On an
-    /// ordinary day it is shown disabled, and `touchIDNote` says why.
+    /// ordinary day it is shown disabled, and its accessibility help says why.
     private let touchIDButton = HelmIconButton(symbol: "touchid", label: "Unlock with Touch ID")
     /// The pill and the Touch ID button, side by side.
     private let passwordRow = NSStackView()
-    /// The line under the pill that says what the Touch ID button does in
-    /// this state, or why it is disabled. Also the button's accessibility
-    /// help, so VoiceOver explains a disabled button too.
+    /// The line under the pill, shown only while Automic Vault cannot check
+    /// the password: it tells the person to use Touch ID. On an ordinary
+    /// day it is hidden, and the disabled button's reason lives in its
+    /// accessibility help instead.
     private let touchIDNote = NSTextField(wrappingLabelWithString: "")
     /// What the note means, which decides its colour.
     private enum NoteTone { case info, warn }
@@ -1240,8 +1241,23 @@ final class LockScreenController: NSViewController {
     /// PF-01 widened "Reduce Motion" to the gate's whole rule: the same still
     /// picture is drawn while the app is inactive, the window is occluded or
     /// Low Power Mode is on, and the loops come back when all of that clears.
+    /// The one exception is the lens in Low Power Mode (`beamHoldsStill`).
     private var prefersReducedMotion: Bool {
         HelmMotion.isReduced || (motionGate?.holdsStill ?? false)
+    }
+
+    /// Whether the lens shows Reduce Motion's still beam.
+    ///
+    /// The beam turning is the scene's signature, so it outlasts Low Power
+    /// Mode: while Low Power Mode is the only thing holding the scene still,
+    /// the lens keeps turning and only the fog, the waves and the boat pause
+    /// (the captain's call, `fm/grandline-lockscreen-beam-and-caption`). A
+    /// Mac that keeps Low Power Mode on all the time otherwise never saw it
+    /// turn. Inactive, occluded and Reduce Motion stop the lens as before.
+    private var beamHoldsStill: Bool {
+        guard prefersReducedMotion else { return false }
+        if HelmMotion.isReduced { return true }
+        return !(motionGate?.heldOnlyByLowPower ?? false)
     }
 
     /// E4 (`data/grand-line-e2e-audit/report.md`): stop the looping
@@ -1305,16 +1321,27 @@ final class LockScreenController: NSViewController {
     }
 
     /// Adds or removes the looping decoration to match the current setting.
+    ///
+    /// The lens is decided apart from the rest, because it keeps turning in
+    /// Low Power Mode while the fog, the waves and the boat hold still
+    /// (`beamHoldsStill`). It is only restarted when it has to
+    /// change, so a callback that leaves it turning keeps its phase.
     private func applyMotionPreference() {
         if prefersReducedMotion {
             boatImageView.layer?.removeAnimation(forKey: "bob")
             waveLayer.removeAnimation(forKey: "drift")
             backWaveLayer.removeAnimation(forKey: "drift")
-            lighthouse.stopAll()
-            if isLit { lighthouse.showLit(reducedMotion: true) }
+            lighthouse.stopDrift()
         } else if animationsStarted, boatImageView.layer?.animation(forKey: "bob") == nil {
             addLoopingAnimations()
-            if isLit { lighthouse.showLit(reducedMotion: false) }
+        }
+        guard isLit else { return }
+        // The still beam is drawn every time (it is not a loop, and a relock
+        // can arrive with the lens already stopped); a turning one is only
+        // started when it is not already turning.
+        let still = beamHoldsStill
+        if still || !lighthouse.isTurning {
+            lighthouse.showLit(reducedMotion: still)
         }
     }
 
@@ -1564,8 +1591,8 @@ final class LockScreenController: NSViewController {
     /// **The button is always there and works only in the two
     /// Vault-failing states** - the captain's option 3, which is X1's rule
     /// unchanged. `.locked` has a working password field (no dead end to
-    /// escape), so there the button is disabled and the note says when it
-    /// will work. `.noPasswordConfigured`/`.avUnavailable` are setup cards
+    /// escape), so there the button is disabled, with no line under the
+    /// field, and its accessibility help says when it will work. `.noPasswordConfigured`/`.avUnavailable` are setup cards
     /// without the form, and that is the GL-09 line: a machine that has
     /// never had an app password set must not be unlockable by anyone who
     /// can wake its screen.
@@ -1581,6 +1608,11 @@ final class LockScreenController: NSViewController {
         let passwordOnly = kind == .macPassword
         touchIDButton.setSymbol(passwordOnly ? "key.fill" : "touchid")
         let action = passwordOnly ? "Unlock with your Mac password" : "Unlock with Touch ID"
+        // `note` is the button's reason, always. Only the states where
+        // Automic Vault has an issue (or a prompt is open) put a line under
+        // the pill: on an ordinary day the disabled button carries its reason
+        // in VoiceOver and its tooltip, and nothing sits under the field (the
+        // captain's call, `fm/grandline-lockscreen-beam-and-caption`).
         let note: String
         if localAuthInFlight {
             note = passwordOnly ? "Waiting for your Mac password\u{2026}" : "Waiting for Touch ID\u{2026}"
@@ -1591,9 +1623,7 @@ final class LockScreenController: NSViewController {
                 : "Touch ID isn't available on this Mac, so only your Grand Line password unlocks it."
             touchIDNoteTone = isShowingVaultFailure ? .warn : .info
         } else if isShowingVaultFailure {
-            note = passwordOnly
-                ? "Use your Mac password instead, or type your Grand Line password again to retry."
-                : "Use Touch ID instead, or type your password again to retry."
+            note = passwordOnly ? "Use your Mac password to unlock." : "Use Touch ID to unlock."
             touchIDNoteTone = .warn
         } else {
             note = passwordOnly
@@ -1605,12 +1635,12 @@ final class LockScreenController: NSViewController {
         touchIDButton.setLabel(action)
         // A disabled control gets no tooltip from AppKit's tracking, and
         // VoiceOver reads a dimmed button by its label alone - so the reason
-        // travels as the help text, and the note under the pill says it on
-        // screen.
+        // travels as the help text whether or not the line shows it.
         touchIDButton.setAccessibilityHelp(note)
         if !works { touchIDButton.toolTip = "\(action) - \(note)" }
-        touchIDNote.stringValue = note
-        touchIDNote.isHidden = false
+        let showsNote = isShowingVaultFailure || localAuthInFlight
+        touchIDNote.stringValue = showsNote ? note : ""
+        touchIDNote.isHidden = !showsNote
         if let scene = currentScene { applyTouchIDStyle(ThemeManager.shared.theme, scene: scene) }
     }
 
@@ -1795,7 +1825,7 @@ final class LockScreenController: NSViewController {
         cardShadowHost.layer?.mask = nil
         cardShadowHost.alphaValue = lit ? 1 : 0
         cardShadowHost.isInert = !lit
-        if lit { lighthouse.showLit(reducedMotion: prefersReducedMotion) } else { lighthouse.showUnlit() }
+        if lit { lighthouse.showLit(reducedMotion: beamHoldsStill) } else { lighthouse.showUnlit() }
     }
 
     /// Lights the lamp. From the pointer the lens spins up and the first beam
@@ -1805,7 +1835,7 @@ final class LockScreenController: NSViewController {
         guard !isLit, openStyle else { return }
         isLit = true
         cardShadowHost.isInert = false
-        let reduced = prefersReducedMotion
+        let reduced = beamHoldsStill
         lighthouse.light(reducedMotion: reduced, spinUp: source == .pointer && !reduced,
                          fadeVeil: source == .key ? 0.3 : 0.9)
         if source == .pointer && !reduced {

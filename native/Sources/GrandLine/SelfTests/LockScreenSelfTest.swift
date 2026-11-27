@@ -622,16 +622,23 @@ enum LockScreenSelfTest {
         if ok { print("  attached while locked, detached on unlock, re-attached on re-lock, and both call sites present") }
     }
 
-    // MARK: 6b - nobody looking (full review 4, PF-01)
+    // MARK: 6b - nobody looking (full review 4, PF-01), and Low Power Mode
 
-    /// The loops stop while the app is inactive, the window is occluded or
-    /// Low Power Mode is on, the lit lamp shows Reduce Motion's still beam,
-    /// and everything comes back when the condition clears. Each condition
-    /// is pinned on `DecorativeMotionGate` and then announced by posting the
-    /// real notification, so the change enters through the observer the app
+    /// The loops stop while the app is inactive or the window is occluded,
+    /// the lit lamp shows Reduce Motion's still beam, and everything comes
+    /// back when the condition clears. Each condition is pinned on
+    /// `DecorativeMotionGate` and then announced by posting the real
+    /// notification, so the change enters through the observer the app
     /// registers rather than a test hook one call inside it.
+    ///
+    /// **Low Power Mode keeps the beam turning** and pauses only the fog,
+    /// the waves and the boat (`fm/grandline-lockscreen-beam-and-caption`).
+    /// PF-01 had held the whole scene still in Low Power Mode, and the
+    /// captain's Mac keeps it on, on battery and on AC, so the beam never
+    /// turned there. A self-test process reads Low Power Mode as off unless a
+    /// suite pins it, which is why no suite saw it: this case pins it.
     private static func checkLoopsHoldStillWhileNobodyLooks(_ ok: inout Bool) {
-        print("LockScreenSelfTest: the scene holds still while the app is inactive, occluded or in Low Power Mode (PF-01)")
+        print("LockScreenSelfTest: inactive or occluded holds the scene still, and Low Power Mode keeps the beam turning")
         let savedReduced = HelmMotion.reducedOverrideForTests
         HelmMotion.reducedOverrideForTests = false
         defer {
@@ -645,45 +652,98 @@ enum LockScreenSelfTest {
         controller.restartAnimationsIfNeeded()
         controller.debugKeyDown()
         let lighthouse = controller.debugLighthouse
-        func moving() -> Bool {
-            controller.debugLoopingAnimationsAttached && lighthouse.debugLensTurning && lighthouse.debugFogDrifting
+        /// The beam, and everything else that loops (fog, waves, boat).
+        func scene() -> (beam: Bool, rest: Bool) {
+            (lighthouse.debugLensTurning,
+             controller.debugLoopingAnimationsAttached || lighthouse.debugFogDrifting)
         }
-        func still() -> Bool {
-            !controller.debugLoopingAnimationsAttached && !lighthouse.debugLensTurning && !lighthouse.debugFogDrifting
+        func expect(_ beam: Bool, _ rest: Bool, _ what: String) {
+            let now = scene()
+            if now.beam != beam || now.rest != rest {
+                fail(&ok, "\(what): beam \(now.beam ? "turning" : "still"), fog/waves/boat \(now.rest ? "moving" : "still") - "
+                     + "want beam \(beam ? "turning" : "still"), fog/waves/boat \(rest ? "moving" : "still")")
+            }
+            if !beam && !lighthouse.debugStillBeamShown { fail(&ok, "\(what), and the lit lamp shows no still beam") }
+            if !controller.debugIsLit { fail(&ok, "\(what), and the lamp went out - holding still must keep the gate as it was") }
+            if lighthouse.debugGlassOpacity != 1 { fail(&ok, "\(what), and the lit lamp lost its glass") }
         }
         // The check's own power: everything is moving before anything is pinned.
-        guard controller.debugIsLit, moving() else {
+        guard controller.debugIsLit, scene() == (true, true) else {
             fail(&ok, "the lit scene is not moving to begin with (lit=\(controller.debugIsLit)), so this check would pass vacuously")
             return
         }
         let center = NotificationCenter.default
-        let cases: [(String, (Bool) -> Void, () -> Void)] = [
-            ("the app resigned active",
-             { DecorativeMotionGate.appActiveOverrideForTests = !$0 },
-             { center.post(name: NSApplication.didResignActiveNotification, object: nil) }),
-            ("the window was occluded",
-             { DecorativeMotionGate.windowVisibleOverrideForTests = !$0 },
-             { center.post(name: NSWindow.didChangeOcclusionStateNotification, object: window) }),
-            ("Low Power Mode came on",
-             { DecorativeMotionGate.lowPowerOverrideForTests = $0 },
-             { center.post(name: Notification.Name.NSProcessInfoPowerStateDidChange, object: nil) }),
-        ]
-        for (name, pin, announce) in cases {
-            pin(true)
-            announce()
-            if !still() { fail(&ok, "\(name), but the scene kept moving") }
-            if !controller.debugIsLit { fail(&ok, "\(name), and the lamp went out - holding still must keep the gate as it was") }
-            if lighthouse.debugGlassOpacity != 1 { fail(&ok, "\(name), and the lit lamp lost its glass (the still beam is drawn lit)") }
-            pin(false)
-            announce()
-            if !moving() { fail(&ok, "\(name) and then cleared, but the scene did not move again") }
+        func setActive(_ on: Bool) {
+            DecorativeMotionGate.appActiveOverrideForTests = on
+            center.post(name: on ? NSApplication.didBecomeActiveNotification : NSApplication.didResignActiveNotification, object: nil)
         }
+        func setVisible(_ on: Bool) {
+            DecorativeMotionGate.windowVisibleOverrideForTests = on
+            center.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        }
+        func setLowPower(_ on: Bool) {
+            DecorativeMotionGate.lowPowerOverrideForTests = on
+            center.post(name: Notification.Name.NSProcessInfoPowerStateDidChange, object: nil)
+        }
+
+        // Nobody looking: everything holds still, and comes back.
+        setActive(false); expect(false, false, "the app resigned active")
+        setActive(true); expect(true, true, "the app became active again")
+        setVisible(false); expect(false, false, "the window was occluded")
+        setVisible(true); expect(true, true, "the window became visible again")
+
+        // Low Power Mode: the beam turns, the rest pauses - and off, all runs.
+        setLowPower(true); expect(true, false, "Low Power Mode came on")
+        setLowPower(false); expect(true, true, "Low Power Mode went off")
+
+        // Low Power Mode and nobody looking: still; looking again, the beam.
+        setLowPower(true)
+        setActive(false); expect(false, false, "Low Power Mode is on and the app resigned active")
+        setActive(true); expect(true, false, "Low Power Mode is on and the app became active again")
+        setVisible(false); expect(false, false, "Low Power Mode is on and the window was occluded")
+        setVisible(true); expect(true, false, "Low Power Mode is on and the window became visible again")
+        setLowPower(false); expect(true, true, "Low Power Mode went off again")
+
+        // Reduce Motion, announced the way macOS does: the still beam.
+        HelmMotion.reducedOverrideForTests = true
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+        expect(false, false, "Reduce Motion came on")
+        HelmMotion.reducedOverrideForTests = false
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+        expect(true, true, "Reduce Motion went off")
+
         // A notification about another window says nothing about this one.
         DecorativeMotionGate.windowVisibleOverrideForTests = false
         center.post(name: NSWindow.didChangeOcclusionStateNotification, object: NSObject())
-        if !moving() { fail(&ok, "another window's occlusion change stopped this scene") }
+        expect(true, true, "another window's occlusion changed")
         DecorativeMotionGate.resetOverridesForTests()
-        if ok { print("  inactive, occluded and Low Power each hold the lit scene still, and clearing each brings it back") }
+
+        // A relock that lands while the app is inactive, on a controller
+        // whose lens has only ever turned: the still beam must be drawn, not
+        // left as whatever the stopped lens last had in its model (nothing).
+        // Then the whole scene once the app is active (the launch lock too).
+        let relock = LockScreenController()
+        let relockWindow = mount(relock)
+        defer { relockWindow.contentView = nil; relock.stopAnimations() }
+        relock.apply(.locked(subtitle: "Grand Line is locked."))
+        relock.restartAnimationsIfNeeded()
+        relock.debugKeyDown()
+        let relockLens = relock.debugLighthouse
+        guard relockLens.debugLensTurning, !relockLens.debugStillBeamShown else {
+            fail(&ok, "the fresh lit lens is not turning, so the relock case would pass vacuously")
+            return
+        }
+        relock.stopAnimations()
+        DecorativeMotionGate.appActiveOverrideForTests = false
+        relock.restartAnimationsIfNeeded()
+        if relockLens.debugLensTurning || !relockLens.debugStillBeamShown || relock.debugLoopingAnimationsAttached {
+            fail(&ok, "a relock while the app is inactive does not show the still scene (lens turning: \(relockLens.debugLensTurning), still beam: \(relockLens.debugStillBeamShown))")
+        }
+        setActive(true)
+        if !relockLens.debugLensTurning || !relock.debugLoopingAnimationsAttached || !relockLens.debugFogDrifting {
+            fail(&ok, "the app became active after a relock and the scene did not move again")
+        }
+        if ok { print("  inactive/occluded/Reduce Motion hold all still; Low Power Mode keeps the beam and pauses the rest; each clears") }
     }
 
     // MARK: 6c - the tower takes the keyboard (full review 4, A-02)
@@ -729,8 +789,9 @@ enum LockScreenSelfTest {
 
     /// Design A (`fm/grandline-lockscreen-touchid-fallback`, the captain's
     /// pick, option 3): a round Touch ID button beside the pill on every
-    /// lock, disabled with its reason on an ordinary day and working only
-    /// while Automic Vault cannot check the password. What a model check
+    /// lock, disabled on an ordinary day (its reason in VoiceOver, no line
+    /// on screen) and working only while Automic Vault cannot check the
+    /// password, when the line under the field says to use Touch ID. What a model check
     /// cannot see is asserted here, on a real laid-out window: the button is
     /// a circle level with the pill and inside the window at the narrow
     /// floor, its reason reads on the sky, the keyboard reaches it only when
@@ -780,25 +841,35 @@ enum LockScreenSelfTest {
                         fail(&ok, "\(tag): the button \(b) falls outside the \(controller.view.bounds.size) window")
                     }
 
-                    // Enabled only where it works, and the reason on screen
-                    // and in VoiceOver either way.
+                    // Enabled only where it works. VoiceOver gets the action
+                    // and the reason either way; the screen shows a line only
+                    // while Automic Vault has an issue, and that line just
+                    // says to use Touch ID (`fm/grandline-lockscreen-beam-and-caption`).
                     if button.isEnabled != works {
                         fail(&ok, "\(tag): the button is \(button.isEnabled ? "enabled" : "disabled"), want \(works ? "enabled" : "disabled")")
                     }
-                    if note.isHiddenOrHasHiddenAncestor || note.stringValue.isEmpty
-                        || button.accessibilityHelp() != note.stringValue
-                        || button.accessibilityLabel() != "Unlock with Touch ID" {
-                        fail(&ok, "\(tag): VoiceOver does not get the action and the on-screen reason (label \(button.accessibilityLabel() ?? "nil"), help \(button.accessibilityHelp() ?? "nil"))")
+                    let help = button.accessibilityHelp() ?? ""
+                    if button.accessibilityLabel() != "Unlock with Touch ID" || help.isEmpty {
+                        fail(&ok, "\(tag): VoiceOver does not get the action and the reason (label \(button.accessibilityLabel() ?? "nil"), help \(help))")
                     }
-                    if !works && !note.stringValue.contains("when Automic Vault cannot check your password") {
-                        fail(&ok, "\(tag): the disabled button does not say when it works (\"\(note.stringValue)\")")
+                    if works {
+                        if note.isHiddenOrHasHiddenAncestor || note.stringValue != "Use Touch ID to unlock." || help != note.stringValue {
+                            fail(&ok, "\(tag): Automic Vault cannot check the password, and the line under the field is not just \"Use Touch ID to unlock.\" (hidden: \(note.isHiddenOrHasHiddenAncestor), \"\(note.stringValue)\")")
+                        }
+                    } else {
+                        if !note.isHiddenOrHasHiddenAncestor || !note.stringValue.isEmpty {
+                            fail(&ok, "\(tag): an ordinary lock shows a caption under the field (\"\(note.stringValue)\")")
+                        }
+                        if !help.contains("when Automic Vault cannot check your password") {
+                            fail(&ok, "\(tag): the disabled button does not tell VoiceOver when it works (\"\(help)\")")
+                        }
                     }
 
-                    // The reason line reads on the sky it floats on, in the
-                    // tone each state gives it.
+                    // The line reads on the sky it floats on, in the tone
+                    // each state gives it.
                     let sky = (controller.debugSkyLayer.colors as? [CGColor] ?? []).prefix(2).compactMap { NSColor(cgColor: $0) }
                     let ratio = sky.map { HelmContrast.ratio(note.textColor ?? .black, $0) }.min() ?? 0
-                    if ratio < 4.5 {
+                    if works && ratio < 4.5 {
                         fail(&ok, "\(tag): the reason line is \(fmt(ratio)):1 on the sky - below the 4.5 text floor")
                     }
                     // A working button's glyph on its own fill: WCAG 1.4.11.

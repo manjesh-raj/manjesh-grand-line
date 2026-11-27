@@ -247,8 +247,8 @@ enum VaultReadSessionSelfTest {
     /// password was typed.
     ///
     /// Design A (the captain's option 3) is asserted along the way: the
-    /// button is always there, disabled with its reason on an ordinary
-    /// lock, working only while Automic Vault cannot check the password, and
+    /// button is always there, disabled with its reason in VoiceOver and
+    /// no caption on an ordinary lock, working only while Automic Vault cannot check the password, and
     /// a failed or cancelled challenge never unlocks.
     private static func test_unansweredAfterUnlockOffersFallback() -> String? {
         for state in [VaultSource.AppPasswordAvailability.serviceNotRunning, .transientFailure] {
@@ -267,9 +267,9 @@ enum VaultReadSessionSelfTest {
             harness.presenter.showLock(reason: .launch)
             let button = screen.debugTouchIDButton
             guard !button.isHiddenOrHasHiddenAncestor, !button.isEnabled,
-                  screen.debugTouchIDNote.stringValue.contains("when Automic Vault cannot check your password"),
-                  button.accessibilityHelp() == screen.debugTouchIDNote.stringValue else {
-                return "\(state): an ordinary lock does not show the Touch ID button disabled with its reason (hidden: \(button.isHiddenOrHasHiddenAncestor), enabled: \(button.isEnabled), note: \"\(screen.debugTouchIDNote.stringValue)\")"
+                  (button.accessibilityHelp() ?? "").contains("when Automic Vault cannot check your password"),
+                  screen.debugTouchIDNote.isHiddenOrHasHiddenAncestor else {
+                return "\(state): an ordinary lock does not show the Touch ID button disabled, with its reason in VoiceOver and no caption (hidden: \(button.isHiddenOrHasHiddenAncestor), enabled: \(button.isEnabled), help: \"\(button.accessibilityHelp() ?? "")\", caption: \"\(screen.debugTouchIDNote.stringValue)\")"
             }
             harness.type("right")
             spin(timeout: 6) { !harness.presenter.debugOverlayIsShown }
@@ -303,7 +303,8 @@ enum VaultReadSessionSelfTest {
                 return "\(state): Automic Vault stopped answering after an unlock and the lock screen offers no working Touch ID - it said \(error)"
             }
             guard !screen.debugFormStack.isHidden, screen.debugIsLit,
-                  screen.debugTouchIDNote.stringValue.contains("Use Touch ID instead") else {
+                  !screen.debugTouchIDNote.isHiddenOrHasHiddenAncestor,
+                  screen.debugTouchIDNote.stringValue == "Use Touch ID to unlock." else {
                 return "\(state): the Vault-failing form is not lit with the pill and the Touch ID line"
             }
 
