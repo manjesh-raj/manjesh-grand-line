@@ -436,9 +436,10 @@ enum SettingsThemeLayoutParitySelfTest {
         // lid-closed switch). Thirty-six since it gained its Xcode card (the
         // Metal Toolchain switch). Twenty-one since P-03 of the 2026-11-25
         // review: the page builds its Set-2 split cards at load, and the rows
-        // a split plan takes leave their section cards.
-        guard daylightFP.cardCount == 21 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 21")
+        // a split plan takes leave their section cards. Twenty-two since F-04
+        // of full review 4 added the Security page's Spotlight card.
+        guard daylightFP.cardCount == 22 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 22")
             ok = false
             return
         }

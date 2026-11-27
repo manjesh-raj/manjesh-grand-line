@@ -33,7 +33,7 @@ final class IncidentCardView: NSView {
     /// clock kicker without wrapping every line, narrow enough to sit under a
     /// toolbar button without covering the whole terminal.
     static let cardWidth: CGFloat = 460
-    static let cardHeight: CGFloat = 460
+    static let cardHeight: CGFloat = 500
 
     enum Tab: String, CaseIterable {
         case timeline
@@ -57,6 +57,11 @@ final class IncidentCardView: NSView {
     /// has one - the rows that do not (a capture the captain never saved)
     /// have no button at all rather than a dead one.
     var onOpenEvidence: ((String) -> Void)?
+    /// D-05: the counts the export panel shows, resolved by the console
+    /// (which can reach the Log Analyzer's store) when the panel opens.
+    var exportCounts: ((Incident) -> IncidentPostmortemExport.Counts)?
+    /// D-05: "Create draft" with the chosen sections and destination.
+    var onExport: ((Incident, IncidentPostmortemExport.Options, IncidentPostmortemExport.Destination) -> Void)?
 
     // MARK: Views
 
@@ -80,6 +85,12 @@ final class IncidentCardView: NSView {
     private let addNoteButton = HelmButton(title: "Add note", variant: .secondary, size: .small)
     private let endButton = HelmButton(title: "End Incident \u{2192} generate postmortem",
                                        variant: .primary, size: .small, symbol: "checkmark.circle")
+    /// D-05: the facts-only Markdown draft, beside the AI postmortem. Shown
+    /// for an ended incident too, because that is when a draft is written.
+    private let exportButton = HelmButton(title: "Export postmortem draft",
+                                          variant: .secondary, size: .small, symbol: "square.and.arrow.up")
+    private let exportPanel = IncidentExportPanel()
+    private(set) var isShowingExport = false
 
     private var selectedTab: Tab = .timeline
     private var incident: Incident?
@@ -183,6 +194,20 @@ final class IncidentCardView: NSView {
         endButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(endButton)
 
+        exportButton.target = self
+        exportButton.action = #selector(exportClicked)
+        exportButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(exportButton)
+
+        exportPanel.isHidden = true
+        exportPanel.onCancel = { [weak self] in self?.showExportPanel(false) }
+        exportPanel.onCreate = { [weak self] options, destination in
+            guard let self, let incident = self.incident else { return }
+            self.showExportPanel(false)
+            self.onExport?(incident, options, destination)
+        }
+        addSubview(exportPanel)
+
         let pad = HelmMetrics.s4
         NSLayoutConstraint.activate([
             headerRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
@@ -222,7 +247,18 @@ final class IncidentCardView: NSView {
 
             endButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             endButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            endButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
+            endButton.bottomAnchor.constraint(equalTo: exportButton.topAnchor, constant: -HelmMetrics.s2),
+
+            exportButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
+            exportButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            exportButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
+
+            // The export panel takes the body's place, between the header
+            // divider and the card's bottom edge.
+            exportPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
+            exportPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            exportPanel.topAnchor.constraint(equalTo: tabs.topAnchor),
+            exportPanel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -pad),
         ])
     }
 
@@ -240,6 +276,8 @@ final class IncidentCardView: NSView {
             subtitleLabel.stringValue = "Start one from this host page's toolbar."
             statusPill.isHidden = true
             endButton.isHidden = true
+            exportButton.isHidden = true
+            showExportPanel(false)
             noteField.isHidden = true
             addNoteButton.isHidden = true
             renderBody()
@@ -254,7 +292,8 @@ final class IncidentCardView: NSView {
                              tint: incident.isActive ? .critical : .neutral, theme: theme)
 
         let active = incident.isActive
-        endButton.isHidden = !active
+        exportButton.isHidden = isShowingExport
+        endButton.isHidden = !active || isShowingExport
         noteField.isHidden = !active
         addNoteButton.isHidden = !active
         if let busyText {
@@ -357,6 +396,28 @@ final class IncidentCardView: NSView {
 
     @objc private func endIncidentClicked() { onEndIncident?() }
 
+    @objc private func exportClicked() {
+        guard let incident else { return }
+        exportPanel.configure(incident: incident,
+                              counts: exportCounts?(incident) ?? IncidentPostmortemExport.counts(for: incident, findings: []),
+                              theme: theme)
+        showExportPanel(true)
+    }
+
+    /// Swap the timeline for the export options and back. Hidden views stay
+    /// in place, so nothing about the popover's own size changes.
+    private func showExportPanel(_ show: Bool) {
+        isShowingExport = show
+        exportPanel.isHidden = !show
+        for view: NSView in [tabs, headerDivider, scroll, footerDivider, noteField, addNoteButton] { view.isHidden = show }
+        if !show, let incident {
+            noteField.isHidden = !incident.isActive
+            addNoteButton.isHidden = !incident.isActive
+        }
+        exportButton.isHidden = show || incident == nil
+        endButton.isHidden = show || !(incident?.isActive ?? false)
+    }
+
     @objc private func openEvidenceClicked(_ sender: NSButton) {
         guard let reference = sender.identifier?.rawValue else { return }
         onOpenEvidence?(reference)
@@ -394,5 +455,8 @@ extension IncidentCardView {
     /// behind it, so a card configured but never rendered fails a check that
     /// reads this.
     var debugRenderedTitle: String { titleLabel.stringValue }
+    var debugExportButton: HelmButton { exportButton }
+    var debugExportPanel: IncidentExportPanel { exportPanel }
+    var debugEndButton: HelmButton { endButton }
 }
 #endif

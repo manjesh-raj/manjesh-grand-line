@@ -99,6 +99,12 @@ enum CertInspector {
         guard let cert = SecCertificateCreateWithData(nil, der as CFData) else {
             throw CertInspectorError.invalidCertificate
         }
+        return try parse(certificate: cert)
+    }
+
+    /// D-03: the same reading for a certificate that arrived as a
+    /// `SecCertificate` (a TLS server's leaf) rather than as PEM text.
+    static func parse(certificate cert: SecCertificate) throws -> CertInfo {
 
         var error: Unmanaged<CFError>?
         guard let values = SecCertificateCopyValues(cert, nil, &error) as? [String: [String: Any]] else {

@@ -254,6 +254,10 @@ final class HomeCanvasController: NSViewController {
     let greetingTitle = NSTextField(labelWithString: "")
     let greetingSummary = NSTextField(labelWithString: "")
     let greetingHeader = NSStackView()
+    /// F-02: Plan my day and Start focus under the greeting, for when the
+    /// briefing is not drawn as the hero and so has no actions row of its own.
+    let greetingActions = NSStackView()
+    var greetingActionTitles: [String] = []
     let briefingHero = HelmHeroCard()
     /// The content's top edge: S03's first-content line, lifted by the
     /// greeting's own ink inset while the greeting is the first thing drawn

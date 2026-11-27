@@ -68,6 +68,15 @@ final class DevOpsHubProjectController: NSViewController {
     private let strip = DevOpsHubStrip()
     private var webViews: [String: DevOpsHubWebView] = [:]
     private var webContainer = NSView()
+    /// D-02: a dev server's log, over the page when the Log tab is chosen.
+    private let logView = DevServerLogView()
+    /// D-02: switches between the log and the page. A strip button rather
+    /// than segmented tabs, whose unselected ink is drawn for a card and
+    /// all but vanished on the strip's gradient.
+    private let logToggle = HelmButton(title: "Log", variant: .secondary, size: .small, symbol: "text.alignleft")
+    /// Which tab each dev server shows, once the captain has chosen.
+    private var chosenTab: [String: String] = [:]
+    private var logObserver: NSObjectProtocol?
 
     /// What the web view has done for each project's current run.
     private var loadedOrigin: [String: URL] = [:]
@@ -119,6 +128,12 @@ final class DevOpsHubProjectController: NSViewController {
         registryObserver = NotificationCenter.default.addObserver(
             forName: LocalProjectRegistry.didChange, object: registry, queue: .main
         ) { [weak self] _ in self?.render() }
+        logObserver = NotificationCenter.default.addObserver(
+            forName: LocalProjectRegistry.devServerLogDidChange, object: registry, queue: .main
+        ) { [weak self] note in
+            guard let self, let id = note.userInfo?["id"] as? String, id == self.projectID else { return }
+            self.logView.show(self.registry.devServer(of: id))
+        }
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         render()
     }
@@ -245,6 +260,12 @@ final class DevOpsHubProjectController: NSViewController {
         webContainer.translatesAutoresizingMaskIntoConstraints = false
         courseStage.addSubview(strip)
         courseStage.addSubview(webContainer)
+        courseStage.addSubview(logView)
+        logView.isHidden = true
+        logToggle.target = self
+        logToggle.action = #selector(logToggleClicked)
+        logToggle.setAccessibilityLabel("Show the log or the page")
+        strip.setAccessory(logToggle)
         let inset = Self.pageInset
         NSLayoutConstraint.activate([
             courseStage.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -259,7 +280,38 @@ final class DevOpsHubProjectController: NSViewController {
             webContainer.trailingAnchor.constraint(equalTo: strip.trailingAnchor),
             webContainer.topAnchor.constraint(equalTo: strip.bottomAnchor, constant: HelmMetrics.s3),
             webContainer.bottomAnchor.constraint(equalTo: courseStage.bottomAnchor, constant: -inset),
+            logView.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
+            logView.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
+            logView.topAnchor.constraint(equalTo: webContainer.topAnchor),
+            logView.bottomAnchor.constraint(equalTo: webContainer.bottomAnchor),
         ])
+    }
+
+    @objc private func logToggleClicked() {
+        guard let projectID else { return }
+        chosenTab[projectID] = logView.isHidden ? "log" : "page"
+        applyLogTab()
+    }
+
+    /// D-02: a dev server's page shows its log or its page. The log until it
+    /// has printed an address, then whichever the captain last chose.
+    private func applyLogTab() {
+        guard let project else { return }
+        let dev = project.kind == .devServer
+        logToggle.isHidden = !dev
+        guard dev else {
+            logView.isHidden = true
+            webContainer.isHidden = false
+            return
+        }
+        let supervisor = registry.devServer(of: project.id)
+        let tab = chosenTab[project.id] ?? (supervisor?.detectedPort == nil ? "log" : "page")
+        // The button names where it goes, not where you are.
+        logToggle.title = tab == "log" ? "Page" : "Log"
+        logToggle.symbolName = tab == "log" ? "globe" : "text.alignleft"
+        logView.isHidden = tab != "log"
+        webContainer.isHidden = tab == "log"
+        logView.show(supervisor)
     }
 
     // MARK: Showing a project
@@ -409,13 +461,15 @@ final class DevOpsHubProjectController: NSViewController {
             let web = webView(for: project.id)
             web.siteName = project.name
             let token = registry.accessToken(of: project.id)
-            guard loadedOrigin[project.id] != project.origin || loadedToken[project.id] != token else { return }
-            loadedOrigin[project.id] = project.origin
+            // D-02: a dev server's address is the one it printed.
+            guard let origin = registry.origin(of: project.id) else { return }
+            guard loadedOrigin[project.id] != origin || loadedToken[project.id] != token else { return }
+            loadedOrigin[project.id] = origin
             loadedToken[project.id] = token
             finished.remove(project.id)
             crashing.remove(project.id)
             progress[project.id] = 0
-            web.load(origin: project.origin, accessToken: token, confined: registry.confinesNetwork(of: project.id))
+            web.load(origin: origin, accessToken: token, confined: registry.confinesNetwork(of: project.id))
         } else if loadedOrigin[project.id] != nil {
             loadedOrigin[project.id] = nil
             loadedToken[project.id] = nil
@@ -506,6 +560,13 @@ final class DevOpsHubProjectController: NSViewController {
 
     private func renderStrip() {
         guard let project, case .running(let since) = registry.state(of: project.id) else { return }
+        defer { applyLogTab() }
+        if project.kind == .devServer {
+            let port = registry.devServer(of: project.id)?.detectedPort
+            strip.configure(address: port.map { "localhost:\($0)" } ?? "No address yet",
+                            line: "\(project.command ?? "") \u{00B7} up \(DevOpsHubWords.duration(registry.clock().timeIntervalSince(since)))")
+            return
+        }
         strip.configure(address: "\(LocalStaticServer.loopbackHost):\(project.port)",
                         line: DevOpsHubWords.runningLine(since: since, now: registry.clock(),
                                                          counters: registry.counters(of: project.id)))
@@ -609,7 +670,7 @@ final class DevOpsHubProjectController: NSViewController {
         case .showHere:
             showSiteOnRequest(id)
         case .openInBrowser:
-            WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub")
+            WebNavigationPolicy.openExternally(registry.origin(of: project.id) ?? project.origin, from: "DevOps Hub")
         case .settings, .changePort:
             onEditSettings?(id)
         case .chooseFolder:
@@ -636,12 +697,12 @@ final class DevOpsHubProjectController: NSViewController {
             onBack?()
         case .copyAddress:
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(project.origin.absoluteString, forType: .string)
+            NSPasteboard.general.setString((registry.origin(of: project.id) ?? project.origin).absoluteString, forType: .string)
             Feedback.report("Address copied", kind: .done, persistence: .transient, in: view)
         case .reload:
             reloadSite(project.id)
         case .openInBrowser:
-            WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub")
+            WebNavigationPolicy.openExternally(registry.origin(of: project.id) ?? project.origin, from: "DevOps Hub")
         case .restart:
             registry.restart(project.id)
         case .stop:
@@ -711,6 +772,12 @@ final class DevOpsHubProjectController: NSViewController {
 
     #if FM_SELFTESTS
     var debugShowsSite: Bool { isViewLoaded && !courseStage.isHidden && heroStage.isHidden }
+    /// D-02: choose the Log tab the way a click on it would.
+    func debugSelectLogTab() {
+        if logView.isHidden { logToggle.performClick(nil) }
+    }
+    var debugLogText: String { logView.renderedText }
+    var debugLogShown: Bool { !logView.isHidden }
     var debugHero: HelmHeroColumn { hero }
     var debugStrip: DevOpsHubStrip { strip }
     var debugCheckTitles: [String] {
@@ -816,6 +883,7 @@ final class DevOpsHubStrip: NSView {
         leading.setCustomSpacing(HelmMetrics.s1 + 2, after: dot)
         leading.setCustomSpacing(HelmMetrics.s3, after: backButton)
         let trailing = NSStackView(views: [reloadButton, browserButton, restartButton, stopButton])
+        trailingStack = trailing
         trailing.orientation = .horizontal
         trailing.alignment = .centerY
         trailing.spacing = HelmMetrics.s1 + 2
@@ -861,6 +929,16 @@ final class DevOpsHubStrip: NSView {
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+    }
+
+    private var trailingStack: NSStackView?
+
+    /// D-02: a view before the strip's buttons (a dev server's Log and Page
+    /// tabs).
+    func setAccessory(_ view: NSView) {
+        view.setContentHuggingPriority(.required, for: .horizontal)
+        view.setContentCompressionResistancePriority(.required, for: .horizontal)
+        trailingStack?.insertArrangedSubview(view, at: 0)
     }
 
     func configure(address: String, line: String) {

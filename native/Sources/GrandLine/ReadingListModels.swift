@@ -416,6 +416,8 @@ enum ReadingListFilter: Equatable {
     case read
     case summarised
     case addedToday
+    /// F-03: every highlight across the saved articles, not a slice of links.
+    case highlights
     case tag(String)
 
     var id: String {
@@ -425,6 +427,7 @@ enum ReadingListFilter: Equatable {
         case .read: return "read"
         case .summarised: return "summarised"
         case .addedToday: return "added-today"
+        case .highlights: return "highlights"
         case .tag(let tag): return "tag:" + tag
         }
     }
@@ -436,13 +439,14 @@ enum ReadingListFilter: Equatable {
         case .read: return "Read"
         case .summarised: return "Summarised"
         case .addedToday: return "Added today"
+        case .highlights: return "Highlights"
         case .tag(let tag): return tag
         }
     }
 
     static func fromID(_ id: String) -> ReadingListFilter? {
         if id.hasPrefix("tag:") { return .tag(String(id.dropFirst(4))) }
-        return [ReadingListFilter.all, .unread, .read, .summarised, .addedToday]
+        return [ReadingListFilter.all, .unread, .read, .summarised, .addedToday, .highlights]
             .first { $0.id == id }
     }
 }
@@ -473,6 +477,8 @@ enum ReadingListQuery {
         // `og:description`.
         case .summarised: return !link.aiSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .addedToday: return calendar.isDate(link.addedAt, inSameDayAs: now)
+        // The Highlights slice lists highlights, not links.
+        case .highlights: return false
         case .tag(let tag): return link.tags.contains(tag)
         }
     }

@@ -53,12 +53,22 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     /// The run in progress, if any. One at a time.
     private(set) var session: RunbookSession?
     private var sessionTimer: Timer?
+    /// D-01: the run's evidence - each step's attempts, outcome and output.
+    /// Kept after the run ends, until another starts, so it can be attached.
+    private(set) var evidence: RunbookRunEvidence?
+    private var capture: RunbookStepCapture?
+    /// D-01: the terminal "Run in Console" types into - the Console's
+    /// active tab. Wired by the workspace; nil means no Console tab.
+    var stepTerminal: (() -> (terminal: SRELeadBridgeTerminal, name: String)?)?
+    /// D-01: opens the Console, for a failed step's "Open Console".
+    var onOpenConsole: (() -> Void)?
+    /// D-01: a run ended. The workspace puts it on an active incident's
+    /// timeline and answers that incident's id.
+    var onRunFinished: ((RunbookRunEvidence) -> String?)?
     /// The list column's width.
     static let listWidth: CGFloat = 300
     /// Keeps the rows' menu targets alive.
     private var menuSleeves: [ClosureSleeve] = []
-    /// Sends a step's command to the Console, wired by the workspace.
-    var onSendCommand: ((String) -> Void)?
 
     private let runbookListScroll = NSScrollView()
     private let runbookListStack = NSStackView()
@@ -258,7 +268,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
             guard let self, let id = self.selectedRunbookID else { return }
             self.beginEditRunbook(id)
         }
-        detailView.onSendCommand = { [weak self] command in self?.sendStepCommand(command) }
+        wireStepPanel()
 
         let listStack = runbookListContainerStack
         listStack.setViews([browser], in: .leading)
@@ -494,6 +504,141 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         guard let id = selectedRunbookID, let runbook = runbooks.first(where: { $0.id == id }) else { return }
         detailView.configure(title: runbook.title, steps: RunbookSteps.parse(runbook.content),
                              session: session?.runbookID == id ? session : nil, now: Date(), theme: theme)
+        renderStepPanel()
+    }
+
+    // MARK: D-01 - run mode
+
+    private func renderStepPanel() {
+        let panel = detailView.stepPanel
+        guard let evidence, evidence.runbookID == selectedRunbookID else {
+            panel.render(.hidden, theme: theme)
+            return
+        }
+        if let session, session.runbookID == evidence.runbookID, !session.isFinished,
+           evidence.steps.indices.contains(session.index) {
+            let target = stepTerminal?()?.name ?? "the Console"
+            panel.render(.step(index: session.index, total: session.total, step: evidence.steps[session.index],
+                               target: target, capturing: capture != nil), theme: theme)
+        } else {
+            panel.render(.finished(evidence), theme: theme)
+        }
+    }
+
+    private func wireStepPanel() {
+        let panel = detailView.stepPanel
+        panel.onRunInConsole = { [weak self] in self?.runCurrentStepInConsole() }
+        panel.onRetry = { [weak self] in self?.runCurrentStepInConsole() }
+        panel.onRanMyself = { [weak self] in self?.tickStep(manual: true) }
+        panel.onNext = { [weak self] in self?.tickStep(manual: false) }
+        panel.onSkip = { [weak self] in self?.skipCurrentStep() }
+        panel.onOpenConsole = { [weak self] in self?.onOpenConsole?() }
+        panel.onStopRun = { [weak self] in self?.endRun() }
+        panel.onCopy = { [weak self] in self?.copyRunMarkdown() }
+        panel.onAttach = { [weak self] anchor in self?.showAttachMenu(from: anchor) }
+    }
+
+    /// "Run in Console": through the Command Library's risk gate, then typed
+    /// between markers and read back.
+    func runCurrentStepInConsole() {
+        guard let session, let index = Optional(session.index), let step = evidence?.steps[step: index],
+              let command = step.command else { return }
+        guard let target = stepTerminal?() else {
+            if let container = view.window?.contentView {
+                Toast.show(in: container, message: "Open a Console tab first, then run the step", kind: .warning)
+            }
+            return
+        }
+        let asCommand = DevOpsCommand(id: "runbook-step", name: "Runbook step", description: "", category: "",
+                                      commandTemplate: command)
+        CommandRiskConfirmation.confirm(command: asCommand, generatedText: command, actionVerb: "run in the Console") { [weak self] in
+            self?.startCapture(command: command, index: index, terminal: target.terminal)
+        }
+    }
+
+    func startCapture(command: String, index: Int, terminal: SRELeadBridgeTerminal) {
+        capture?.cancel()
+        let started = Date()
+        let capture = RunbookStepCapture(terminal: terminal, command: command)
+        self.capture = capture
+        renderStepPanel()
+        capture.start { [weak self] result in
+            guard let self, self.capture === capture else { return }
+            self.capture = nil
+            let attempt = RunbookStepAttempt(command: command, output: result.output, exitCode: result.exitCode,
+                                             startedAt: started, endedAt: Date(), redactions: result.redactions,
+                                             timedOut: result.timedOut)
+            self.evidence?.record(attempt, at: index)
+            self.renderStepPanel()
+        }
+    }
+
+    private func skipCurrentStep() {
+        let field = HelmTextField()
+        field.placeholderString = "Why it was skipped"
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        var request = HelmConfirm.Request(title: "Skip this step?",
+                                          body: "The reason goes into the run's record, so whoever reads it later knows.")
+        request.confirmTitle = "Skip"
+        request.symbol = "forward"
+        request.accessory = field
+        request.initialResponder = field
+        guard HelmConfirm.confirm(request) == .confirm else { return }
+        let reason = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        skipCurrentStep(reason: reason.isEmpty ? "no reason given" : reason)
+    }
+
+    func skipCurrentStep(reason: String) {
+        guard let session else { return }
+        evidence?.finish(session.index, .skipped(reason: reason), now: Date())
+        advance(now: Date())
+    }
+
+    private func copyRunMarkdown() {
+        guard let evidence else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(evidence.markdown(), forType: .string)
+        if let container = view.window?.contentView { Toast.show(in: container, message: "Run copied as Markdown") }
+    }
+
+    /// The postmortems to attach to, newest first, and a new one.
+    private func showAttachMenu(from anchor: NSView) {
+        let menu = NSMenu()
+        for postmortem in runbookStore.listPostmortems().sorted(by: { $0.modifiedAt > $1.modifiedAt }).prefix(8) {
+            let item = NSMenuItem(title: postmortem.title, action: #selector(attachMenuPicked(_:)), keyEquivalent: "")
+            item.representedObject = postmortem.id
+            item.target = self
+            menu.addItem(item)
+        }
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
+        let new = NSMenuItem(title: "New postmortem", action: #selector(attachMenuPicked(_:)), keyEquivalent: "")
+        new.target = self
+        menu.addItem(new)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
+    }
+
+    @objc private func attachMenuPicked(_ item: NSMenuItem) {
+        attachRun(toPostmortem: item.representedObject as? String)
+    }
+
+    /// Appends the run to `id`, or to a new postmortem named after it.
+    @discardableResult
+    func attachRun(toPostmortem id: String?) -> String? {
+        guard let evidence else { return nil }
+        let markdown = evidence.markdown()
+        let targetID: String
+        if let id, runbookStore.appendEvidence(markdown, toPostmortem: id) {
+            targetID = id
+        } else {
+            let title = "Postmortem: \(evidence.runbookTitle)"
+            let body = "# \(title)\n\n## Summary\n\n_What happened, in two sentences._\n\n## Evidence\n\n\(markdown)"
+            targetID = runbookStore.createPostmortem(title: title, content: body).id
+        }
+        if let container = view.window?.contentView {
+            Toast.show(in: container, message: "Run attached to the postmortem")
+        }
+        return targetID
     }
 
     // MARK: UX-17 - a run
@@ -504,12 +649,23 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         let steps = RunbookSteps.parse(runbook.content)
         guard !steps.isEmpty else { return }
         session = RunbookSession(runbookID: id, total: steps.count, now: Date())
+        evidence = RunbookRunEvidence(runbookID: id, title: runbook.title, steps: steps, now: Date())
         startSessionTimer()
         renderDetail()
     }
 
-    /// The step on screen is done; the last one ends the run.
-    private func tickStep(now: Date = Date()) {
+    /// The step on screen is done; the last one ends the run. `manual` is
+    /// "I ran it myself" or the checklist's own tick, with no output kept.
+    private func tickStep(now: Date = Date(), manual: Bool = true) {
+        guard let current = session else { return }
+        let captured = evidence?.steps[step: current.index]?.attempts.last?.succeeded == true
+        evidence?.finish(current.index, .done(manual: manual && !captured), now: now)
+        advance(now: now)
+    }
+
+    private func advance(now: Date) {
+        capture?.cancel()
+        capture = nil
         guard var current = session else { return }
         current.tick(now: now)
         session = current
@@ -523,7 +679,17 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     /// Ends the run where it is and keeps how far it got.
     private func endRun(now: Date = Date()) {
         guard let current = session else { return }
-        RunbookRunLog.record(current.record(now: now), for: current.runbookID)
+        capture?.cancel()
+        capture = nil
+        evidence?.endedAt = now
+        if let evidence { self.evidence?.incidentID = onRunFinished?(evidence) }
+        var record = current.record(now: now)
+        // D-01: a skipped step is not a done one, so a run with a skip is not
+        // "clean" on the list row.
+        if let evidence {
+            record.done = min(record.done, evidence.steps.filter { if case .done = $0.outcome { return true }; return false }.count)
+        }
+        RunbookRunLog.record(record, for: current.runbookID)
         session = nil
         sessionTimer?.invalidate()
         sessionTimer = nil
@@ -547,15 +713,6 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         sessionTimer?.tolerance = 5
     }
 
-    /// The Command Library's own risk gate decides whether a step's command
-    /// needs a confirmation before it reaches the terminal.
-    private func sendStepCommand(_ command: String) {
-        let asCommand = DevOpsCommand(id: "runbook-step", name: "Runbook step", description: "", category: "",
-                                      commandTemplate: command)
-        CommandRiskConfirmation.confirm(command: asCommand, generatedText: command, actionVerb: "send to the terminal") {
-            onSendCommand?(command)
-        }
-    }
 
     /// X5: writes the one example and opens it, so the affordance ends
     /// somewhere rather than silently changing a list behind the captain.
@@ -704,6 +861,9 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     var debugRunbookRows: [RunbookRowView] { runbookRows }
     var debugDetail: RunbookDetailView { detailView }
     func debugTick(now: Date) { tickStep(now: now) }
+    func debugStartRun() { startRun() }
+    func debugEndRun() { endRun() }
+    func debugSelect(_ id: String) { select(runbookID: id) }
     var debugRunbookEditorIsOpen: Bool { !runbookEditorContainer.isHidden }
     func debugBeginNewRunbook() { beginNewRunbook() }
     func debugCancelRunbookEditor() { cancelRunbookEditor() }

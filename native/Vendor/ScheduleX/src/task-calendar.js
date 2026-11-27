@@ -120,6 +120,8 @@ function toCalendarEvent(item) {
   if (item.completed) classes.push('gl-completed')
   if (item.skipped) classes.push('gl-skipped')
   if (item.allDay) classes.push('gl-all-day')
+  // F-01: one of the Mac's meetings - read-only, drawn striped.
+  if (item.meeting) classes.push('gl-meeting')
   if (item.movable) {
     movable.set(item.id, { id: item.taskID, kind: item.kind || 'task', slot: item.slot || null })
   } else {

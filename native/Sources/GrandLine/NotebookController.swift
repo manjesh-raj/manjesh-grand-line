@@ -140,6 +140,8 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     private let writeCard = HelmCard()
     let writeView = NotebookWriteView()
     private let writeTitleLabel = NSTextField(labelWithString: "")
+    /// F-05: a memo page's player and transcript actions, above the text.
+    let memoStrip = VoiceMemoStrip()
     /// UX-12: the page's outline, first in the inspector.
     private let outlineCard = HelmCard()
     private let outlineStack = NSStackView()
@@ -234,6 +236,61 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     /// The editor at the top of the page: its controls are the window
     /// toolbar's (R2-UX-06), so no row sits above it.
     private var splitAtTop: NSLayoutConstraint!
+    /// F-05: the write view under the memo strip, or at the card's top.
+    private var memoStripTies: (underStrip: NSLayoutConstraint, atTop: NSLayoutConstraint)?
+    /// F-05: the strip's own pins, active only while it shows. A hidden view
+    /// is still in the window's constraint graph (gotcha (15)), and the
+    /// strip's fixed row would otherwise set the Notebook's floor.
+    private var memoStripPins: [NSLayoutConstraint] = []
+
+    /// F-05: shows the memo strip for a memo page, and moves the text below
+    /// it. Collapsing by swapping the text's top, never by a zero height on
+    /// a view with real content (gotcha (17)'s footnote).
+    func refreshMemoStrip(content: String) {
+        memoStrip.show(content: content)
+        guard let ties = memoStripTies else { return }
+        // Order matters: release the old top before pinning the new one,
+        // and pin the strip before the text is tied under it.
+        if memoStrip.isHidden {
+            ties.underStrip.isActive = false
+            NSLayoutConstraint.deactivate(memoStripPins)
+            ties.atTop.isActive = true
+        } else {
+            ties.atTop.isActive = false
+            NSLayoutConstraint.activate(memoStripPins)
+            ties.underStrip.isActive = true
+        }
+    }
+
+    /// F-05: "Make a task from a line" on a memo page.
+    private func makeTask(fromMemoLine line: String) {
+        guard let store = GrandLineServices.shared.shiftStore else { return }
+        var task = ShiftTask.fresh()
+        task.title = line.count > 120 ? String(line.prefix(119)) + "\u{2026}" : line
+        task.description = "From the voice memo \u{201C}\(currentTitle)\u{201D}."
+        store.addTask(task)
+        Toast.show(in: view, message: "Task added: \(task.title)")
+    }
+
+    /// F-05: an audio file dropped on the page becomes a memo page.
+    func importDroppedAudio(_ urls: [URL]) -> Bool {
+        guard let memos = GrandLineServices.shared.voiceMemos else { return false }
+        var opened = false
+        for url in urls where VoiceMemoFiles.audioExtensions.contains(url.pathExtension.lowercased()) {
+            guard let id = memos.importAudio(url, progress: { [weak self] value in
+                guard let self, value >= 1 else { return }
+                self.reload()
+                if let current = self.currentID, let page = self.store.page(id: current) {
+                    self.open(pageID: page.id)
+                }
+            }) else { continue }
+            reload()
+            open(pageID: id)
+            opened = true
+        }
+        if opened { Toast.show(in: view, message: "Transcribing on this Mac. The page fills in when it is done.") }
+        return opened
+    }
 
     // MARK: R2-BUG-07 - the toolbar's room at narrow widths
 
@@ -326,8 +383,10 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         // `NSView` with a `HelmTheme` fill, never `NSVisualEffectView`
         // vibrancy - that material composites against the desktop, not
         // against this window.
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 720))
+        let root = NotebookRootView(frame: NSRect(x: 0, y: 0, width: 1100, height: 720))
         root.wantsLayer = true
+        // F-05: drop an audio file on the Notebook to transcribe it.
+        root.onDropAudio = { [weak self] urls in self?.importDroppedAudio(urls) ?? false }
         view = root
 
         buildBody(in: root)
@@ -574,7 +633,36 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     private func buildWriteCard() {
         writeCard.translatesAutoresizingMaskIntoConstraints = false
         writeCard.setHeader(symbol: "doc.text", tint: .info, titleLabel: writeTitleLabel, subtitleLabel: nil)
-        writeCard.setBody(writeView)
+        // F-05: the memo strip sits above the text, hidden on an ordinary
+        // page, so the write view keeps the rest of the card.
+        let body = NSView()
+        body.translatesAutoresizingMaskIntoConstraints = false
+        writeView.translatesAutoresizingMaskIntoConstraints = false
+        body.addSubview(memoStrip)
+        body.addSubview(writeView)
+        memoStrip.isHidden = true
+        let textUnderStrip = writeView.topAnchor.constraint(equalTo: memoStrip.bottomAnchor, constant: HelmMetrics.s2)
+        let textAtTop = writeView.topAnchor.constraint(equalTo: body.topAnchor)
+        memoStripTies = (textUnderStrip, textAtTop)
+        memoStripPins = [
+            memoStrip.leadingAnchor.constraint(equalTo: body.leadingAnchor, constant: HelmMetrics.s4),
+            memoStrip.trailingAnchor.constraint(equalTo: body.trailingAnchor, constant: -HelmMetrics.s4),
+            memoStrip.topAnchor.constraint(equalTo: body.topAnchor, constant: HelmMetrics.s3),
+        ]
+        NSLayoutConstraint.activate([
+            writeView.leadingAnchor.constraint(equalTo: body.leadingAnchor),
+            writeView.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            writeView.bottomAnchor.constraint(equalTo: body.bottomAnchor),
+            textAtTop,
+        ])
+        memoStrip.onCopyText = { [weak self] in
+            guard let self else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(self.memoStrip.transcriptText, forType: .string)
+            Toast.show(in: self.view, message: "Transcript copied")
+        }
+        memoStrip.onMakeTask = { [weak self] line in self?.makeTask(fromMemoLine: line) }
+        writeCard.setBody(body)
         writeCard.isHidden = true
     }
 
@@ -803,6 +891,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         editorTitleLabel.stringValue = "\(page.slug).md"
         writeTitleLabel.stringValue = "\(page.slug).md"
         writeView.show(id: page.id, content: page.content)
+        refreshMemoStrip(content: page.content)
         if !hadPage { applyMode() }
         sidebar.select(page.id)
         // Only once the page is live. Before that the bridge answers "the
@@ -1470,6 +1559,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         outlineCard.applyTheme(theme)
         writeCard.applyTheme(theme)
         writeView.applyTheme(theme)
+        memoStrip.applyTheme(theme)
         writeTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         editorOverlayState?.applyTheme(theme)
         editorTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
@@ -1607,3 +1697,33 @@ extension NotebookController: WorkspaceInspectorSource {
     }
 }
 
+
+
+/// F-05: the Notebook's root, which takes an audio file dropped anywhere on
+/// the page.
+final class NotebookRootView: NSView {
+
+    var onDropAudio: (([URL]) -> Bool)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    static func audioURLs(in pasteboard: NSPasteboard) -> [URL] {
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        return urls.filter { VoiceMemoFiles.audioExtensions.contains($0.pathExtension.lowercased()) }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.audioURLs(in: sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = Self.audioURLs(in: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+        return onDropAudio?(urls) ?? false
+    }
+}

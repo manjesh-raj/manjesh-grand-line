@@ -618,6 +618,22 @@ final class DocsRunbookStore {
         return DocsRunbook(id: slug, title: Self.titleFromContent(content, fallback: slug), content: content, modifiedAt: Date())
     }
 
+    /// D-01: appends a run as evidence to a postmortem, under an
+    /// "## Evidence" heading it adds the first time. Returns false when the
+    /// postmortem is not on disk.
+    @discardableResult
+    func appendEvidence(_ markdown: String, toPostmortem id: String) -> Bool {
+        let url = postmortemsRoot.appendingPathComponent("\(id).md")
+        guard let existing = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        var content = existing
+        if !content.hasSuffix("\n") { content += "\n" }
+        if !content.contains("\n## Evidence") { content += "\n## Evidence\n" }
+        content += "\n" + markdown
+        persist(what: "postmortem \"\(id)\"", to: url, content: content)
+        gitSync?.markDirty()
+        return true
+    }
+
     func deleteRunbook(id: String) {
         let url = root.appendingPathComponent("\(id).md")
         DocsRunbookListingCache.shared.invalidate(url)

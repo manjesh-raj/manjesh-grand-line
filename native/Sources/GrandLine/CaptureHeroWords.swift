@@ -30,6 +30,6 @@ enum CaptureHeroWords {
     /// The footer's key hint. Only the range is new; the words around it are
     /// the panel's own.
     static var hint: String {
-        "\u{23CE} file as a task \u{00B7} \(chordRange) choose \u{00B7} Esc dismiss"
+        "\u{23CE} file as a task \u{00B7} \(chordRange) choose \u{00B7} \u{2318}\(CaptureDestinationTile.grabTextDigit) grab text \u{00B7} Esc dismiss"
     }
 }

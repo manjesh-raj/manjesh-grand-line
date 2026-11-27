@@ -59,6 +59,13 @@ enum NotebookLiveMarkdown {
                 spans.append(Span(range: line, kind: .codeBlock))
                 return
             }
+            // A whole-line HTML comment (a voice memo's marker, F-05) is
+            // syntax: hidden off the caret's line like any other mark.
+            let trimmed = lineText.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("<!--"), trimmed.hasSuffix("-->") {
+                spans.append(Span(range: line, kind: .mark))
+                return
+            }
             var bodyStart = line.location
             if let m = match(#"^(#{1,6})\s+"#, in: lineText) {
                 let level = m.range(at: 1).length

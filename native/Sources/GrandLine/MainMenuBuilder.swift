@@ -411,6 +411,13 @@ extension AppDelegate {
         self.quickCaptureMenuItem = quickCaptureItem
         applyQuickCaptureMenuChord(AppSettings.shared.quickCaptureShortcut)
         shiftMenu.addItem(quickCaptureItem)
+        // F-06: drag over anything on screen and get its words. ⌥⌘7 matches
+        // the capture panel's ⌘7 tile, and was free in this menu.
+        let grabTextItem = NSMenuItem(title: "Grab Text from Screen", action: #selector(AppDelegate.grabTextFromScreen),
+                                      keyEquivalent: "7").withSymbol("text.viewfinder")
+        grabTextItem.keyEquivalentModifierMask = [.command, .option]
+        grabTextItem.target = self
+        shiftMenu.addItem(grabTextItem)
 
         // Log Analyzer menu (`fm/grandline-log-analyzer-build`, spec §24).
         //
@@ -575,6 +582,17 @@ extension AppDelegate {
         windowMenuItem.submenu = windowMenu
         windowMenu.addItem(withTitle: "Minimize", symbol: "minus", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", symbol: "arrow.up.left.and.arrow.down.right", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(NSMenuItem.separator())
+        // F-15: the page on screen, or the focus timer, in a window of its own.
+        let pageWindowItem = NSMenuItem(title: "Open Page in New Window", action: #selector(AppDelegate.openPageInNewWindow),
+                                        keyEquivalent: "o").withSymbol("macwindow.on.rectangle")
+        pageWindowItem.keyEquivalentModifierMask = [.command, .option]
+        pageWindowItem.target = self
+        windowMenu.addItem(pageWindowItem)
+        let timerWindowItem = NSMenuItem(title: "Focus Timer in Its Own Window", action: #selector(AppDelegate.openFocusTimerWindow),
+                                         keyEquivalent: "").withSymbol("timer")
+        timerWindowItem.target = self
+        windowMenu.addItem(timerWindowItem)
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Bring All to Front", symbol: "square.stack", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         // R2-ARCH-06: the window toolbar is customisable. The system's own

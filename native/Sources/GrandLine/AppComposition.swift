@@ -14,6 +14,7 @@
 // the delegate's wiring reads all of them.
 
 import AppKit
+import CoreSpotlight
 import SwiftTerm
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -112,8 +113,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `AppShellController.makeCaptureFiler`) - this panel owns no store.
     lazy var shiftQuickCapture: ShiftQuickCaptureController = {
         let capture = ShiftQuickCaptureController(filer: appShell.workspace.makeCaptureFiler())
+        capture.onGrabText = { [weak self] in self?.screenTextGrab.start() }
         return capture
     }()
+    /// F-06: grab text from the screen, filed through the same filer.
+    lazy var screenTextGrab: ScreenTextGrab = {
+        let grab = ScreenTextGrab(filer: appShell.workspace.makeCaptureFiler())
+        grab.onUnlock = { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.appShell.view.window?.makeKeyAndOrderFront(nil)
+        }
+        return grab
+    }()
+
+    /// F-10: the Services menu's provider. Files through the capture filer.
+    lazy var servicesProvider: GrandLineServicesProvider = {
+        let provider = GrandLineServicesProvider(filer: appShell.workspace.makeCaptureFiler())
+        provider.onUnlock = { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.appShell.view.window?.makeKeyAndOrderFront(nil)
+        }
+        return provider
+    }()
+
+    /// F-15: Window > Open Page in New Window (opt-cmd-O). A page that cannot
+    /// live in a window of its own says so rather than doing nothing.
+    @objc func openPageInNewWindow() {
+        if !appShell.workspace.openCurrentPageInNewWindow() {
+            appShell.showToast("The Notebook, the Sticky Board and the Console can open in their own window")
+        }
+    }
+
+    /// F-15: Window > Focus Timer in Its Own Window.
+    @objc func openFocusTimerWindow() { appShell.workspace.pageWindows.openFocusTimer() }
+
+    /// F-06: Shift > Grab Text from Screen.
+    @objc func grabTextFromScreen() { screenTextGrab.start() }
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
     /// F23: publishes the widget snapshot and drains what a tapped widget
     /// button queued. Holds no store of its own - the `ShiftStore` above and
@@ -238,10 +273,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 return
             }
+            // F-05: Right ⌥ with ⇧ already down is a voice memo, not a
+            // dictation.
+            if VoiceMemoHotkey.isChordDown(flags: NSEvent.modifierFlags) { return }
             self?.dictationEngine.startRecording()
         },
         onUp: { [weak self] in self?.dictationEngine.stopRecording() }
     )
+    /// F-05: voice memos on Right ⌥ + ⇧, filed into the Notebook or a task.
+    lazy var voiceMemos: VoiceMemoController = {
+        let memos = VoiceMemoController()
+        memos.discardDictation = { [weak self] in self?.dictationEngine.discardRecording() }
+        memos.openNotebookPage = { [weak self] id in self?.appShell.workspace.navigator.openNotebookPage(id: id) }
+        // A registry entry rather than a property on the Notebook page, so
+        // launch does not mount the page (GL-37).
+        GrandLineServices.shared.voiceMemos = memos
+        return memos
+    }()
     // F12 (`fm/grandline-feature-f12-snippet-expander`): the system-wide
     // `;abbrev` expander. One instance for the app's whole lifetime, over the
     // same `snippetStore` the Hosts page edits - same shape as
@@ -357,6 +405,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.onCompactModeSettingsChanged = { [weak self] in
             self?.compactMode.refresh()
         }
+    }
+
+    /// F-04: tasks, notes, links, sticky notes and runbooks in Spotlight.
+    /// Reads the live stores this delegate and the shell already hold (GL-23).
+    lazy var spotlightIndexer: SpotlightIndexer = {
+        let workspace = appShell.workspace
+        let indexer = SpotlightIndexer(
+            inMemory: { [weak self] in
+                guard let self else { return SpotlightIndex.Sources() }
+                return SpotlightIndex.Sources(tasks: self.shiftStore.activeTasks,
+                                              followUps: self.shiftStore.followUps,
+                                              projects: self.shiftStore.projects,
+                                              links: workspace.readingListStore.links,
+                                              stickies: workspace.stickyBoardStore.notes)
+            },
+            onDisk: { [docsRunbookStore, notebookStore = workspace.notebookStore] in
+                (notebookStore.listPages(), docsRunbookStore.listRunbooks())
+            })
+        indexer.open = { [weak self] kind, id in
+            guard let navigator = self?.appShell.workspace.navigator else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            switch kind {
+            case .task: navigator.openShiftTask(id: id)
+            case .followUp: navigator.openShiftFollowUp(id: id)
+            case .note: navigator.openNotebookPage(id: id)
+            case .link: navigator.openReadingListLink(id: id)
+            case .sticky: navigator.openStickyNote(id: id)
+            case .runbook: navigator.openRunbook(id: id)
+            }
+        }
+        indexer.showPendingOnLock = { [weak workspace] text in workspace?.lock.showPendingOpen(text) }
+        AppLockGate.shared.observe { [weak indexer] locked in
+            guard !locked else { return }
+            DispatchQueue.main.async { indexer?.openPendingIfUnlocked() }
+        }
+        return indexer
+    }()
+
+    /// F-04: Spotlight hands a chosen result back as an activity.
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void) -> Bool {
+        guard userActivity.activityType == CSSearchableItemActionType,
+              let identifier = userActivity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return false }
+        return spotlightIndexer.handle(identifier: identifier)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -733,6 +825,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.dictationEngine.releaseWhisperEngine(reason: "local Whisper turned off")
         }
         dictationHotkey.start()
+        voiceMemos.start()
 
         // F12. Three wirings, all of them "ask the one place that knows":
         // whether a terminal is on screen (the `.consoleOnly` scope's whole
@@ -999,6 +1092,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The DevOps Hub row used to open the last project shown. It opens
         // the project cards now, so the stored project is removed.
         LocalProjectRegistry.forgetRetiredPreferences()
+        // F-04: Spotlight. The first rebuild runs a few seconds after launch,
+        // off the launch path (GL-12).
+        spotlightIndexer.start()
+        GrandLineServices.shared.spotlightIndexer = spotlightIndexer
+        // F-10: Services > Send to Grand Line. The menu items themselves are
+        // Info.plist's `NSServices` (build_native_app.sh).
+        if !ProcessMode.current.isIsolated {
+            NSApp.servicesProvider = servicesProvider
+            NSUpdateDynamicServices()
+        }
     }
 
     /// Review #3's UX13: the first-run welcome sheet.

@@ -125,7 +125,7 @@ enum CaptureRouterViewSelfTest {
             let order: [CaptureDestination] = [.task, .sticky, .note, .credential, .codeSnippet, .link]
             for (index, expected) in order.enumerated() {
                 check(tiles[index].destination == expected,
-                      "tile \(index + 1) is \(expected.rawValue), got \(tiles[index].destination.rawValue)")
+                      "tile \(index + 1) is \(expected.rawValue), got \(tiles[index].destination?.rawValue ?? "nil")")
             }
             // Return's default is drawn, not only documented.
             check(tiles[0].isDefault, "the Task tile is drawn as the default")
@@ -190,11 +190,20 @@ enum CaptureRouterViewSelfTest {
 
             // The discriminating half: a digit the router does not own must
             // fall through, or the panel would swallow it (and, worse, ⌘W).
-            // ⌘7 since F4 took ⌘6.
+            // ⌘8 since F-06 gave ⌘7 to Grab text, which is handled but
+            // files nothing.
             recorder.filed.removeAll()
+            if let eight = commandDigit(8) {
+                check(!root.performKeyEquivalent(with: eight), "\u{2318}8 is not swallowed")
+                check(recorder.filed.isEmpty, "\u{2318}8 files nothing")
+            }
+            var grabs = 0
+            capture.onGrabText = { grabs += 1 }
             if let seven = commandDigit(7) {
-                check(!root.performKeyEquivalent(with: seven), "\u{2318}7 is not swallowed")
+                check(root.performKeyEquivalent(with: seven), "\u{2318}7 (Grab text) is handled")
                 check(recorder.filed.isEmpty, "\u{2318}7 files nothing")
+                RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+                check(grabs == 1, "\u{2318}7 starts one grab, started \(grabs)")
             }
         }
     }
@@ -209,7 +218,7 @@ enum CaptureRouterViewSelfTest {
                 // click and a real Space keypress both run (GL-16).
                 _ = tile.accessibilityPerformPress()
                 check(recorder.filed.first?.0 == tile.destination,
-                      "clicking the \(tile.destination.title) tile files to it, got \(String(describing: recorder.filed.first?.0))")
+                      "clicking the \(tile.destination?.title ?? "grab") tile files to it, got \(String(describing: recorder.filed.first?.0))")
             }
         }
     }
@@ -312,7 +321,7 @@ enum CaptureRouterViewSelfTest {
                 for tile in capture.debugTiles {
                     let ratio = HelmContrast.ratio(tile.debugNameColor, tile.debugFillColor(under: theme))
                     check(ratio >= 4.5,
-                          "\(id): the \(tile.destination.title) tile's label clears 4.5:1 on its own fill, measured \(String(format: "%.2f", ratio))")
+                          "\(id): the \(tile.destination?.title ?? "grab") tile's label clears 4.5:1 on its own fill, measured \(String(format: "%.2f", ratio))")
                 }
             }
         }
@@ -520,7 +529,7 @@ enum CaptureRouterViewSelfTest {
     /// One lit tile, and it is the one Return files to.
     private static func checkTheLightFollowsTheDefault(_ check: (Bool, String) -> Void) {
         withPanel { capture, _ in
-            func lit() -> [CaptureDestination] { capture.debugTiles.filter(\.debugIsLit).map(\.destination) }
+            func lit() -> [CaptureDestination] { capture.debugTiles.filter(\.debugIsLit).compactMap(\.destination) }
             capture.debugSetText("")
             check(lit() == [.task], "an empty capture lights Task, lit \(lit())")
             capture.debugSetText("https://developer.apple.com/design/")

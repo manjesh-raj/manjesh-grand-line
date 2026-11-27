@@ -522,7 +522,9 @@ enum E2ETestingPolicySelfTest {
             // normally and is in `NEEDS_SESSION`. `ReviewTourLabSurfaces` is
             // the same tool's verbs for the restyled surfaces (full review 4,
             // T-03), split out of it by GL-36, and covered by the same suite.
-            guard name != "ReviewTourLab", name != "ReviewTourLabSurfaces" else { continue }
+            // `ReviewTourLabFeatures` is the same again for the review-4
+            // features' surfaces.
+            guard name != "ReviewTourLab", name != "ReviewTourLabSurfaces", name != "ReviewTourLabFeatures" else { continue }
             guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
             guard mountsAWindow(source) else { continue }
             windowBacked += 1

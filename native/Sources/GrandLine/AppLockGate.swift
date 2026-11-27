@@ -301,6 +301,20 @@ enum AppLockedSurface {
     /// sheet would otherwise open over the lock screen. Its own case, per
     /// this file's header rule: nothing else gates on it.
     case devopsHubSiteDialog
+    /// F-04: a Spotlight result chosen while the app is locked. It opens a
+    /// task, note, link, sticky note or runbook, so it waits for the unlock.
+    case spotlightResult
+    /// F-06: grab text from the screen. The system crosshair draws over the
+    /// lock screen, so a grab is refused before it starts while locked.
+    case grabText
+    /// F-10: the Services menu's "Send to Grand Line" items, which file the
+    /// captain's data while another app is frontmost.
+    case servicesMenu
+    /// F-05: the voice memo key (Right ⌥ + ⇧), which records from any app
+    /// and files into the Notebook or a task.
+    case voiceMemo
+    /// F-15: a page, or the focus timer, opened in a window of its own.
+    case pageWindow
 }
 
 final class AppLockGate {

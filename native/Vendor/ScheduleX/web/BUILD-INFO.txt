@@ -10,12 +10,12 @@ icons inlined as data: URIs) and the page are the whole bundle.
 SHA-256 of every shipped file, asserted by ShiftCalendarSelfTest:
 sha256 4a110dc9f081c65a922366285cfe7518ba34dc0bb61160dbb53b1a0176fd7732  THIRD-PARTY-LICENSES.txt
 sha256 59db3a67f3e3f30157144f7798b953709c00d179abcb846de82b38c0ce9cc3a8  index.html
-sha256 3ec12683ab6846f2431d1e0ca49593d1993f7581fc043cd999441facd4bf943e  task-calendar.css
-sha256 261306660c8c95a62d962e57e7d9492d8bb4ce45bd0d3ea7281a03ff5b4d1f91  task-calendar.js
+sha256 9486eecf204227d4a85bfe565a6469d30e3e424d4a2972d32730ca302651b81b  task-calendar.css
+sha256 9b2d2ef88bc6399062fcba2d2c995a32bc7645d95897699d786c2c59982dd6ac  task-calendar.js
 SHA-256 of every input, asserted by Scripts/check-web-bundles.sh:
 input sha256 c5fbdf708dd304f60ad61b78f6fee2b3992cbb78a92dd58f56c2b075db4e77c2  Scripts/build-schedule-x-web.sh
 input sha256 59db3a67f3e3f30157144f7798b953709c00d179abcb846de82b38c0ce9cc3a8  Vendor/ScheduleX/src/index.html
 input sha256 c1619bc51892a1e7b357437afb7b799914d94cc99ba5af7e22ddf0273be3a6c8  Vendor/ScheduleX/src/package-lock.json
 input sha256 aa65b44fd3a441858bcfb79f17496357835bd03be023b867c9ea3a6d44712d0e  Vendor/ScheduleX/src/package.json
-input sha256 9f1c6a9866ee3b5234f69b7549947639dbfba547696203e0bd0a47f60a9f987d  Vendor/ScheduleX/src/task-calendar.css
-input sha256 ffe97771453d785b701f266bf82cbfe3393f7e5532723531378bb84f4513c178  Vendor/ScheduleX/src/task-calendar.js
+input sha256 9be4ad72f649f90d3749fbe7ba8b81ff3d38e00238bd98ca92b6f86f63725e82  Vendor/ScheduleX/src/task-calendar.css
+input sha256 6ceeffd06e72edcdc5c4e2f25cf7249caf9307f36718c6c7cd598564d91f35c4  Vendor/ScheduleX/src/task-calendar.js

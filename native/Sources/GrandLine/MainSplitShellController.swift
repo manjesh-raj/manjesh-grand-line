@@ -565,6 +565,10 @@ final class MainSplitShellController: WorkspaceShellController {
         sidebar.onEndSession = { [weak self] id in self?.workspace.hosts.confirmEndSession(hostID: id) }
         // The session strip's "+" opened Hosts; so does Console's own menu.
         sidebar.onConnectHost = { [weak self] in self?.workspace.navigator.show(.hosts) }
+        sidebar.onOpenInNewWindow = { [weak self] module, onTop in
+            guard let target = PageWindowTarget.target(for: module) else { return }
+            self?.workspace.pageWindows.open(target, keepOnTop: onTop)
+        }
         // The account menu is Log Out only (stage 6). Settings is its own
         // sidebar module, and ⌘, and the app menu still reach it.
         sidebar.onLogOut = { [weak self] in self?.requestLogout() }

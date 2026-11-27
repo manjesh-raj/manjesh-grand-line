@@ -773,6 +773,24 @@ final class DictationEngine {
         audioEngine.inputNode.removeTap(onBus: 0)
     }
 
+    /// F-05: drop a recording without transcribing or pasting anything - a
+    /// voice memo took the key over (Right ⌥ was pressed first, then ⇧).
+    func discardRecording() {
+        wantsToRecord = false
+        guard isRecording else { return }
+        isRecording = false
+        finishTimeoutWorkItem?.cancel()
+        finishTimeoutWorkItem = nil
+        removeTapIfInstalled()
+        _audioEngine?.stop()   // PF6: never build one just to stop it.
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = nil
+        bestTranscriptSeen = ""
+        recordingStartedAt = nil
+        report(.ready)
+    }
+
     func stopRecording() {
         wantsToRecord = false
         guard isRecording else { return }

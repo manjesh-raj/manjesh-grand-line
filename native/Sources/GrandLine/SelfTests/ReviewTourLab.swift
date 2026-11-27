@@ -1275,6 +1275,7 @@ enum ReviewTourLab {
         default:
             // Full review 4, T-03: the restyled surfaces, in their own file.
             return applySurfaceUX(parts, shell: shell, outputDirectory: outputDirectory)
+                ?? applyFeatureUX(parts, shell: shell, outputDirectory: outputDirectory)
                 ?? "ux \(argument) FAILED - unknown state"
         }
     }

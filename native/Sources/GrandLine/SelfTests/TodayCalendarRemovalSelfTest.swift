@@ -24,8 +24,9 @@
 //      for it no longer decodes.
 //   2. **The bar has no Today pill** - five pills, Home first, in the order
 //      ⌘1-⌘5 index into.
-//   3. **No source names the removed pieces**, comments stripped, and neither
-//      bundle's Info.plist asks for calendar access.
+//   3. **No source names the removed pieces**, comments stripped. EventKit
+//      is back for F-01 of full review 4, in `MacCalendar.swift` only, and the
+//      app's Info.plist carries F-01's calendar usage descriptions and no other.
 //   4. **The launch cleanup removes what they left**, leaves everything else
 //      alone, and runs once.
 
@@ -43,7 +44,7 @@ enum TodayCalendarRemovalSelfTest {
         checkTheDestinationTableHasNoTodayPage(&ok)
         checkTheBarHasNoTodayPill(&ok)
         checkNoSourceNamesTheRemovedPieces(&ok)
-        checkNeitherBundleAsksForCalendarAccess(&ok)
+        checkOnlyTheAppAsksForCalendarAccess(&ok)
         checkTheCleanupRemovesWhatTheyLeft(&ok)
         checkTheCleanupRunsOnce(&ok)
         print(ok ? "TodayCalendarRemovalSelfTest: all checks passed"
@@ -103,6 +104,13 @@ enum TodayCalendarRemovalSelfTest {
 
     static let cleanupFile = "TodayCalendarRetirement.swift"
 
+    /// F-01 of full review 4 brought back a read-only EventKit path, for the
+    /// Mac's own calendars beside the tasks, and it lives in one file. The
+    /// Today page, the Google sign-in and the rest stay removed; EventKit is
+    /// allowed in this file and nowhere else.
+    static let eventKitFile = "MacCalendar.swift"
+    static let eventKitNeedles: Set<String> = ["import EventKit", "EKEventStore"]
+
     private static func checkNoSourceNamesTheRemovedPieces(_ ok: inout Bool) {
         print("\n-- no source names the removed pieces --")
         guard let files = SelfTestSources.appSourceFiles(), !files.isEmpty else {
@@ -123,6 +131,7 @@ enum TodayCalendarRemovalSelfTest {
             guard let raw = try? String(contentsOf: file, encoding: .utf8) else { continue }
             let code = stripComments(raw)
             for needle in bannedInCode where code.contains(needle) {
+                if file.lastPathComponent == eventKitFile, eventKitNeedles.contains(needle) { continue }
                 offenders.append("\(file.lastPathComponent): \(needle)")
             }
         }
@@ -142,11 +151,12 @@ enum TodayCalendarRemovalSelfTest {
         }
     }
 
-    /// Neither bundle may carry a calendar usage description. The key is
-    /// what makes macOS show a calendar prompt at all, and nothing in this
-    /// app reads a calendar any more.
-    private static func checkNeitherBundleAsksForCalendarAccess(_ ok: inout Bool) {
-        print("\n-- neither bundle asks for calendar access --")
+    /// The calendar usage descriptions are F-01's and the app's alone. The
+    /// probe app never asks (its tours drive the calendar through fakes), so
+    /// it carries none, and the app carries exactly the two F-01 keys -
+    /// nothing from the removed Today page's reminders or contacts.
+    private static func checkOnlyTheAppAsksForCalendarAccess(_ ok: inout Bool) {
+        print("\n-- only the app asks for calendar access, for F-01 --")
         guard let sources = SelfTestSources.appSourceDirectory() else {
             fail("could not resolve the app's source directory - this guard would pass vacuously", &ok)
             return
@@ -162,8 +172,15 @@ enum TodayCalendarRemovalSelfTest {
             // Info.plist, so an absence is a real absence.
             check(text.contains("NSMicrophoneUsageDescription"),
                   "fixture: \(relative) should write the Info.plist's usage descriptions", &ok)
-            check(!text.contains("NSCalendars"),
-                  "\(relative) still asks for calendar access", &ok)
+            if relative == "build_native_app.sh" {
+                check(text.contains("NSCalendarsFullAccessUsageDescription"),
+                      "build_native_app.sh lost F-01's calendar usage description", &ok)
+                check(!text.contains("NSRemindersUsageDescription") && !text.contains("NSContactsUsageDescription"),
+                      "build_native_app.sh asks for more than F-01's calendars", &ok)
+            } else {
+                check(!text.contains("NSCalendars"),
+                      "\(relative) asks for calendar access", &ok)
+            }
         }
     }
 

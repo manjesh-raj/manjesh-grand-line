@@ -23,6 +23,14 @@ final class AppSettings {
     private let defaults: UserDefaults
 
     private enum Keys {
+        static let expiryLeadDays = "fm.expiry.leadDays"
+        static let macCalendarsShown = "fm.macCalendars.shown"
+        static let macCalendarsHidden = "fm.macCalendars.hidden"
+        static let spotlightEnabled = "fm.spotlight.enabled"
+        static let spotlightDisabledKinds = "fm.spotlight.disabledKinds"
+        static let spotlightLockedMode = "fm.spotlight.lockedMode"
+        static let expiryChecksTLS = "fm.expiry.checksTLS"
+        static let expiryProjectID = "fm.expiry.projectID"
         static let fontSize = "fm.fontSize"
         static let uiTextScale = "fm.uiTextScale"
         static let defaultShellCwd = "fm.defaultShellCwd"
@@ -403,6 +411,59 @@ final class AppSettings {
     /// default: the grid is one flat run of cards, the way the Keys grid is,
     /// and each card names its group. An unset key reads as off, so nothing
     /// a captain saved before this existed changes what they see.
+    /// F-01: show the Mac's calendars beside the tasks. Off until the captain
+    /// presses "Show my calendars" and allows access.
+    var macCalendarsShown: Bool {
+        get { defaults.bool(forKey: Keys.macCalendarsShown) }
+        set { defaults.set(newValue, forKey: Keys.macCalendarsShown) }
+    }
+
+    /// F-01: the Mac calendars the captain turned off, by identifier.
+    var macCalendarsHidden: Set<String> {
+        get { Set(defaults.stringArray(forKey: Keys.macCalendarsHidden) ?? []) }
+        set { defaults.set(newValue.sorted(), forKey: Keys.macCalendarsHidden) }
+    }
+
+    /// F-04: write tasks, notes, links, sticky notes and runbooks to the
+    /// system's Spotlight index. On by default; unset reads as on.
+    var spotlightEnabled: Bool {
+        get { defaults.object(forKey: Keys.spotlightEnabled) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Keys.spotlightEnabled) }
+    }
+
+    /// F-04: the kinds the captain turned off in Settings.
+    var spotlightDisabledKinds: Set<SpotlightEntry.Kind> {
+        get { Set((defaults.stringArray(forKey: Keys.spotlightDisabledKinds) ?? []).compactMap(SpotlightEntry.Kind.init)) }
+        set { defaults.set(newValue.map(\.rawValue).sorted(), forKey: Keys.spotlightDisabledKinds) }
+    }
+
+    /// F-04: what Spotlight may show while the app is locked. Titles only by
+    /// default (the captain's product call).
+    var spotlightLockedMode: SpotlightIndex.LockedMode {
+        get { defaults.string(forKey: Keys.spotlightLockedMode).flatMap(SpotlightIndex.LockedMode.init) ?? .titlesOnly }
+        set { defaults.set(newValue.rawValue, forKey: Keys.spotlightLockedMode) }
+    }
+
+    /// D-03: how many days before an expiry its task is filed. Unset reads
+    /// as 0, which the monitor treats as the default 14.
+    var expiryLeadDays: Int {
+        get { defaults.integer(forKey: Keys.expiryLeadDays) }
+        set { defaults.set(newValue, forKey: Keys.expiryLeadDays) }
+    }
+
+    /// D-03: probe saved hosts on 443 for their TLS certificate's expiry. On
+    /// by default (the captain's product call), so unset reads as on.
+    var expiryChecksTLS: Bool {
+        get { defaults.object(forKey: Keys.expiryChecksTLS) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Keys.expiryChecksTLS) }
+    }
+
+    /// D-03: the project expiry tasks are filed in, or none.
+    var expiryProjectID: String? {
+        get { defaults.string(forKey: Keys.expiryProjectID) }
+        set { defaults.set(newValue, forKey: Keys.expiryProjectID) }
+    }
+
     var hostsGrouped: Bool {
         get { defaults.bool(forKey: Keys.hostsGrouped) }
         set { defaults.set(newValue, forKey: Keys.hostsGrouped) }

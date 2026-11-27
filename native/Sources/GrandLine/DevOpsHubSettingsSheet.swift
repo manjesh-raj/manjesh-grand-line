@@ -49,6 +49,24 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
                                            subtitle: "Blocks requests to the internet and to other ports on this Mac. "
                                                + "Turn off for a site that needs a CDN or an API.")
     /// S-02 (full review 4).
+    /// D-02: which kind a new project is. Fixed once it exists.
+    private lazy var kindTabs = HelmSegmentedTabs(
+        items: [.init(id: LocalProject.Kind.staticSite.rawValue, title: "Static folder"),
+                .init(id: LocalProject.Kind.devServer.rawValue, title: "Dev server")],
+        selected: project.kind.rawValue, size: .compact)
+    /// D-02: a dev server's command.
+    private let commandField = HelmTextField(placeholder: "npm run dev")
+    private var commandRow: NSView?
+    private var commandCaption: NSTextField?
+    private let restartRow = HelmToggleRow(title: "Restart if it crashes",
+                                           subtitle: "Up to \(DevServerRules.maxCrashes) times in \(Int(DevServerRules.crashWindow / 60)) minutes, then it is left stopped with the error.")
+    /// D-02: always on, and shown so the captain can see it is.
+    private let stopOnQuitRow = HelmToggleRow(title: "Stop it when Grand Line quits",
+                                              subtitle: "Always. It also stops if Grand Line crashes, so nothing is left listening.")
+    private var portCaption: NSTextField?
+    private var addressField: HelmTextField?
+    private weak var form: HelmFormSheet?
+    private var kind: LocalProject.Kind { project.kind }
     private let browserRow = HelmToggleRow(title: "Allow my browser",
                                            subtitle: "Off, only Grand Line\u{2019}s own view can read the site. On, your "
                                                + "browser can too, and so can any other app on this Mac while it runs.")
@@ -87,7 +105,8 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
     override func loadView() {
         let form = HelmFormSheet(title: mode == .add ? "Add a project" : "\(project.name) settings")
         view = form
-        form.setSubtitle(mode == .add ? "A folder of built HTML, served on this Mac only."
+        self.form = form
+        form.setSubtitle(mode == .add ? "A folder with an index.html, or a command that serves one."
                                       : "Changes apply the next time it starts.")
 
         if mode == .add {
@@ -96,6 +115,12 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
             // is what ends a typed-and-left value into the field.
             nameField.delegate = self
             form.addField("Name", nameField)
+            kindTabs.onSelect = { [weak self] id in
+                guard let self, let kind = LocalProject.Kind(rawValue: id) else { return }
+                self.project.kind = kind
+                self.applyKind()
+            }
+            form.addField("Kind", kindTabs)
         } else {
             form.addSection("Where it is")
         }
@@ -120,16 +145,27 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
             form.addCaption("\(Self.folderHint) The default is projects/\(project.id) in your firstmate home.")
         }
 
+        commandField.delegate = self
+        commandField.stringValue = project.command ?? ""
+        commandRow = form.addField("Command", commandField)
+        commandCaption = form.addCaption("Runs in the folder in a login shell, with its output kept as the log.")
+
         form.addSection("How it is served")
         let address = HelmTextField(placeholder: "")
+        addressField = address
         address.stringValue = "\(LocalStaticServer.loopbackHost) (this Mac only)"
         address.isEditable = false
         address.isSelectable = true
         portField.stringValue = "\(project.port)"
         portField.delegate = self
         form.addFieldColumns([("Address", address), ("Port", portField)])
-        form.addCaption(mode == .add ? Self.addPortCaption
+        portCaption = form.addCaption(mode == .add ? Self.addPortCaption
                                      : "The site saves your progress per address, so a new port starts it with no progress.")
+        restartRow.isOn = project.restartsOnCrash
+        form.addRow(restartRow)
+        stopOnQuitRow.isOn = true
+        stopOnQuitRow.toggle.isEnabled = false
+        form.addRow(stopOnQuitRow)
         browserRow.isOn = project.allowsBrowser
         form.addRow(browserRow)
         confineRow.isOn = project.confinesNetwork
@@ -143,8 +179,36 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
 
         form.setFooter(target: self, confirmTitle: mode == .add ? "Add Project" : "Save", confirm: #selector(save),
                        cancel: #selector(cancel))
+        applyKind(resize: false)
         form.refreshTheme()
         form.sizeToFitContent()
+    }
+
+    /// D-02: show the rows the chosen kind uses. A dev server has a command,
+    /// a restart rule and a port it prints; a static site has a browser
+    /// switch and an index.html to find.
+    private func applyKind(resize: Bool = true) {
+        let dev = kind == .devServer
+        commandRow?.isHidden = !dev
+        commandCaption?.isHidden = !dev
+        restartRow.isHidden = !dev
+        stopOnQuitRow.isHidden = !dev
+        browserRow.isHidden = dev
+        if dev, portField.stringValue == "\(project.port)", mode == .add { portField.stringValue = "" }
+        portField.placeholderString = dev ? "Found in its output" : "7420"
+        addressField?.stringValue = dev ? "Whatever the command prints" : "\(LocalStaticServer.loopbackHost) (this Mac only)"
+        portCaption?.stringValue = dev
+            ? "Leave it empty and Grand Line uses the address the command prints, such as localhost:5173."
+            : (mode == .add ? Self.addPortCaption
+                            : "The site saves your progress per address, so a new port starts it with no progress.")
+        if dev {
+            folderCheckLabel?.stringValue = "The folder the command runs in."
+            checkedFolder = nil
+        } else {
+            checkedFolder = nil
+            checkFolder()
+        }
+        if resize { form?.sizeToFitContent() }
     }
 
     // MARK: Actions
@@ -198,7 +262,7 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
     /// Add Project's one line under the folder: what Start would find there,
     /// read off the main thread (GL-12).
     private func checkFolder() {
-        guard mode == .add, let label = folderCheckLabel else { return }
+        guard mode == .add, kind == .staticSite, let label = folderCheckLabel else { return }
         let text = folderField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text != checkedFolder else { return }
         checkedFolder = text
@@ -238,16 +302,28 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
     /// project's own. `takenPorts` are the other projects' ports.
     static func edited(_ project: LocalProject, name: String? = nil, folderText: String, portText: String,
                        opensWhenReady: Bool, startsAtLaunch: Bool, allowsBrowser: Bool? = nil,
-                       confinesNetwork: Bool? = nil, takenPorts: Set<UInt16> = [], requiresFolder: Bool = false) -> (LocalProject?, String?) {
+                       confinesNetwork: Bool? = nil, takenPorts: Set<UInt16> = [], requiresFolder: Bool = false,
+                       command: String? = nil, restartsOnCrash: Bool? = nil) -> (LocalProject?, String?) {
         let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let trimmedName, trimmedName.isEmpty { return (nil, "Give the project a name.") }
         let folder = folderText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if requiresFolder, folder.isEmpty { return (nil, "Choose the folder that holds its index.html.") }
+        let dev = project.kind == .devServer
+        if requiresFolder, folder.isEmpty {
+            return (nil, dev ? "Choose the folder the command runs in." : "Choose the folder that holds its index.html.")
+        }
+        let trimmedCommand = command?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if dev, (trimmedCommand ?? project.command ?? "").isEmpty { return (nil, "Give the command to run, such as npm run dev.") }
         let trimmedPort = portText.trimmingCharacters(in: .whitespaces)
-        guard let port = UInt16(trimmedPort), port >= 1024 else {
+        // A dev server's port may be left empty: it is found in its output.
+        let port: UInt16
+        if dev, trimmedPort.isEmpty {
+            port = 0
+        } else if let parsed = UInt16(trimmedPort), parsed >= 1024 {
+            port = parsed
+        } else {
             return (nil, "Choose a port from 1024 to 65535.")
         }
-        guard !takenPorts.contains(port) else {
+        guard port == 0 || !takenPorts.contains(port) else {
             return (nil, "Another project uses port \(port). Choose another.")
         }
         var edited = project
@@ -264,6 +340,8 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         edited.startsAtLaunch = startsAtLaunch
         if let allowsBrowser { edited.allowsBrowser = allowsBrowser }
         if let confinesNetwork { edited.confinesNetwork = confinesNetwork }
+        if dev, let trimmedCommand { edited.command = trimmedCommand }
+        if let restartsOnCrash { edited.restartsOnCrash = restartsOnCrash }
         return (edited, nil)
     }
 
@@ -274,10 +352,13 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
                                             portText: portField.stringValue,
                                             opensWhenReady: opensRow.isOn, startsAtLaunch: launchRow.isOn,
                                             allowsBrowser: browserRow.isOn, confinesNetwork: confineRow.isOn,
-                                            takenPorts: takenPorts, requiresFolder: adding)
+                                            takenPorts: takenPorts, requiresFolder: adding,
+                                            command: commandField.stringValue, restartsOnCrash: restartRow.isOn)
         guard let edited else {
             let field: HelmTextField
-            if problem?.hasPrefix("Give") == true {
+            if problem?.hasPrefix("Give the command") == true {
+                field = commandField
+            } else if problem?.hasPrefix("Give") == true {
                 field = nameField
             } else if problem?.hasPrefix("Choose the folder") == true {
                 field = folderField
@@ -321,6 +402,9 @@ final class DevOpsHubSettingsSheet: NSViewController, NSTextFieldDelegate {
         launchRow.isOn = startsAtLaunch
     }
     func debugSetName(_ name: String) { nameField.stringValue = name }
+    func debugChooseKind(_ kind: LocalProject.Kind) { kindTabs.select(kind.rawValue); project.kind = kind; applyKind() }
+    func debugSetCommand(_ command: String) { commandField.stringValue = command }
+    var debugCommandRowHidden: Bool { commandRow?.isHidden ?? true }
     var debugBrowserRow: HelmToggleRow { browserRow }
     var debugConfineRow: HelmToggleRow { confineRow }
     func debugCheckFolder() { checkFolder() }

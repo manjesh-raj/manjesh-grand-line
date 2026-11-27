@@ -10,8 +10,9 @@
 //        |                    +--> failed / folderNotFound|
 //        +-------------------------- Stop ----------------+
 //
-// The server is in-process (`LocalStaticServer`), so it stops with the app:
-// `stopAll(reason: .quit)` only records the run for the "Last run" line.
+// A static site's server is in-process (`LocalStaticServer`), so it stops
+// with the app. A dev server (D-02) is a child process group, and
+// `stopAll(reason: .quit)` stops it and waits for it to go.
 //
 // GL-23: the registry caches the projects file, so there is one shared
 // instance; a suite builds its own over a scratch file. Every change posts
@@ -45,6 +46,11 @@ enum LocalProjectFailure: Equatable {
     /// The port in the settings is not a usable one.
     case invalidPort
     case other(String)
+    /// D-02: a dev server exited `DevServerRules.maxCrashes` times inside the
+    /// window, so it was left stopped.
+    case crashLoop(lastLine: String?, exitCode: Int32?, at: Date)
+    /// D-02: a dev server project with no command.
+    case noCommand
 }
 
 /// Something that can serve a folder. `LocalStaticServer` in the app; a
@@ -68,6 +74,11 @@ struct ServerSetup {
 final class LocalProjectRegistry {
 
     static let didChange = Notification.Name("LocalProjectRegistryDidChange")
+    /// D-02: a dev server printed something. `object` is the registry and
+    /// `userInfo["id"]` the project. Posted at most every `logCoalesce`.
+    static let devServerLogDidChange = Notification.Name("LocalProjectRegistryDevServerLogDidChange")
+    static let logCoalesce: TimeInterval = 0.25
+    private var logPostPending: Set<String> = []
 
     /// The app's one registry, over `LocalProjectStore.storeURL()`.
     static let shared = LocalProjectRegistry()
@@ -85,6 +96,11 @@ final class LocalProjectRegistry {
     private var accessTokens: [String: String] = [:]
     /// S-04: whether each run keeps its site to its own address.
     private var confinedRuns: Set<String> = []
+    /// D-02: the running dev servers, by project id.
+    private var devServers: [String: DevServerSupervisor] = [:]
+    /// D-02: builds a supervisor. A self-test passes one over a scratch
+    /// command.
+    var makeDevServer: (LocalProject) -> DevServerSupervisor = { DevServerSupervisor(project: $0) }
 
     private let storeURL: URL
     private let makeServer: (ServerSetup) -> LocalServing
@@ -122,6 +138,31 @@ final class LocalProjectRegistry {
     /// The files and bytes the last Start counted, once the count has landed.
     func folderCount(of id: String) -> (files: Int, bytes: Int64)? { folderCounts[id] }
 
+    /// D-02: a dev server's log, address and process, while it has one.
+    func devServer(of id: String) -> DevServerSupervisor? { devServers[id] }
+
+    /// The address as a row shows it: `127.0.0.1:7420` for a static site,
+    /// `localhost:5173` for a dev server once it has printed one.
+    func displayAddress(of id: String) -> String {
+        guard let project = project(id) else { return "" }
+        if project.kind == .devServer {
+            if let port = devServers[id]?.detectedPort { return "localhost:\(port)" }
+            return project.port > 0 ? "localhost:\(project.port)" : "found in its output"
+        }
+        return "\(LocalStaticServer.loopbackHost):\(project.port)"
+    }
+
+    /// The address a project's page is at now: the static server's port, or
+    /// the port a dev server printed.
+    func origin(of id: String) -> URL? {
+        guard let project = project(id) else { return nil }
+        if project.kind == .devServer {
+            guard let port = devServers[id]?.detectedPort ?? (project.port > 0 ? project.port : nil) else { return nil }
+            return URL(string: "http://localhost:\(port)/")
+        }
+        return project.origin
+    }
+
     var runningCount: Int { projects.filter { state(of: $0.id).isRunning }.count }
 
     /// The project the DevOps Hub row used to open. The row opens the
@@ -138,7 +179,9 @@ final class LocalProjectRegistry {
 
     /// Whether another project already uses `port`.
     func portIsTaken(_ port: UInt16, except id: String? = nil) -> Bool {
-        projects.contains { $0.port == port && $0.id != id }
+        // A dev server's port 0 means "found in its output", never a clash.
+        guard port != 0 else { return false }
+        return projects.contains { $0.port == port && $0.id != id }
     }
 
     /// The first port from 7420 up that no project uses, for a new one.
@@ -211,6 +254,10 @@ final class LocalProjectRegistry {
         switch state(of: id) {
         case .starting, .running: return
         default: break
+        }
+        if project.kind == .devServer {
+            startDevServer(project)
+            return
         }
         // PF-02: only the cheap checks here. This runs on the main thread,
         // and at launch for a project marked to start then, so the walk over
@@ -301,8 +348,58 @@ final class LocalProjectRegistry {
     private let countQueue = DispatchQueue(label: "com.manjesh.grandline.local-project-count", qos: .utility)
 
     /// Close the listener. The port is free at once.
+    /// D-02: a dev server's start. The folder has to exist and the command
+    /// has to be set; the address is whatever the command prints.
+    private func startDevServer(_ project: LocalProject) {
+        let id = project.id
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: project.folder.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            states[id] = .folderNotFound(noIndex: false)
+            notify()
+            return
+        }
+        guard let command = project.command?.trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty else {
+            states[id] = .failed(.noCommand)
+            notify()
+            return
+        }
+        let supervisor = makeDevServer(project)
+        supervisor.clock = clock
+        devServers[id] = supervisor
+        if project.confinesNetwork { confinedRuns.insert(id) } else { confinedRuns.remove(id) }
+        states[id] = .starting
+        supervisor.onChange = { [weak self, weak supervisor] in
+            guard let self, let supervisor, self.devServers[id] === supervisor else { return }
+            switch supervisor.phase {
+            case .starting: self.states[id] = .starting
+            case .running(let since): if !self.state(of: id).isRunning { self.states[id] = .running(since: since) }
+            case .crashLooped(let line, let code, let at):
+                self.states[id] = .failed(.crashLoop(lastLine: line, exitCode: code, at: at))
+            case .stopped: break
+            }
+            self.notify()
+        }
+        supervisor.onOutput = { [weak self, weak supervisor] in
+            guard let self, let supervisor, self.devServers[id] === supervisor, !self.logPostPending.contains(id) else { return }
+            self.logPostPending.insert(id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.logCoalesce) { [weak self] in
+                guard let self else { return }
+                self.logPostPending.remove(id)
+                NotificationCenter.default.post(name: Self.devServerLogDidChange, object: self, userInfo: ["id": id])
+            }
+        }
+        supervisor.start()
+        notify()
+    }
+
     func stop(_ id: String, reason: StopReason = .stopped) {
         startTokens[id] = nil
+        if let supervisor = devServers[id] {
+            // At quit, wait for the group to go so nothing is left listening.
+            supervisor.stop(wait: reason == .quit)
+            // A crash-looped server keeps its log until it is started again.
+            if case .crashLooped = supervisor.phase {} else { devServers[id] = nil }
+        }
         let wasRunning = state(of: id)
         servers[id]?.stop()
         servers[id] = nil
@@ -323,6 +420,7 @@ final class LocalProjectRegistry {
 
     func restart(_ id: String) {
         stop(id)
+        devServers[id] = nil
         start(id)
     }
 
@@ -334,7 +432,9 @@ final class LocalProjectRegistry {
     /// Grand Line is quitting: record each running project's run. The
     /// listeners would close with the process anyway.
     func stopAll(reason: StopReason) {
-        for project in projects where state(of: project.id) != .notStarted { stop(project.id, reason: reason) }
+        for project in projects where state(of: project.id) != .notStarted || devServers[project.id] != nil {
+            stop(project.id, reason: reason)
+        }
     }
 
     private func notify() {

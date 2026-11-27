@@ -27,7 +27,11 @@ extension HomeCanvasController {
             label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         }
         greetingTitle.setAccessibilityRole(.staticText)
-        greetingHeader.setViews([greetingTitle, greetingSummary], in: .top)
+        greetingActions.orientation = .horizontal
+        greetingActions.spacing = HelmMetrics.s2
+        greetingActions.isHidden = true
+        greetingHeader.setViews([greetingTitle, greetingSummary, greetingActions], in: .top)
+        greetingHeader.setCustomSpacing(HelmMetrics.s3, after: greetingSummary)
         greetingHeader.orientation = .vertical
         greetingHeader.alignment = .leading
         greetingHeader.spacing = HelmMetrics.s1 + 2
@@ -60,15 +64,30 @@ extension HomeCanvasController {
         let fleetTint = fleetAnswer.flatMap { $0.tint == .good ? nil : $0.tint }
         let fleetNeedsCaptain = HomeBriefingHero.offersNeedsYou(crewShown: crewShown,
                                                                 tasks: fleetSnapshot?.tasks ?? [])
+        // F-01: the first meeting still to come today, from the Mac's own
+        // calendars when they are shown.
+        let firstMeeting = MacCalendarSource.shared.isShowing
+            ? MacCalendarRules.firstMeeting(after: now, meetings: MacCalendarSource.shared.meetings(on: now))
+                .map { MacCalendarRules.firstMeetingSentence($0, now: now) }
+            : nil
         let facts = HomeGreeting.Facts(
             dueToday: hiddenModules.contains(.tasks) ? nil : counts?.due,
             overdue: counts?.overdue,
             fleetNeedsYou: fleetAnswer.flatMap { $0.tint == .good ? nil : $0.title },
             prsReady: crewShown ? prsReady : nil,
-            servicesFailing: healthShown && healthSummary.total > 0 ? healthSummary.failing : nil)
+            servicesFailing: healthShown && healthSummary.total > 0 ? healthSummary.failing : nil,
+            firstMeeting: firstMeeting)
         greetingTitle.stringValue = HomeGreeting.title(
             captain: HomeGreeting.captainName(fleetCaptain: fleetSnapshot?.captain), now: now)
         greetingSummary.stringValue = HomeGreeting.summary(facts, now: now)
+        // F-02: with no hero, the plan's actions sit under the greeting.
+        let planActions = greetingOnGround ? dayPlanActions(now: now) : []
+        if greetingActionTitles != planActions.map(\.0) {
+            greetingActionTitles = planActions.map(\.0)
+            greetingActions.setViews(planActions.map { HelmButton(title: $0.0, variant: .secondary, target: self, action: $0.1) },
+                                     in: .leading)
+        }
+        greetingActions.isHidden = planActions.isEmpty
         greetingHeader.setAccessibilityElement(true)
         greetingHeader.setAccessibilityRole(.group)
         greetingHeader.setAccessibilityLabel("\(greetingTitle.stringValue). \(greetingSummary.stringValue)")
@@ -105,12 +124,24 @@ extension HomeCanvasController {
         }
         var tiles = words.facts.map { HomeBriefingHero.tile($0, pageName: PlaceName.short) }
         if let note = words.note { tiles.append(.init(label: nil, text: note, tint: nil, isLink: false)) }
-        briefingHero.configure(.init(kicker: kicker, title: words.title, tiles: tiles, ring: ring,
-                                     greeting: greeting, status: status))
-        let facts = words.facts
-        briefingHero.onActivateTile = { [weak self] index in
-            guard let self, !self.isCustomizing, facts.indices.contains(index) else { return }
-            self.follow(facts[index].target)
+        // F-02: while today's plan is open, the plan is the hero.
+        if let planned = dayPlanHero(now: now) {
+            briefingHero.configure(.init(kicker: planned.words.kicker, title: planned.words.title,
+                                         tiles: planned.words.tiles, ring: ring,
+                                         greeting: greeting, status: planned.status ?? status))
+            let ids = planned.plan.items.sorted { $0.startMinute < $1.startMinute }.map(\.taskID)
+            briefingHero.onActivateTile = { [weak self] index in
+                guard let self, !self.isCustomizing, ids.indices.contains(index) else { return }
+                self.onOpenShiftTask?(ids[index])
+            }
+        } else {
+            briefingHero.configure(.init(kicker: kicker, title: words.title, tiles: tiles, ring: ring,
+                                         greeting: greeting, status: status))
+            let facts = words.facts
+            briefingHero.onActivateTile = { [weak self] index in
+                guard let self, !self.isCustomizing, facts.indices.contains(index) else { return }
+                self.follow(facts[index].target)
+            }
         }
         briefingHero.onActivateRing = { [weak self] in
             guard let self, !self.isCustomizing else { return }
@@ -120,7 +151,9 @@ extension HomeCanvasController {
         // The prototype's two actions, each only when it has somewhere real
         // to go: the crew's decisions when one is waiting, Health when a
         // service is failing.
-        var actions: [(String, Selector)] = []
+        // F-02's Plan my day, Start focus, Change the plan and Close the day
+        // lead, ahead of the crew's and Health's.
+        var actions: [(String, Selector)] = dayPlanActions(now: now)
         if fleetNeedsYou { actions.append(("Open Needs you", #selector(heroOpenDecisions))) }
         if healthShown, healthSummary.failing > 0 { actions.append(("See Health", #selector(heroOpenHealth))) }
         if heroActionTitles != actions.map(\.0) {

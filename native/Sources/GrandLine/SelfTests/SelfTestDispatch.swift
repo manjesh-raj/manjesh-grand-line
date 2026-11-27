@@ -2190,6 +2190,90 @@ enum SelfTestDispatch {
             exit(IncidentStoreSelfTest.run() ? 0 : 1)
         }
 
+        // D-05 of full review 4: the incident's Markdown postmortem draft - the
+        // command entry, the draft's facts and prompts, the options, redaction
+        // and the card's export panel. Headless. See IncidentExportSelfTest.swift.
+        // D-03 of full review 4: key and certificate expiry reminders - the OpenSSH
+        // certificate reader against ssh-keygen fixtures, the filing rule, the
+        // schedule and the monitor against a fake TLS probe. Headless, no network.
+        if ProcessInfo.processInfo.environment["FM_RUN_EXPIRY_REMINDER_TESTS"] == "1" {
+            exit(ExpiryReminderSelfTest.run() ? 0 : 1)
+        }
+
+        // F-04 of full review 4: what goes into Spotlight, titles only while
+        // locked, and a result chosen while locked opening after the unlock.
+        // Headless, with a recording sink in place of Core Spotlight.
+        if ProcessInfo.processInfo.environment["FM_RUN_SPOTLIGHT_INDEX_TESTS"] == "1" {
+            exit(SpotlightIndexSelfTest.run() ? 0 : 1)
+        }
+
+        // F-06 of full review 4: grab text from the screen - a real Vision read of
+        // drawn text, the flow against a fake crosshair and a private pasteboard,
+        // the lock refusal and the capture panel's cmd-7. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_SCREEN_TEXT_GRAB_TESTS"] == "1" {
+            exit(ScreenTextGrabSelfTest.run() ? 0 : 1)
+        }
+
+        // F-10 of full review 4: Services > Send to Grand Line - the selection, the
+        // drafts, the provider's filing and lock refusal, Info.plist's NSServices
+        // against the provider's selectors, and the filing panel. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_SERVICES_MENU_TESTS"] == "1" {
+            exit(GrandLineServicesMenuSelfTest.run() ? 0 : 1)
+        }
+
+        // D-02 of full review 4: DevOps Hub's managed dev servers - the bounded log,
+        // the address, the crash rule, and real process groups that die on Stop,
+        // after a crash loop and when their parent goes. Headless; real children.
+        if ProcessInfo.processInfo.environment["FM_RUN_DEV_SERVER_TESTS"] == "1" {
+            exit(DevServerSelfTest.run() ? 0 : 1)
+        }
+
+        // D-01 of full review 4: runbook run mode - marker capture against a fake
+        // shell, the evidence and its Markdown, and the page end to end through
+        // attaching to a postmortem. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_RUNBOOK_RUN_MODE_TESTS"] == "1" {
+            exit(RunbookRunModeSelfTest.run() ? 0 : 1)
+        }
+
+        // F-05 of full review 4: voice memos - the Right Option + Shift chord, the
+        // page format, the record/choose/file flow with a recorder double, a
+        // dropped file, and the strip. Headless; never opens the microphone.
+        if ProcessInfo.processInfo.environment["FM_RUN_VOICE_MEMO_TESTS"] == "1" {
+            exit(VoiceMemoSelfTest.run() ? 0 : 1)
+        }
+
+        // F-03 of full review 4: reader mode and highlights - the extraction script
+        // in an off-screen web view over local HTML, the no-text state, the queue,
+        // highlights and the Notebook quote. Headless, no network.
+        if ProcessInfo.processInfo.environment["FM_RUN_READER_MODE_TESTS"] == "1" {
+            exit(ReaderModeSelfTest.run() ? 0 : 1)
+        }
+
+        // F-02 of full review 4: plan my day and close it - the groups, the cap,
+        // placing around meetings, drag and resize, the first focus session,
+        // Home's hero, Close the day, the bell's nudges and the store. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_DAY_PLAN_TESTS"] == "1" {
+            exit(DayPlanSelfTest.run() ? 0 : 1)
+        }
+
+        // F-15 of full review 4: a page in its own window - the same view moves,
+        // the placeholder takes its visibility, it comes back pinned, one window
+        // per page, the lock, and the focus timer window. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_PAGE_WINDOWS_TESTS"] == "1" {
+            exit(PageWindowsSelfTest.run() ? 0 : 1)
+        }
+
+        // F-01 of full review 4: the Mac's calendars beside the tasks - free gaps,
+        // the next free hour, the read-only payload, the bridge's meeting click,
+        // Home's sentence and the rebuilt web bundle. Headless; EventKit unasked.
+        if ProcessInfo.processInfo.environment["FM_RUN_MAC_CALENDAR_TESTS"] == "1" {
+            exit(MacCalendarSelfTest.run() ? 0 : 1)
+        }
+
+        if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
+            exit(IncidentExportSelfTest.run() ? 0 : 1)
+        }
+
         // Audit §6.2's relaunch-continuity half. Window-backed (it mounts a real
         // `ConsoleController`), so it belongs in `run-all-tests.sh`'s NEEDS_SESSION
         // list rather than beside the pure-logic store suite above.

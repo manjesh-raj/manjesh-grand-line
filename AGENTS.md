@@ -1285,6 +1285,7 @@ can correct an earlier one - and several do.
 | [`47-appkit-gotchas.md`](docs/history/47-appkit-gotchas.md) | Any of the 23 gotchas above - the probe, the numbers and the wrong fixes tried first |
 | [`48-test-hermeticity.md`](docs/history/48-test-hermeticity.md) | The `UserDefaults` leak between suites: five incidents, the mitigations, and the per-process suite domain that replaced them |
 | [`49-devops-hub.md`](docs/history/49-devops-hub.md) | DevOps Hub: the in-process loopback server, the project registry and store, the devops-atlas page and its web view |
+| [`50-review4-features.md`](docs/history/50-review4-features.md) | Full review 4's twelve features: Plan my day, the Mac's calendars, reader mode, Spotlight, voice memos, grab text, Services, page windows, runbook run mode, dev servers, expiry reminders, postmortem export |
 
 ## Maintaining this file
 

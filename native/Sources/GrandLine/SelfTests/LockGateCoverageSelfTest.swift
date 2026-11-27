@@ -122,6 +122,13 @@ enum LockGateCoverageSelfTest {
                   + "the consumer, where the recording actually starts. Deliberate: "
                   + "`onUp` must stay ungated so a recording begun before the lock can "
                   + "still be stopped, or the microphone stays open."),
+        .init(file: "VoiceMemo.swift",
+              gate: (file: "VoiceMemoViews.swift", needle: "allows(.voiceMemo)"),
+              reason: "F-05's Right Option + Shift chord, the same shape as `DictationHotkey`: the "
+                  + "monitor only reports the hold and the release, and the gate is at the "
+                  + "consumer, `VoiceMemoController.keyDown`, where a recording starts. The release "
+                  + "stays ungated so a memo begun before the lock still stops and the microphone "
+                  + "closes."),
     ]
 
     private static func test_everyEventMonitorIsGated() -> String? {

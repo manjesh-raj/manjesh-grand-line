@@ -57,6 +57,22 @@ final class Workspace {
     weak var chrome: WorkspaceChrome?
 
     let content = WorkspaceContent()
+    /// F-15: pages and the focus timer in windows of their own.
+    private(set) lazy var pageWindows = PageWindows(
+        content: content,
+        mount: { [weak self] destination in
+            guard let self else { return nil }
+            self.navigator.show(destination)
+            return self.content.mounter.slot(for: destination.slot)?.controller
+        },
+        timer: { [weak self] in self?.focusTimer })
+
+    /// F-15: the page on screen, popped out (the Window menu's item).
+    func openCurrentPageInNewWindow(keepOnTop: Bool = false) -> Bool {
+        guard case .rail(let destination)? = navigator.currentDestinationKind,
+              let target = PageWindowTarget.target(for: destination) else { return false }
+        return pageWindows.open(target, keepOnTop: keepOnTop) != nil
+    }
     private(set) lazy var hosts = HostSessionCoordinator(workspace: self, makeHostConsole: makeHostConsole)
     private(set) lazy var navigator = Navigator(workspace: self)
     let lock = LockPresenter()
@@ -120,6 +136,26 @@ final class Workspace {
     // because a lazy initialiser runs long after `init` has returned.
     let hostStore: HostStore
     let keyStore: SSHKeyStore
+    /// D-03: key and certificate expiry reminders, checked every morning.
+    private(set) lazy var expiryMonitor: ExpiryReminderMonitor = {
+        let monitor = ExpiryReminderMonitor(keys: { [weak self] in self?.keyStore.keys ?? [] },
+                                            hosts: { [weak self] in self?.hostStore.hosts ?? [] },
+                                            shiftStore: shiftStore)
+        monitor.onOpenTask = { [weak self] id in self?.navigator.openShiftTask(id: id) }
+        return monitor
+    }()
+    /// F-02: the 9:00 Plan my day and 18:00 Close the day entries in the bell.
+    private(set) lazy var dayPlanNudger: DayPlanNudger = {
+        let nudger = DayPlanNudger(store: shiftStore)
+        nudger.onOpen = { [weak self] nudge in
+            guard let self else { return }
+            self.navigator.show(.homeCanvas)
+            DispatchQueue.main.async {
+                if nudge == .morning { self.homeCanvas.presentPlanMyDay() } else { self.homeCanvas.presentCloseTheDay() }
+            }
+        }
+        return nudger
+    }()
     let snippetStore: SnippetStore
     let dictationStore: DictationStore
     let commandLibraryStore: CommandLibraryStore
@@ -138,6 +174,7 @@ final class Workspace {
         hostsPanel.onAddOrEdit = { [weak self] host in self?.onPresentHostEditor?(host) }
         hostsPanel.onRunSnippet = { [weak self] snippet in self?.onRunSnippet?(snippet) }
         hostsPanel.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        hostsPanel.expiryMonitor = expiryMonitor
         // Hosts is the first migrated page whose *actions* change while it is
         // on screen: §6.4's cluster carries the add action for the tab that is
         // showing, and the three tabs add three different records. Same shape
@@ -506,7 +543,26 @@ final class Workspace {
         runbooks.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
         runbooks.onDrillActionsChanged = { [weak self] in self?.chromeActionsMayHaveChanged() }
         // UX-17: a run's step sends its command to the Console's active tab.
-        runbooks.onSendCommand = { [weak self] command in self?.console.sendCommandLibraryTextToActiveTab(command) }
+        // D-01: run mode types a step into the same tab "Send to terminal"
+        // does, and reads its output back from it.
+        runbooks.stepTerminal = { [weak self] in
+            guard let tab = self?.console.currentTab else { return nil }
+            return (tab, tab.name)
+        }
+        runbooks.onOpenConsole = { [weak self] in self?.navigator.show(.console) }
+        // D-01: a finished run lands on the timeline of whichever host has an
+        // active incident - the same entry SRE Lead's runbook runs make.
+        runbooks.onRunFinished = { [weak self] run in
+            var attached: String?
+            self?.hosts.forEachConsole { console in
+                guard attached == nil, let incident = console.activeIncident() else { return }
+                let failed = run.steps.contains { $0.outcome == .failed }
+                console.noteRunbookRun(name: run.runbookTitle, ran: run.finishedCount, total: run.steps.count,
+                                       ok: run.finishedCount == run.steps.count && !failed, refused: false)
+                attached = incident.id
+            }
+            return attached
+        }
         return built(.runbooks, runbooks)
     }()
 
@@ -826,7 +882,13 @@ final class Workspace {
                                           stickyBoardStore: stickyBoardStore,
                                           codePreviewStore: codePreviewStore,
                                           focusTimer: focusTimer,
-                                          docsRunbookStore: docsRunbookStore)
+                                          docsRunbookStore: docsRunbookStore,
+                                          logAnalyzerStore: logAnalyzerStore)
+        // D-03: the morning expiry check. `start()` does nothing in a suite
+        // or a tour, which run a check by hand against fakes.
+        expiryMonitor.start()
+        // F-02: same rule, never armed in a suite or a tour.
+        dayPlanNudger.start()
         lock.prepareForLock = { [unowned self] in self.prepareForLock() }
         lock.resumeAfterUnlock = { [unowned self] in self.hosts.forEachConsole { $0.resumeAfterUnlock() } }
         content.hostPages = { [unowned self] in Array(self.hosts.hostConsoles.values) }
@@ -1034,6 +1096,8 @@ final class Workspace {
             self?.overview.revealNeedsYou()
         }
         homeCanvas.onOpenShiftTask = { [weak self] id in self?.navigator.openShiftTask(id: id) }
+        // F-02: a plan saved or closed anywhere re-draws Home's hero.
+        DayPlanStore.shared.observe { [weak self] in self?.homeCanvas.setNeedsRender() }
         // The Claude status card's own Refresh. Overview already owns the
         // quota reading and both its readers; this forces it past the
         // freshness window rather than adding a second fetch path.

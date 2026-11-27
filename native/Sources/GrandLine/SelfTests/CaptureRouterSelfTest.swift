@@ -66,7 +66,8 @@ enum CaptureRouterSelfTest {
         // destinations today, so the range the captain reads is ⌘1–⌘6.
         check(CaptureHeroWords.chordRange == "\u{2318}1\u{2013}\u{2318}6",
               "the hint's range is \(CaptureHeroWords.chordRange), want \u{2318}1\u{2013}\u{2318}6")
-        check(CaptureHeroWords.hint == "\u{23CE} file as a task \u{00B7} \u{2318}1\u{2013}\u{2318}6 choose \u{00B7} Esc dismiss",
+        // F-06: ⌘7 is Grab text, an action rather than a destination.
+        check(CaptureHeroWords.hint == "\u{23CE} file as a task \u{00B7} \u{2318}1\u{2013}\u{2318}6 choose \u{00B7} \u{2318}7 grab text \u{00B7} Esc dismiss",
               "the hint reads \(CaptureHeroWords.hint)")
         check(CaptureDestination.forChordDigit(count) != nil,
               "the hint's last chord, \u{2318}\(count), files somewhere")

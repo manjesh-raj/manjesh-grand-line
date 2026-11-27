@@ -54,6 +54,15 @@ final class GrandLineServices {
     /// the Log Analyzer and the canvas. The Console, the crew, the command
     /// library and SRE Lead ask for it here rather than building their own.
     private(set) weak var docsRunbookStore: DocsRunbookStore?
+    /// D-05: the Log Analyzer's one store, so an incident export can quote a
+    /// saved investigation's findings without building a second store.
+    private(set) weak var logAnalyzerStore: LogAnalyzerStore?
+    /// F-04: the Spotlight indexer, so Settings can show its counts and
+    /// rebuild or empty the index. Set by the app delegate at launch.
+    weak var spotlightIndexer: SpotlightIndexer?
+    /// F-05: the voice memo flow, so the Notebook can transcribe a dropped
+    /// audio file without building a second one.
+    weak var voiceMemos: VoiceMemoController?
 
     /// Registered once, from `AppShellController.init`, with the instances it
     /// has just built. `weak` throughout: this registry must never be the
@@ -64,8 +73,10 @@ final class GrandLineServices {
                   stickyBoardStore: StickyBoardStore,
                   codePreviewStore: CodePreviewStore,
                   focusTimer: FocusTimerController,
-                  docsRunbookStore: DocsRunbookStore) {
+                  docsRunbookStore: DocsRunbookStore,
+                  logAnalyzerStore: LogAnalyzerStore? = nil) {
         self.docsRunbookStore = docsRunbookStore
+        self.logAnalyzerStore = logAnalyzerStore
         self.shiftStore = shiftStore
         self.notebookStore = notebookStore
         self.stickyBoardStore = stickyBoardStore

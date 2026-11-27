@@ -296,10 +296,13 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Tasks/New Project…` | Tasks > New Project… | no shortcut | Main menu › Tasks (unchanged) |  |
 | `menu.Tasks/New Task…` | Tasks > New Task… | no shortcut | Main menu › Tasks (unchanged) |  |
 | `menu.Tasks/Weekly Review` | Tasks > Weekly Review | no shortcut | Main menu › Tasks (unchanged) |  |
+| `menu.Tasks/Grab Text from Screen` | Tasks > Grab Text from Screen | shortcut ⌥⌘7 | Main menu › Tasks (F-06 of full review 4: ScreenRegionCapture plus Vision, also the capture panel's ⌘7 tile) |  |
 | `menu.Window/Bring All to Front` | Window > Bring All to Front | no shortcut | Main menu › Window (unchanged) |  |
 | `menu.Window/Customize Toolbar…` | Window > Customize Toolbar… | no shortcut | Main menu › Window, in the sidebar layout only (R2-ARCH-06: the system's toolbar customisation sheet, saved to `AppDefaults` rather than autosaved; a right click on the toolbar offers it too) |  |
 | `menu.Window/Minimize` | Window > Minimize | shortcut ⌘M | Main menu › Window (unchanged) |  |
 | `menu.Window/Zoom` | Window > Zoom | no shortcut | Main menu › Window (unchanged) |  |
+| `menu.Window/Focus Timer in Its Own Window` | Window > Focus Timer in Its Own Window | no shortcut | Main menu › Window (F-15 of full review 4: the timer chip's ring panel in a floating window) |  |
+| `menu.Window/Open Page in New Window` | Window > Open Page in New Window | shortcut ⌥⌘O | Main menu › Window (F-15 of full review 4: Notebook, Sticky Board or Console; also on those sidebar rows' menus) |  |
 
 ## Keyboard shortcuts
 
@@ -384,6 +387,8 @@ The Help menu's shortcut catalog: every menu chord, plus the configurable termin
 | `key.⌥⌘P` | ⌥⌘P - Manage Snippets… | Hosts menu | Main menu › Hosts (unchanged chord) |  |
 | `key.⌥⌘S` | ⌥⌘S - Toggle Sidebar | Go menu | Main menu › Go (in the sidebar layout the workspace sidebar on every page - R2-UX-09, with a page's own column on ⌥⇧⌘S) |  |
 | `key.⌥⌘I` | ⌥⌘I - Go: Toggle Inspector | Not in the app | Main menu › Go (R5-UX-09, sidebar layout) |  |
+| `key.⌥⌘7` | ⌥⌘7 - Grab Text from Screen | Tasks menu | Main menu › Tasks (F-06 of full review 4) |  |
+| `key.⌥⌘O` | ⌥⌘O - Open Page in New Window | Window menu | Main menu › Window (F-15 of full review 4) |  |
 
 ## Command palette
 
@@ -506,6 +511,7 @@ The shell's public routes, the notification categories and buttons, the App Inte
 | `link.route.showShiftWeeklyReview` | Route `showShiftWeeklyReview` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; since R2-ARCH-05 its callers reach it on `workspace.navigator` directly, with no shell forward) |  |
 | `link.route.showToast` | Route `showToast` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Window (the toast host, bottom centre) |  |
 | `link.route.switchToSession` | Route `switchToSession` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Window (the host's own page; the route is HostSessionCoordinator's, `workspace.hosts`, which callers reach directly since R2-ARCH-05) |  |
+| `link.route.showPendingOpen` | Route `showPendingOpen` | LockPresenter - a Spotlight result opened while the app was locked | System (F-04 of full review 4: a Spotlight result opened while locked is shown once the captain unlocks, never behind the lock) |  |
 | `link.widget.com.manjesh.grandline.native.widget.sticky-note` | Sticky note widget | WidgetKit extension (blocked on Developer ID); tap opens the app | System (widget, unchanged; a tap opens the app) |  |
 | `link.widget.com.manjesh.grandline.native.widget.tasks-due` | Tasks due widget | WidgetKit extension (blocked on Developer ID); tap opens the app | System (widget, unchanged; a tap opens the app) |  |
 
@@ -617,6 +623,11 @@ Every `HelmSegmentedTabs` built from literal titles, plus the Hosts column, the 
 | `tab.ToolKind.yaml` | Tool: yaml | Tools page tab | Tools (tool tab, unchanged) |  |
 | `tab.UpdatesController.All` | Updates filter: All | Updates page | Setup › Updates (filter, unchanged) |  |
 | `tab.UpdatesController.Needs Attention` | Updates filter: Needs Attention | Updates page | Setup › Updates (filter, unchanged) |  |
+| `tab.DayPlanSheets.Tomorrow` | Close the day: move to Tomorrow | Close the day sheet, per unfinished task | Home (F-02 of full review 4) |  |
+| `tab.DayPlanSheets.Pick a day` | Close the day: move to a chosen day | Close the day sheet, per unfinished task | Home (F-02 of full review 4) |  |
+| `tab.DayPlanSheets.Backlog` | Close the day: back to the backlog | Close the day sheet, per unfinished task | Home (F-02 of full review 4) |  |
+| `tab.DevOpsHubSettingsSheet.Static folder` | Add a project: a static folder | DevOps Hub's Add project sheet | DevOps Hub (D-02 of full review 4: the kind of a new project) |  |
+| `tab.DevOpsHubSettingsSheet.Dev server` | Add a project: a managed dev server | DevOps Hub's Add project sheet | DevOps Hub (D-02 of full review 4: a command Grand Line starts, logs and stops) |  |
 
 ## Page sidebar rows
 
@@ -636,6 +647,7 @@ The rows and headers of every page's own column (`HelmPageSidebar`): literal one
 | `nav.ReadingListController.Summarised` | Reading List column: Summarised | Reading List column | Knowledge › Reading list (the tab's own filter column, unchanged) |  |
 | `nav.ReadingListController.Tags` | Reading List column: Tags | Reading List column | Knowledge › Reading list (the tab's own filter column, unchanged) |  |
 | `nav.ReadingListController.Unread` | Reading List column: Unread | Reading List column | Knowledge › Reading list (the tab's own filter column, unchanged) |  |
+| `nav.ReadingListController.Highlights` | Reading List column: Highlights | Reading List column | Knowledge › Reading list (F-03 of full review 4: every highlight, with its source) |  |
 | `nav.SchedulesController.Manage` | Schedules page column: Manage | Schedules page column | Schedules (the module's own filter column, unchanged) |  |
 | `nav.SchedulesController.Run history` | Schedules page column: Run history | Schedules page column | Schedules (the module's own filter column, unchanged) |  |
 | `nav.SchedulesController.Workspace` | Schedules page column: Workspace | Schedules page column | Schedules (the module's own filter column, unchanged) |  |
@@ -767,7 +779,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.CredentialVaultUnlockView` | CredentialVaultUnlockView controls | `primaryClicked`, `recoveryLinkClicked`, `touchIDClicked` | Secrets › Secrets |  |
 | `action.DictationController` | DictationController controls | `cleanupToggled`, `localWhisperToggled`, `modelActionTapped`, `modelDeleteTapped`, `modelMoreTapped`, `refreshTapped`, `resetShortcutTapped`, `statusActionTapped` | Dictation |  |
 | `action.DevOpsHubCardsController` | DevOps Hub project cards controls | `heroRowTapped` (the column's Running or Recent row: Open, Start, Retry or Choose Folder), `addTapped` (the column's Add); each card's Start or Stop, Open and Edit icons, its menu (Start, Stop, Restart, Open, Open in Browser, Copy Address, Project Settings…, Show in Finder, Remove from DevOps Hub…) and the table's row actions run through closures | DevOps Hub (the project cards) |  |
-| `action.DevOpsHubProjectController` | DevOps Hub project view controls | `backClicked` (Projects, over the hero card), `heroButtonClicked` (Start, Cancel, Retry, Stop, Show It Here, Open in Browser, Project Settings, Change Port, Choose Folder, Show in Finder, Open Privacy Settings, Copy Clone Command, and Reload on "This site keeps crashing"), `buttonClicked` (the running strip: Projects, Copy Address, Reload, Open in Browser, Restart, Stop) | DevOps Hub (a project opened from its card) |  |
+| `action.DevOpsHubProjectController` | DevOps Hub project view controls | `backClicked` (Projects, over the hero card), `heroButtonClicked` (Start, Cancel, Retry, Stop, Show It Here, Open in Browser, Project Settings, Change Port, Choose Folder, Show in Finder, Open Privacy Settings, Copy Clone Command, and Reload on "This site keeps crashing"), `buttonClicked` (the running strip: Projects, Copy Address, Reload, Open in Browser, Restart, Stop), `logToggleClicked` | DevOps Hub (a project opened from its card) |  |
 | `action.DevOpsHubSettingsSheet` | DevOps Hub Project settings and Add Project sheet | `chooseFolder` (Folder's Choose…), with Save or Add Project and Cancel through the shared form footer | DevOps Hub (a card's Edit, its menu's Project Settings…, the project view's Project Settings…, and the column's Add) |  |
 | `action.DictationHistoryAndVocabularyViews` | DictationHistoryAndVocabularyViews controls | `deleteClicked`, `removeTapped` | Dictation |  |
 | `action.DiffResultView` | DiffResultView controls | `clicked` | Tools (Diff tool) |  |
@@ -812,11 +824,11 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.SSHConfigImportPanel` | SSHConfigImportPanel controls | `cancelClicked`, `importClicked` | Connections › Hosts (X1: Add Host's Import from SSH Config previews the hosts `~/.ssh/config` names in the side panel, each ticked or not, and saves exactly the ticked ones) |  |
 | `action.HelmSplitButton` | HelmSplitButton controls | `HelmSplitButtonItemBox.fire`, `mainClicked`, `menuClicked` | Connections › Hosts and Keys (H8 and K2: Add Host and New Key at the toolbar's far right, each an action and a menu of the other ways in) |  |
 | `action.HostEditorParts` | HostEditorParts controls | `importClicked`, `newKeyClicked`, `rowClicked` | Inspector (Host-1: the host form's SSH key list - a row chooses a key, New Key and Import open the key form - and the key form's ~/.ssh list) |  |
-| `action.HostsController` | HostsController controls | `groupPicked`, `newSnippet`, `findOrConnectClicked`, `self.tagChipClicked`, `tagOverflowClicked`, `tagOverflowItemPicked` | Connections › Hosts |  |
+| `action.HostsController` | HostsController controls | `groupPicked`, `newSnippet`, `findOrConnectClicked`, `self.tagChipClicked`, `tagOverflowClicked`, `tagOverflowItemPicked`, `expiryRemindersTapped` | Connections › Hosts |  |
 | `action.HostsController+HeroColumn` | HostsController+HeroColumn controls | `heroRecentTapped` | Connections › Hosts and Snippets (C-4: the hero column's Recent pills, Switch for a live session and Connect otherwise; sidebar layout only) |  |
 | `action.HostsController+SnippetsHero` | HostsController+SnippetsHero controls | `heroRecentTapped` | Connections › Snippets (UI-10: Grant access… beside the trigger switch in the hero column, the same Accessibility prompt the strip's button opens; sidebar layout only) |  |
 | `action.HostsController+KeysHero` | HostsController+KeysHero controls | `heroRecentTapped` | Connections › Keys (the hero column on the Keys tab: a Recent key's Copy pill, and Add a key's Generate and Import, which open K2's new-key form; sidebar layout only) |  |
-| `action.IncidentCardView` | IncidentCardView controls | `addNoteClicked`, `endIncidentClicked`, `openEvidenceClicked` | Console (incident card) |  |
+| `action.IncidentCardView` | IncidentCardView controls | `addNoteClicked`, `endIncidentClicked`, `openEvidenceClicked`, `exportClicked` | Console (incident card) |  |
 | `action.KeyboardShortcutsSheetController` | KeyboardShortcutsSheetController controls | `closeSheet`, `customizeShortcuts` | Main menu › Help (Keyboard Shortcuts sheet; T7 added Customize…, which opens Settings › Shortcuts) |  |
 | `action.KeyEditorParts` | KeyEditorParts controls | `rowClicked` | Inspector (Key-1: how a new key is added - generate, import, or a key pair in ~/.ssh) |  |
 | `action.KeyEditorController` | KeyEditorController controls | `chooseImportFile`, `copyFingerprint`, `copyPublicKey`, `deleteKey`, `generateKey`, `hostLinkClicked`, `panelCancelClicked`, `panelMenuClicked`, `panelMenuItemPicked`, `panelSaveClicked`, `useExistingKey`, `verifyImport` | Inspector (K6, K7, K8: in the sidebar layout a key is edited, and a new one made, in the side panel - Copy Public Key at its foot until something changes, then Cancel and Save Key, and the hosts using it as links to them) |  |
@@ -827,7 +839,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.LockScreenController` | LockScreenController controls | `checkAgainTapped`, `copySetupCommandTapped`, `localAuthTapped`, `submitTapped` | Window (the lock overlay; since R2-SEC-06 Automic Vault's install is the Homebrew command in the copyable setup well, which Copy copies, rather than a button that ran it) |  |
 | `action.LogAnalyzerController` | LogAnalyzerController controls | `addClipboardAsEvidence`, `addCurrentInputAsEvidence`, `addFileTapped`, `analyzeClipboard`, `analyzeTapped`, `clearTapped`, `comparePickerChanged`, `copyCommandTapped`, `copyComparison`, `copyEvidence`, `copyNextSteps`, `copyRootCause`, `createIncident`, `focusInput`, `goToConsole`, `investigateFurther`, `modeChanged`, `newInvestigation`, `overrideChanged`, `runCompare`, `sendCommandTapped`, `showAllTapped`, `sourceChanged`, `storageRowClicked`, `toggleHistory`, `toggleRedactions`, `wrapLinesTapped` | Logs (in the sidebar layout Analyze is the toolbar's far-right primary action, Clear and Wrap lines are on the Input card, and Investigate Further, Create Incident and ⋯ are under the likely cause; in the floating bar Wrap lines is on the Provided output card, R2-BUG-16) |  |
 | `action.LogAnalyzerViews` | LogAnalyzerViews controls | `rowClicked` | Logs |  |
-| `action.main` | main controls | `AppDelegate.showAllDestinations`, `AppDelegate.showKeyboardShortcuts`, `AppDelegate.showManualChecks`, `AppDelegate.showPageShortcuts`, `AppDelegate.showShiftQuickCapture`, `AppDelegate.showUnifiedSearch`, `ConsoleController.showFind`, `NSApplication.arrangeInFront`, `NSApplication.hideOtherApplications`, `NSApplication.hide`, `NSApplication.orderFrontStandardAboutPanel`, `NSApplication.terminate`, `NSApplication.unhideAllApplications`, `NSText.copy`, `NSText.cut`, `NSText.paste`, `NSText.selectAll`, `NSWindow.performMiniaturize`, `NSWindow.performZoom`, `NSWindow.runToolbarCustomizationPalette`, `Navigator.activateConsoleFind`, `Navigator.analyzeClipboardInLogAnalyzer`, `Navigator.captureScreenRegionFromMenu`, `Navigator.copyWhiteboardImageFromMenu`, `Navigator.logAnalyzerCopyAnalysis`, `Navigator.logAnalyzerCreateRCA`, `Navigator.logAnalyzerInvestigateFurther`, `Navigator.logAnalyzerSendToTerminal`, `Navigator.newContextualItem`, `Navigator.newHostFromMenu`, `Navigator.newKeyFromMenu`, `Navigator.newShiftFollowUpFromMenu`, `Navigator.newShiftProjectFromMenu`, `Navigator.newShiftTaskFromMenu`, `Navigator.newSnippetFromMenu`, `Navigator.nextSession`, `Navigator.previousSession`, `Navigator.revealHostsQuickConnect`, `Navigator.runCodeSnippetFromMenu`, `Navigator.selectHosts`, `Navigator.selectKeys`, `Navigator.selectSessionByShortcut`, `Navigator.selectSettings`, `Navigator.selectSnippets`, `Navigator.showLogAnalyzer`, `Navigator.showShiftWeeklyReview`, `Navigator.toggleCodePreviewSidebarFromMenu`, `WorkspaceShellController.selectModuleTabByNumber`, `WorkspaceShellController.selectNextModuleTab`, `WorkspaceShellController.selectPreviousModuleTab`, `WorkspaceShellController.toggleClipboardHistory`, `WorkspaceShellController.togglePageColumnFromMenu`, `WorkspaceShellController.toggleInspectorFromMenu`, `WorkspaceShellController.toggleSidebarFromMenu` | Main menu (these are the menu items' targets - see the menu rows) |  |
+| `action.main` | main controls | `AppDelegate.showAllDestinations`, `AppDelegate.showKeyboardShortcuts`, `AppDelegate.showManualChecks`, `AppDelegate.showPageShortcuts`, `AppDelegate.showShiftQuickCapture`, `AppDelegate.showUnifiedSearch`, `ConsoleController.showFind`, `NSApplication.arrangeInFront`, `NSApplication.hideOtherApplications`, `NSApplication.hide`, `NSApplication.orderFrontStandardAboutPanel`, `NSApplication.terminate`, `NSApplication.unhideAllApplications`, `NSText.copy`, `NSText.cut`, `NSText.paste`, `NSText.selectAll`, `NSWindow.performMiniaturize`, `NSWindow.performZoom`, `NSWindow.runToolbarCustomizationPalette`, `Navigator.activateConsoleFind`, `Navigator.analyzeClipboardInLogAnalyzer`, `Navigator.captureScreenRegionFromMenu`, `Navigator.copyWhiteboardImageFromMenu`, `Navigator.logAnalyzerCopyAnalysis`, `Navigator.logAnalyzerCreateRCA`, `Navigator.logAnalyzerInvestigateFurther`, `Navigator.logAnalyzerSendToTerminal`, `Navigator.newContextualItem`, `Navigator.newHostFromMenu`, `Navigator.newKeyFromMenu`, `Navigator.newShiftFollowUpFromMenu`, `Navigator.newShiftProjectFromMenu`, `Navigator.newShiftTaskFromMenu`, `Navigator.newSnippetFromMenu`, `Navigator.nextSession`, `Navigator.previousSession`, `Navigator.revealHostsQuickConnect`, `Navigator.runCodeSnippetFromMenu`, `Navigator.selectHosts`, `Navigator.selectKeys`, `Navigator.selectSessionByShortcut`, `Navigator.selectSettings`, `Navigator.selectSnippets`, `Navigator.showLogAnalyzer`, `Navigator.showShiftWeeklyReview`, `Navigator.toggleCodePreviewSidebarFromMenu`, `WorkspaceShellController.selectModuleTabByNumber`, `WorkspaceShellController.selectNextModuleTab`, `WorkspaceShellController.selectPreviousModuleTab`, `WorkspaceShellController.toggleClipboardHistory`, `WorkspaceShellController.togglePageColumnFromMenu`, `WorkspaceShellController.toggleInspectorFromMenu`, `WorkspaceShellController.toggleSidebarFromMenu`, `AppDelegate.grabTextFromScreen`, `AppDelegate.openFocusTimerWindow`, `AppDelegate.openPageInNewWindow` | Main menu (these are the menu items' targets - see the menu rows) |  |
 | `action.MorningBriefingCard` | MorningBriefingCard controls | `dismissClicked`, `refreshClicked` | Home (Morning briefing card) |  |
 | `action.MultiHostSendPicker` | MultiHostSendPicker controls | `checkClicked`, `pillClicked` | Connections › Hosts (send to many hosts) |  |
 | `action.NotebookController` | NotebookController controls | `ClosureSleeve.invoke`, `newPageTapped`, `todayTapped`, `toolbarModePicked` | Knowledge › Notebook (in the sidebar layout every one of them is in the window toolbar - R2-UX-06) |  |
@@ -839,9 +851,9 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.PostmortemsController` | PostmortemsController controls | `openLogAnalyzerTapped`, `seedExamplePostmortemTapped` | Runbooks › Postmortems |  |
 | `action.QuotaUsagePopover` | QuotaUsagePopover controls | `copyClicked`, `refreshClicked` | Console (Claude usage popover) |  |
 | `action.ReadingListCardView` | ReadingListCardView controls | `copyLinkTapped`, `deleteTapped`, `editTagsTapped`, `openExternallyTapped`, `openTapped`, `summariseTapped`, `toggleReadTapped` | Knowledge › Reading list |  |
-| `action.ReadingListController` | ReadingListController controls | `addExampleLinkTapped`, `closeReaderTapped`, `pasteTapped`, `readerBackTapped`, `readerOpenExternallyTapped`, `readerReloadTapped`, `refreshMetadataTapped`, `saveTapped` | Knowledge › Reading list |  |
+| `action.ReadingListController` | ReadingListController controls | `addExampleLinkTapped`, `closeReaderTapped`, `pasteTapped`, `readerBackTapped`, `readerOpenExternallyTapped`, `readerReloadTapped`, `refreshMetadataTapped`, `saveTapped`, `notebookPagePicked`, `readerModeTapped` | Knowledge › Reading list |  |
 | `action.ReviewController` | ReviewController controls | `refreshTapped`, `toggleFailureDetail` | Crew › Review (CR-1: in the sidebar layout Show folder path is a ghost pill on the Crew band, which shows the path on the band) |  |
-| `action.RunbooksController` | RunbooksController controls | `ClosureSleeve.invoke`, `newRunbookTapped`, `rowClicked`, `seedExampleRunbookTapped` | Runbooks › Runbooks |  |
+| `action.RunbooksController` | RunbooksController controls | `ClosureSleeve.invoke`, `newRunbookTapped`, `rowClicked`, `seedExampleRunbookTapped`, `attachMenuPicked` | Runbooks › Runbooks |  |
 | `action.ScheduleEditorController` | ScheduleEditorController controls | `deleteSchedule` | Schedules |  |
 | `action.ScheduleHistoryController` | ScheduleHistoryController controls | `closeClicked`, `viewLogClicked` | Schedules |  |
 | `action.ScheduleRunLogController` | ScheduleRunLogController controls | `closeClicked`, `copyLogClicked`, `copyReportClicked`, `toggleRawClicked` | Schedules |  |
@@ -861,7 +873,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ShiftImageAttachmentWell` | ShiftImageAttachmentWell controls | `removeClicked` | Tasks (task editor attachments) |  |
 | `action.ShiftMenuBar` | ShiftMenuBar controls | `iconClicked`, `quickAddSubmitted` | Menu bar extra (Tasks: the icon and the quick-add field are unchanged; the popover's own actions are `action.TasksBridgeView`) |  |
 | `action.ShiftProjectDetailView` | ShiftProjectDetailView controls | `checkboxClicked`, `chevronClicked` | Tasks (the project page, unchanged) |  |
-| `action.ShiftCalendarHero` | ShiftCalendarHero controls | `colourMenuTapped`, `nextTapped`, `previousTapped`, `projectMenuTapped`, `scopeMenuTapped`, `todayTapped`, `toggleTapped` | Calendar (Cal-8, sidebar layout: the month head's previous, next and Today pills, its Cf-4 scope, project and Colour by menus, and the Unscheduled head's fold and expand buttons) |  |
+| `action.ShiftCalendarHero` | ShiftCalendarHero controls | `colourMenuTapped`, `nextTapped`, `previousTapped`, `projectMenuTapped`, `scopeMenuTapped`, `todayTapped`, `toggleTapped`, `calendarsMenuTapped` | Calendar (Cal-8, sidebar layout: the month head's previous, next and Today pills, its Cf-4 scope, project and Colour by menus, and the Unscheduled head's fold and expand buttons) |  |
 | `action.ShiftHeroBand` | ShiftHeroBand controls | `clicked`, `prioritiesTapped`, `projectTapped`, `recentTapped`, `sortTapped` | Tasks (Tf-2, sidebar layout: the band's figure buttons, its Smart views pills and its project and sort menus) |  |
 | `action.TaskCalendarController` | TaskCalendarController controls | `openClicked`, `restoreClicked`, `skipClicked` | Tasks › Calendar (a repeating task's chip menu: Skip This Occurrence on its chip or a projection, Restore This Occurrence on a skipped date, and Open Task…) |  |
 | `action.ShiftProjectViews` | ShiftProjectViews controls | `openClicked`, `statusButtonClicked`, `statusItemSelected` | Tasks (the projects panel under the view, unchanged) |  |
@@ -897,6 +909,18 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.WorkspaceDetailView` | WorkspaceDetailView controls | `actionClicked` | Inspector (a selected host's, key's or snippet's actions) |  |
 | `action.WorkspaceSidebar` | WorkspaceSidebar controls | `WorkspaceSidebarMenuItem.fire`, `clicked`, `rowClicked` (a click on the row already lit: DevOps Hub's goes back to its cards) | Sidebar (a row's context menu - Open, End Session, Connect to a Host - and the account header's menu, which is Log Out) |  |
 | `action.WorkspaceToolbar` | WorkspaceToolbar controls | `calendarClicked`, `focusChipClicked`, `focusChipFromOverflow`, `inspectorClicked`, `moduleActionClicked`, `navigationClicked`, `notificationsClicked`, `quickConnectConsoleClicked`, `quickConnectHostsClicked`, `recentsClicked`, `recentsFromOverflow`, `searchClicked`, `showLocationFromOverflow`, `sidebarClicked`, `themeClicked`, `WorkspaceSidebarMenuItem.fire` | Toolbar (the sidebar shell's window toolbar: the sidebar button, Back and Forward, Recents, the crumb, whose overflow menu item shows the place in the sidebar when a laptop-width window beside the sidebar has no room for it (R2-UX-10), the module's tabs (a `HelmSegmentedTabs` with a sliding thumb, which reports through `onSelectTab`) or Home's spaces, the module's one action, Console's Quick Connect icons, a running focus timer's chip and its overflow menu item, the light/dark toggle, notifications, the calendar button, which opens the Calendar from any page, the inspector button and Search) |  |
+| `action.DayPlanSheets` | Plan my day and Close the day controls | `toggle` (a task's tick) | Home (F-02 of full review 4) |  |
+| `action.GrandLineServicesMenu` | Send to Grand Line controls | `cancelTapped`, `saveTapped`, `unlockTapped` | System (F-10 of full review 4: the Services menu's panel) |  |
+| `action.HostsController+Expiry` | Expiry reminders popover controls | `changed`, `checkNowTapped` | Connections › Keys (D-03 of full review 4: the Reminders popover) |  |
+| `action.IncidentPostmortemExport` | Postmortem export panel controls | `cancelTapped`, `createTapped` | Console (incident card, D-05 of full review 4) |  |
+| `action.MacCalendar` | Meeting card controls | `openCalendar`, `prepTapped` | Calendar (F-01 of full review 4: a meeting's card) |  |
+| `action.PageWindows` | Page window controls | `backTapped`, `showTapped`, `toggle` | Window (F-15 of full review 4: the placeholder's Show it and Bring it back here, and the titlebar's On top) |  |
+| `action.ReadingListReaderView` | Reader mode controls | `originalTapped`, `tryAgainTapped` | Knowledge › Reading list (F-03 of full review 4) |  |
+| `action.RunbookRunMode` | Runbook run mode controls | `tapped` (the step panel's Run, Mark done, Skip and Retry) | Runbooks › Runbooks (D-01 of full review 4) |  |
+| `action.ScreenTextGrab` | Grab text result controls | `buttonTapped`, `closeTapped` | Main menu › Tasks (F-06 of full review 4: the result panel) |  |
+| `action.SettingsController+Spotlight` | Spotlight settings controls | `removeAllFromSpotlight` | Settings › Security (F-04 of full review 4) |  |
+| `action.ShiftCalendarViews` | Calendar view controls | `ClosureSleeve.invoke` (the Mac calendars menu's items) | Calendar (F-01 of full review 4) |  |
+| `action.VoiceMemoViews` | Voice memo controls | `copyTapped`, `linePicked`, `playTapped`, `scrubbed`, `tapped`, `taskPicked`, `taskTapped` | Knowledge › Notebook (F-05 of full review 4: the memo strip and the HUD) |  |
 
 ## Lock-gated surfaces
 
@@ -933,6 +957,11 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `lock.unifiedSearch` | App-lock gate: unifiedSearch | AppLockGate consults this before showing the captain's data off the main window | Toolbar (⌘K palette, unchanged gate) |  |
 | `lock.whiteboardCopy` | App-lock gate: whiteboardCopy | AppLockGate consults this before showing the captain's data off the main window | Whiteboard (unchanged gate) |  |
 | `lock.widgetSnapshot` | App-lock gate: widgetSnapshot | AppLockGate consults this before showing the captain's data off the main window | System (widgets, unchanged gate) |  |
+| `lock.grabText` | App-lock gate: grabText | AppLockGate consults this before showing the captain's data off the main window | Main menu › Tasks (F-06 of full review 4) |  |
+| `lock.pageWindow` | App-lock gate: pageWindow | AppLockGate consults this before showing the captain's data off the main window | Window (F-15 of full review 4) |  |
+| `lock.servicesMenu` | App-lock gate: servicesMenu | AppLockGate consults this before showing the captain's data off the main window | System (F-10 of full review 4: the Services menu files nothing while locked) |  |
+| `lock.spotlightResult` | App-lock gate: spotlightResult | AppLockGate consults this before showing the captain's data off the main window | System (F-04 of full review 4: a Spotlight result opens after unlock) |  |
+| `lock.voiceMemo` | App-lock gate: voiceMemo | AppLockGate consults this before showing the captain's data off the main window | Knowledge › Notebook (F-05 of full review 4: the memo key records nothing while locked) |  |
 
 ## Drag and drop targets
 
@@ -948,6 +977,7 @@ Every view that registers for dragged types.
 | `drop.ReadingListController` | Drop a URL or text onto the Reading List to save it | ReadingListController | Knowledge › Reading list |  |
 | `drop.ShiftBoardViews` | Drag task cards between board lanes | ShiftBoardViews | Tasks › Board |  |
 | `drop.ShiftImageAttachmentWell` | Drop an image onto a task's attachment well | ShiftImageAttachmentWell | Tasks (task editor attachments) |  |
+| `drop.NotebookController` | Drop an audio file onto the Notebook to make a voice memo page | NotebookController | Knowledge › Notebook (F-05 of full review 4) |  |
 
 ## Saved state
 
@@ -1031,6 +1061,15 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.lastBackupExport` | Saved preference `fm.lastBackupExport` | declared in AppSettings | Settings › Backup & Restore (Set-2: when the last export from this Mac happened, its size and where it went, for the split card's panel; missing until the first export, which the panel says in words) |  |
 | `state.fm.density` | Saved preference `fm.density` | declared in AppSettings | Settings › Appearance (Density; a missing or unknown value is Comfortable, and a change re-fires the theme so every list re-reads its row height) |  |
 | `state.fm.workspaceToolbar.labelsFirstShown` | Saved preference `fm.workspaceToolbar.labelsFirstShown` | declared in AppSettings | Toolbar (UX-25: names show for the first week) |  |
+| `state.fm.expiry.checksTLS` | Saved preference `fm.expiry.checksTLS` | declared in AppSettings | Connections › Keys (D-03 of full review 4: TLS probes on saved hosts, on by default) |  |
+| `state.fm.expiry.leadDays` | Saved preference `fm.expiry.leadDays` | declared in AppSettings | Connections › Keys (D-03 of full review 4: how far ahead a task is filed, 14 days by default) |  |
+| `state.fm.expiry.projectID` | Saved preference `fm.expiry.projectID` | declared in AppSettings | Connections › Keys (D-03 of full review 4: which project the filed tasks go to) |  |
+| `state.fm.macCalendars.hidden` | Saved preference `fm.macCalendars.hidden` | declared in AppSettings | Calendar (F-01 of full review 4: the Mac calendars left out) |  |
+| `state.fm.macCalendars.shown` | Saved preference `fm.macCalendars.shown` | declared in AppSettings | Calendar (F-01 of full review 4: whether the Mac's calendars are drawn) |  |
+| `state.fm.readingList.lastHighlightPage` | Saved preference `fm.readingList.lastHighlightPage` | declared in ReadingListController | Knowledge › Reading list (F-03 of full review 4: the Notebook page a highlight was last sent to) |  |
+| `state.fm.spotlight.disabledKinds` | Saved preference `fm.spotlight.disabledKinds` | declared in AppSettings | Settings › Security (F-04 of full review 4) |  |
+| `state.fm.spotlight.enabled` | Saved preference `fm.spotlight.enabled` | declared in AppSettings | Settings › Security (F-04 of full review 4) |  |
+| `state.fm.spotlight.lockedMode` | Saved preference `fm.spotlight.lockedMode` | declared in AppSettings | Settings › Security (F-04 of full review 4: titles only while locked) |  |
 
 ## Shell chrome
 

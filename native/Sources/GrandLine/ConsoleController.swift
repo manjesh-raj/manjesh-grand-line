@@ -470,6 +470,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// headless process" and "the gate refused it" are very different facts to
     /// be asserting the same way.
     var debugIncidentCardShowCount = 0
+    /// D-05: the last draft "Create draft" built, and where it went.
+    var debugLastExport: (markdown: String, destination: IncidentPostmortemExport.Destination)?
     #endif
     let incidentPopover = NSPopover()
     let incidentCard = IncidentCardView()
@@ -680,6 +682,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
                 // not necessarily the tab's primary one.
                 guard let self, let tab = self.currentTab else { return }
                 self.focusedTerminal(of: tab).send(txt: command + "\n")
+                self.noteCommandSent(command, tabName: tab.name, via: "Compose")
             }
         }
 

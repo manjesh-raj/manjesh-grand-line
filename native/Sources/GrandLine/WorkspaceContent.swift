@@ -81,6 +81,38 @@ final class WorkspaceContent {
     /// constraint graph without taking it out of the view hierarchy.
     private(set) var destinationPins: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
 
+    /// F-15: pages open in their own window, by page view, and the
+    /// placeholder each one left in the body container.
+    private(set) var detachedPlaceholders: [ObjectIdentifier: NSView] = [:]
+
+    /// F-15: takes a mounted page out of the body container (it is moving to
+    /// its own window) and puts `placeholder` in its place, visible exactly
+    /// when the page would be.
+    func detach(_ destinationView: NSView, placeholder: NSView) {
+        let id = ObjectIdentifier(destinationView)
+        let wasVisible = !destinationView.isHidden && destinationView.superview === bodyContainer
+        for pin in destinationPins[id] ?? [] { pin.isActive = false }
+        destinationPins[id] = nil
+        destinationView.removeFromSuperview()
+        embed(placeholder)
+        detachedPlaceholders[id] = placeholder
+        setDestinationVisible(placeholder, wasVisible)
+    }
+
+    /// F-15: the page is back from its window, in its placeholder's place
+    /// and with its visibility.
+    func reattach(_ destinationView: NSView) {
+        let id = ObjectIdentifier(destinationView)
+        guard let placeholder = detachedPlaceholders.removeValue(forKey: id) else { return }
+        let visible = !placeholder.isHidden
+        for pin in destinationPins[ObjectIdentifier(placeholder)] ?? [] { pin.isActive = false }
+        destinationPins[ObjectIdentifier(placeholder)] = nil
+        placeholder.removeFromSuperview()
+        destinationView.removeFromSuperview()
+        embed(destinationView)
+        setDestinationVisible(destinationView, visible)
+    }
+
     /// Show or hide one destination, and attach or detach it from the
     /// window's constraint graph to match (full review #3's PF1).
     ///
@@ -128,6 +160,12 @@ final class WorkspaceContent {
     /// destinations - GL-37's other half, and what the review reached for -
     /// would buy the same thing and cost a great deal more.
     func setDestinationVisible(_ destinationView: NSView, _ visible: Bool) {
+        // F-15: a page in its own window stays shown there; its placeholder
+        // takes the visibility the page would have had here.
+        if let placeholder = detachedPlaceholders[ObjectIdentifier(destinationView)] {
+            setDestinationVisible(placeholder, visible)
+            return
+        }
         guard let pins = destinationPins[ObjectIdentifier(destinationView)] else {
             // A view this controller did not embed. Honour the visibility
             // change rather than silently ignoring it - the detach is an

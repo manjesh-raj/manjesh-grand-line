@@ -380,6 +380,23 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Touch ID's state in the Keys row: it is a fact about where keys are
     /// kept.
     private(set) lazy var keysTouchID = HelmStatusPill(style: .dotWord)
+    /// D-03: the expiry check the workspace owns. Setting it subscribes the
+    /// Keys tab to its results.
+    var expiryMonitor: ExpiryReminderMonitor? {
+        didSet { expiryMonitor?.observe { [weak self] in self?.expiryResultsChanged() } }
+    }
+    /// D-03: the expiry reminders, one glyph in the Keys row. The popover
+    /// holds Check now and the settings. Two titled buttons here made the
+    /// Keys row the page's widest, and a hidden tab still sets the window's
+    /// floor (gotcha (15)), so they grew a narrow window by 186pt.
+    lazy var keysRemindersButton: HelmButton = {
+        let button = HelmButton(symbol: "bell.badge", variant: .quiet, size: .small, target: self,
+                                action: #selector(expiryRemindersTapped(_:)))
+        button.toolTip = "Expiry reminders"
+        button.setAccessibilityLabel("Expiry reminders")
+        return button
+    }()
+    let expiryRemindersPopover = NSPopover()
     /// The selected record's name, or `nil` with nothing selected - what
     /// `inspectorContent` hands the shell.
     private var inspectorTitle: String?
@@ -391,6 +408,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         self.keyStore = keyStore
         self.snippetStore = snippetStore
         super.init(nibName: nil, bundle: nil)
+        // D-03: the Reminders popover names keys and hosts, so it closes on
+        // the way into the lock (§5.1(b)).
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.expiryRemindersPopover }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

@@ -357,7 +357,8 @@ enum ShiftCalendarSelfTest {
             check(id == category.rawValue, "a \(priority) \(kind) should be drawn as \(category), got \(id)")
             check(palette[id] != nil, "an event's calendar \(id) has no colours in the palette")
         }
-        check(Set(palette.keys) == Set(ShiftCalendarCategory.allCases.map(\.rawValue)),
+        // F-01: plus the Mac meetings' seven slots.
+        check(Set(palette.keys) == Set(ShiftCalendarCategory.allCases.map(\.rawValue) + ShiftCalendarPalette.meetingCalendarIDs),
               "the palette and the categories disagree about the calendar ids")
         let legend = ShiftCalendarPalette.legend(for: HelmTheme.dusk)
         check(legend.map { $0["id"] ?? "" } == ShiftCalendarCategory.allCases.map(\.rawValue),
@@ -921,10 +922,11 @@ enum ShiftCalendarSelfTest {
         // The calendars and the legend the page gets.
         let byPriority = ShiftCalendarPalette.calendars(for: theme, colouring: .priority, projects: projects)
         let byProject = ShiftCalendarPalette.calendars(for: theme, colouring: .project, projects: projects)
-        check(Set(byPriority.keys) == Set(ShiftCalendarCategory.allCases.map(\.rawValue)),
+        let meetingSlots = ShiftCalendarPalette.meetingCalendarIDs
+        check(Set(byPriority.keys) == Set(ShiftCalendarCategory.allCases.map(\.rawValue) + meetingSlots),
               "by priority the page gets the four categories, got \(byPriority.keys.sorted())")
         let projectIDs = projects.map { ShiftCalendarPalette.projectCalendarID($0.id) } + ["project-none"]
-        check(Set(byProject.keys) == Set(ShiftCalendarCategory.allCases.map(\.rawValue) + projectIDs),
+        check(Set(byProject.keys) == Set(ShiftCalendarCategory.allCases.map(\.rawValue) + projectIDs + meetingSlots),
               "by project the page gets every project, No project and the categories, got \(byProject.keys.sorted())")
         let legend = ShiftCalendarPalette.legend(for: theme, colouring: .project, projects: projects)
         check(legend.map { $0["id"] ?? "" } == projectIDs + [ShiftCalendarCategory.followUp.rawValue],

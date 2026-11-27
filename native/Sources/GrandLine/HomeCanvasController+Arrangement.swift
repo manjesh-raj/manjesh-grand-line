@@ -50,7 +50,9 @@ extension HomeCanvasController {
     /// arranged cards include it, it has something to say, and Customize is
     /// not drawing it as a card.
     var briefingIsHero: Bool {
-        !isCustomizing && Self.briefingHasSomethingToSay && cardLayout.shown.contains(.briefing)
+        // F-02: an open plan for today is something to say too.
+        !isCustomizing && (Self.briefingHasSomethingToSay || openDayPlan(DayRollover.now()) != nil)
+            && cardLayout.shown.contains(.briefing)
     }
 
     /// A card's grid span, out of `HomeCardGrid.columns`: the width the
