@@ -56,9 +56,10 @@
 //   it via `onAttempt`; `AppShellController` still verifies it on a background
 //   queue through `VaultSource.verifyAppPassword`, which shells out to Automic
 //   Vault with the typed candidate passed by *environment variable* so it never
-//   appears in `ps`. There is no `LAContext`/Touch ID path on this screen and
-//   never was - that is SSH key unlock (`KeychainKeyStore`), a different
-//   mechanism entirely.
+//   appears in `ps`. (Correction: the one `LAContext` path here is UX issue
+//   X1's fallback, added later - "Unlock with Touch ID or your Mac password"
+//   on the two waiting states only. The password itself is never checked by
+//   Touch ID.)
 // - The six `ContentState` cases and their distinct semantics.
 //   `.serviceNotRunning` / `.transientFailure` stay separate from
 //   `.noPasswordConfigured`: conflating them is exactly the bug

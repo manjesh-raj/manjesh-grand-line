@@ -576,13 +576,19 @@ enum VaultSource {
     /// The typed guess travels via `GRANDLINE_LOCK_CANDIDATE` in the child's
     /// environment, never spliced into the shell command text or argv, so it
     /// never appears in a process listing's command column.
-    static func verifyAppPassword(_ typed: String) -> Bool {
-        if isolated("av") { return false }
-        guard let av = resolveExecutable("av") else { return false }
+    ///
+    /// Returns a verdict rather than a `Bool`, because "the password did not
+    /// match" and "Automic Vault never answered" are different states
+    /// (`AppPasswordVerdict`). Only `.matched` unlocks anything.
+    static func verifyAppPassword(_ typed: String) -> AppPasswordVerdict {
+        // Unknown, as `checkAppPasswordConfigured` says: this process did
+        // not look.
+        if isolated("av") { return .unanswered(.transientFailure) }
+        guard let av = resolveExecutable("av") else { return .unanswered(.avUnavailable) }
         // The typed candidate travels as an environment variable, never argv -
         // `Subprocess`'s `extraEnv` is the one channel for that, and its own
         // self-test asserts such a value never reaches the child's argv.
-        return Subprocess.run(
+        let result = Subprocess.run(
             executable: av,
             arguments: [
                 "inject", "+\(appPasswordSecretName)", "--",
@@ -591,7 +597,54 @@ enum VaultSource {
             extraEnv: ["GRANDLINE_LOCK_CANDIDATE": typed],
             timeout: appPasswordCheckTimeout,
             log: AppLog.keychain, label: "av inject (app lock)"
-        ).ok
+        )
+        return appPasswordVerdict(for: result)
+    }
+
+    /// What one `av inject` password check said.
+    ///
+    /// **Why this is not a `Bool`.** The lock screen stops asking `av list`
+    /// why a password was refused once it knows the password exists
+    /// (`fm/grand-line-vault-no-launch-prompt`). With a `Bool`, a check that
+    /// Automic Vault never answered - its helper suspended after a sleep, or
+    /// quit - then read as a wrong password, and the screen stayed on
+    /// "That password didn't match" with no Check again and no Touch ID
+    /// fallback (UX issue X1) for the rest of the session.
+    enum AppPasswordVerdict: Equatable {
+        /// `av` ran the comparison and it matched. The only unlocking case.
+        case matched
+        /// `av` answered and the comparison did not match, or it failed in a
+        /// way this app does not recognise as Automic Vault not answering.
+        case refused
+        /// Automic Vault did not answer, so the password was never compared.
+        /// Carries the state the lock screen shows for it:
+        /// `.serviceNotRunning`, `.transientFailure` or `.avUnavailable`.
+        case unanswered(AppPasswordAvailability)
+    }
+
+    /// Classifies one `av inject` run. Pure, so a suite can assert it
+    /// without `av`.
+    ///
+    /// The comparison shell (`[ ... = ... ]`) never prints anything, so text
+    /// in the output came from `av` itself. The phrases are read from the
+    /// `av` binary's own strings, not from a live run (which would raise the
+    /// approval dialog): "Automic Vault approval service is not running",
+    /// "approval XPC connection failed", "Automic Vault approval did not
+    /// reply", "failed to create approval XPC connection", "approval service
+    /// is blocked by this process's sandbox", and "request denied". A
+    /// timeout is the live-confirmed suspended-helper hang
+    /// (`AppPasswordAvailability.transientFailure`).
+    ///
+    /// Anything else stays `.refused`, which is the side that keeps the
+    /// lock exactly as it was: an unrecognised failure still reads as a
+    /// wrong password, as it always has.
+    static func appPasswordVerdict(for result: SubprocessResult) -> AppPasswordVerdict {
+        if result.ok { return .matched }
+        if result.timedOut { return .unanswered(.transientFailure) }
+        let log = result.combinedLog.lowercased()
+        if log.contains(serviceNotRunningMarker) { return .unanswered(.serviceNotRunning) }
+        if log.contains("approval") || isDenial(log) { return .unanswered(.transientFailure) }
+        return .refused
     }
 
     // MARK: Process plumbing

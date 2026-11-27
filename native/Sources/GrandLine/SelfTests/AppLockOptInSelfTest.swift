@@ -177,7 +177,7 @@ enum AppLockOptInSelfTest {
                 }
             }
             presenter.onUnlocked = { [unowned self] in self.unlocked += 1 }
-            presenter.verifyPassword = { _ in false }
+            presenter.verifyPassword = { _ in .refused }
             presenter.avIsOnPath = { true }
         }
 

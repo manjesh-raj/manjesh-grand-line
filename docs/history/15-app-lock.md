@@ -100,3 +100,37 @@ The four setup and waiting states keep the Daylight Harbour card described above
 - Copy-aside injections (never `git stash`): `isHidden` on the host failed the never-hidden case, dropping the empty-field rule from `canDim` failed the half-typed case, and emptying `noteKeyDown()` failed four lighting cases.
 - Off-screen renders were compared against the board in lavender and powder, lit, unlit, Reduce Motion and setup.
 - **Not verified:** the live app on screen (never launched from a worktree), the running animations (`cacheDisplay` draws model values, so beams and halo show only in the Reduce Motion render), and a real keystroke through `NSApp`'s event loop (the monitor's handler is driven directly, with a source guard that the monitor calls it).
+
+## The Touch ID fallback after a relock (`fm/grandline-lockscreen-touchid-fallback`)
+
+The captain reported that the Touch ID option for an Automic Vault failure had gone after the lighthouse redesign.
+The redesign was not the cause.
+The button (UX issue X1) was still built and still shown on `.serviceNotRunning` and `.transientFailure`.
+
+The loss came from `fm/grand-line-vault-no-launch-prompt` (PR #624).
+That change stopped the lock screen asking `av list` when it went up.
+Only a refused password asks it, and only until the password is known to exist in this process.
+`verifyAppPassword` returned a `Bool`, so an `av inject` that Automic Vault never answered looked exactly like a wrong password.
+
+- **Trigger:** Automic Vault stops answering (helper suspended after a sleep, or quit) after any unlock in the same session.
+- **Masking condition:** `passwordKnownConfigured`, set by that first verified password, skips the `av list` that would have said why.
+- **Symptom:** "That password didn't match. Try again." for the right password, every time, with no Check again and no Touch ID.
+  At launch, before any unlock, the fallback was still reachable after one typed password.
+
+The fix keeps PR #624's rule that a wrong password with a known password runs no `av list`.
+`verifyAppPassword` now returns `VaultSource.AppPasswordVerdict`.
+`appPasswordVerdict(for:)` reads `av`'s own failure wording (taken from the binary's strings, never from a live run) and the timeout.
+An unanswered check goes straight to the waiting state it names, with no extra `av` call.
+Anything unrecognised stays `.refused`, which is the side that keeps the lock as it was.
+
+The lock policy is unchanged.
+Touch ID is still offered on the two waiting states only, still `.deviceOwnerAuthentication`, still off the main thread, and a refused or cancelled challenge still leaves the app locked.
+Only `.matched` unlocks, from either the lock screen or compact mode.
+
+### Verified
+
+- `FM_RUN_VAULT_READ_SESSION_TESTS` gained `aVaultThatStopsAnsweringAfterAnUnlockStillOffersTouchID` (both waiting states, through the real presenter and the real buttons) and `avInjectsOwnWordsDecideTheVerdict`.
+- Copy-aside injections: restoring the `alreadyKnown ? nil : check()` short-circuit failed the first case with "it said That password didn't match. Try again."
+  Collapsing the classifier to matched-or-refused failed the second.
+- Off-screen renders of the relock in lavender and powder, at 1220x760 and 860x620, with and without device-owner authentication available.
+- **Not verified:** a real `av inject` against a stopped or suspended helper (a worker never runs `av`), so the exact wording `av inject` prints there is inferred from the binary's strings.
