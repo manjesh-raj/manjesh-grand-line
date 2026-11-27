@@ -1450,8 +1450,10 @@ enum MainSplitShellNavigationSelfTest {
                                                       _ ok: inout Bool) {
         let savedItems = AppSettings.shared.workspaceToolbarItems
         let savedMode = AppSettings.shared.workspaceToolbarDisplayMode
+        let savedNames = AppSettings.shared.workspaceToolbarShowsNames
         defer {
             AppSettings.shared.workspaceToolbarItems = savedItems
+            AppSettings.shared.workspaceToolbarShowsNames = savedNames
             AppSettings.shared.workspaceToolbarDisplayMode = savedMode
         }
         AppSettings.shared.workspaceToolbarItems = nil
@@ -1494,8 +1496,8 @@ enum MainSplitShellNavigationSelfTest {
               "the toolbar's configuration reached UserDefaults.standard", &ok)
 
         // A toolbar built later - the next launch - puts it back, with the
-        // display mode the sheet chose.
-        AppSettings.shared.workspaceToolbarDisplayMode = Int(NSToolbar.DisplayMode.iconAndLabel.rawValue)
+        // names the captain chose.
+        AppSettings.shared.workspaceToolbarShowsNames = true
         // Its own identifier: AppKit syncs live toolbars that share one, so
         // the shell's toolbar would otherwise hand it its own items.
         let next = WorkspaceToolbar(splitView: NSSplitView(), identifier: "workspace.toolbar.nextLaunch")
@@ -1509,7 +1511,8 @@ enum MainSplitShellNavigationSelfTest {
               "a new toolbar did not put the saved items back: \(ids(next.toolbar).map(\.rawValue))", &ok)
         check(Array(ids(next.toolbar).prefix(2)) == WorkspaceToolbar.fixedItems,
               "the sidebar button no longer leads a customised toolbar: \(ids(next.toolbar).map(\.rawValue))", &ok)
-        check(next.toolbar.displayMode == .iconAndLabel, "the saved display mode did not come back", &ok)
+        check(next.showsNames && next.toolbar.displayMode == .iconOnly,
+              "the saved names choice did not come back, or came back as AppKit's Icon and Text mode", &ok)
         // The page's items still go in around what the captain kept.
         next.setTabs(["One", "Two"], selected: 0)
         check(ids(next.toolbar).contains(WorkspaceToolbar.ItemID.tabs),

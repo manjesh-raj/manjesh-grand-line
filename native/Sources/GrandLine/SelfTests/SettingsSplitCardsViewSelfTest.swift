@@ -172,8 +172,10 @@ enum SettingsSplitCardsViewSelfTest {
                   "Appearance: the showing-half ring is on the \(onRight ? "right" : "left") under \(theme.name)", &ok)
             // The sections the card did not take, in order.
             let headings = settings.debugSections(in: .appearance).compactMap { $0.headingLabel?.stringValue }
-            check(headings == ["App theme", "Sidebar", "Text"],
-                  "Appearance: the page's sections are \(headings), want App theme, Sidebar, Text", &ok)
+            // Window stays since `fm/grandline-toolbar-label-alignment` gave it
+            // the Toolbar names row, which the split card does not take.
+            check(headings == ["App theme", "Window", "Sidebar", "Text"],
+                  "Appearance: the page's sections are \(headings), want App theme, Window, Sidebar, Text", &ok)
             check(settings.debugThemeCards.count == AppThemeFamily.allCases.count,
                   "Appearance: \(settings.debugThemeCards.count) theme tiles, want every family", &ok)
             check(settings.debugModuleSwitches.allSatisfy { $0.toggle.window != nil },

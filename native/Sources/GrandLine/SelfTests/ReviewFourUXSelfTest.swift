@@ -40,19 +40,41 @@ enum ReviewFourUXSelfTest {
     // MARK: UX-25
 
     /// The three shortcut glyphs are named, their tooltips carry the key, the
-    /// first week opens on names, and only the glyph items keep a name.
+    /// first week opens on names, an older build's saved mode still counts,
+    /// and the names are drawn into the glyph items with the system's mode
+    /// left at Icon Only. Whether that keeps one centre line is the window
+    /// suite's (`WorkspaceToolbarSelfTest`).
     private static func checkTheToolbarNamesItsShortcuts(_ ok: inout Bool) {
         let start = Date(timeIntervalSince1970: 1_790_000_000)
         let day: TimeInterval = 24 * 60 * 60
-        check(WorkspaceToolbar.defaultDisplayMode(saved: nil, labelsWeekStart: start, now: start + 3 * day) == .iconAndLabel,
+        check(WorkspaceToolbar.defaultShowsNames(saved: nil, labelsWeekStart: start, now: start + 3 * day),
               "UX-25: the first week does not open on names", &ok)
-        check(WorkspaceToolbar.defaultDisplayMode(saved: nil, labelsWeekStart: start, now: start + 8 * day) == .iconOnly,
+        check(!WorkspaceToolbar.defaultShowsNames(saved: nil, labelsWeekStart: start, now: start + 8 * day),
               "UX-25: names still show after the first week", &ok)
-        check(WorkspaceToolbar.defaultDisplayMode(saved: nil, labelsWeekStart: nil, now: start) == .iconOnly,
+        check(!WorkspaceToolbar.defaultShowsNames(saved: nil, labelsWeekStart: nil, now: start),
               "UX-25: a launch that never started the week shows names", &ok)
-        check(WorkspaceToolbar.defaultDisplayMode(saved: Int(NSToolbar.DisplayMode.iconOnly.rawValue),
-                                                  labelsWeekStart: start, now: start + day) == .iconOnly,
-              "UX-25: a mode the captain chose lost to the first week", &ok)
+        check(!WorkspaceToolbar.defaultShowsNames(saved: false, labelsWeekStart: start, now: start + day),
+              "UX-25: a choice the captain made lost to the first week", &ok)
+
+        // An older build saved the system's display mode. Only Icon Only hid
+        // the names, and the raw value this file restates is AppKit's.
+        check(AppSettings.legacyIconOnlyDisplayMode == Int(NSToolbar.DisplayMode.iconOnly.rawValue),
+              "the restated Icon Only raw value is not AppKit's", &ok)
+        check(AppSettings.showsNames(legacyDisplayMode: Int(NSToolbar.DisplayMode.iconAndLabel.rawValue))
+                && AppSettings.showsNames(legacyDisplayMode: Int(NSToolbar.DisplayMode.labelOnly.rawValue))
+                && !AppSettings.showsNames(legacyDisplayMode: Int(NSToolbar.DisplayMode.iconOnly.rawValue)),
+              "a saved display mode does not map to the names choice", &ok)
+        let savedNames = AppSettings.shared.workspaceToolbarShowsNames
+        let savedMode = AppSettings.shared.workspaceToolbarDisplayMode
+        AppSettings.shared.workspaceToolbarShowsNames = nil
+        AppSettings.shared.workspaceToolbarDisplayMode = Int(NSToolbar.DisplayMode.iconAndLabel.rawValue)
+        check(AppSettings.shared.workspaceToolbarShowsNames == true,
+              "a saved Icon and Text choice does not read as names on", &ok)
+        AppSettings.shared.workspaceToolbarShowsNames = false
+        check(AppSettings.shared.workspaceToolbarShowsNames == false && AppSettings.shared.workspaceToolbarDisplayMode == nil,
+              "choosing no names kept the old saved mode", &ok)
+        AppSettings.shared.workspaceToolbarShowsNames = savedNames
+        AppSettings.shared.workspaceToolbarDisplayMode = savedMode
 
         let hidden: Set<WorkspaceModule> = []
         let chord = WorkspaceGoMenu.chordText(for: .console, hidden: hidden)
@@ -62,7 +84,7 @@ enum ReviewFourUXSelfTest {
               "UX-25: the Calendar's tooltip does not name \u{2318}0", &ok)
 
         let toolbar = WorkspaceToolbar(splitView: NSSplitView(), identifier: "ux25.probe.\(UUID().uuidString)")
-        toolbar.toolbar.displayMode = .iconOnly
+        toolbar.setShowsNames(false)
         let ids: [NSToolbarItem.Identifier] = [WorkspaceToolbar.ItemID.quickConnectConsole,
                                                 WorkspaceToolbar.ItemID.quickConnectHosts,
                                                 WorkspaceToolbar.ItemID.calendar, WorkspaceToolbar.ItemID.crumb,
@@ -76,17 +98,31 @@ enum ReviewFourUXSelfTest {
         check((items[WorkspaceToolbar.ItemID.quickConnectConsole]?.toolTip ?? "").hasSuffix("(\(chord ?? "?"))")
                 && (items[WorkspaceToolbar.ItemID.calendar]?.toolTip ?? "").hasSuffix("(\u{2318}0)"),
               "UX-25: the shortcuts' tooltips do not carry their keys", &ok)
-        check(items[WorkspaceToolbar.ItemID.crumb]?.label == "Location",
-              "UX-25: icon mode put away the crumb's name, which the overflow menu reads", &ok)
-        toolbar.toolbar.displayMode = .iconAndLabel
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        check(items[WorkspaceToolbar.ItemID.crumb]?.label == "" && items[WorkspaceToolbar.ItemID.search]?.label == ""
-                && items[WorkspaceToolbar.ItemID.quickConnectConsole]?.label == "Console",
-              "UX-25: Icon and Text names the crumb and Search, or drops Console's name", &ok)
-        toolbar.toolbar.displayMode = .iconOnly
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let console = items[WorkspaceToolbar.ItemID.quickConnectConsole]
+        let consoleButton = console?.view as? NSButton
+        let glyphSize = consoleButton?.image?.size ?? .zero
+        toolbar.setShowsNames(true)
+        let namedSize = consoleButton?.image?.size ?? .zero
+        check(toolbar.toolbar.displayMode == .iconOnly,
+              "names put the toolbar in AppKit's \(toolbar.toolbar.displayMode.rawValue) mode, which reserves a label row under every item", &ok)
+        check(namedSize.height > glyphSize.height + 8 && namedSize.width > glyphSize.width,
+              "names on: Console's image \(namedSize) does not carry a name under its \(glyphSize) glyph", &ok)
+        check(consoleButton?.image?.isTemplate == true,
+              "names on: Console's image is not a template, so the system cannot tint it as it tints the glyph", &ok)
+        check(consoleButton?.accessibilityLabel() == WorkspaceToolbar.QuickConnectIcon.consoleLabel,
+              "names on: Console's image lost its VoiceOver phrase", &ok)
         check(items[WorkspaceToolbar.ItemID.crumb]?.label == "Location" && items[WorkspaceToolbar.ItemID.search]?.label == "Search",
-              "UX-25: going back to icons did not give the view items their names back", &ok)
+              "names on: the view items lost the names the overflow menu reads", &ok)
+        // The system's own mode switch, where an older macOS still offers
+        // it, is taken as the names choice and undone.
+        if #available(macOS 15.0, *) {
+            check(!toolbar.toolbar.allowsDisplayModeCustomization,
+                  "the system's Icon and Text / Icon Only choice is still offered", &ok)
+        }
+        toolbar.setShowsNames(false)
+        check(consoleButton?.image?.size == glyphSize,
+              "names off: Console's image is \(consoleButton?.image?.size ?? .zero), not its glyph", &ok)
     }
 
     // MARK: UX-28

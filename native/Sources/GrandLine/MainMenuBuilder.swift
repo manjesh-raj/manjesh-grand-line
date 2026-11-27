@@ -601,6 +601,9 @@ extension AppDelegate {
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Customize Toolbar\u{2026}", symbol: "slider.horizontal.3",
                            action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")
+        // The toolbar's shortcut names, which the system's display-mode
+        // choice used to switch (`ToolbarNamesMenuItem`).
+        windowMenu.addItem(ToolbarNamesMenuItem())
         if installing { NSApp.windowsMenu = windowMenu }
 
         // Help menu - UX3's "add Help -> 'Keyboard Shortcuts…' (generated from

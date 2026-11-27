@@ -42,11 +42,13 @@
 // The toolbar draws state and forwards clicks; the shell decides what they
 // mean.
 //
-// **The captain can customise it (R2-ARCH-06).** View > Customize Toolbar…
+// **The captain can customise it (R2-ARCH-06).** Window > Customize Toolbar…
 // (or a right click on the toolbar) moves, removes and adds back the items
 // that are always there - Back and Forward, Recents, the crumb, the
-// light/dark toggle, the bell, the calendar, the inspector button and Search - plus spaces,
-// and picks the display mode. The items that come and go with the showing
+// light/dark toggle, the bell, the calendar, the inspector button and Search - plus spaces.
+// The system's display mode is not offered: the shortcut names are this
+// toolbar's own (`showsNames`), switched from Window > Show Toolbar Names
+// and Settings > Appearance. The items that come and go with the showing
 // page - its tabs, its actions, the module's action, Quick Connect, the focus
 // chip and the primary action - are not in the palette and cannot be dragged:
 // `reconcileDynamicItems()` places them, and a palette-placed copy would
@@ -98,11 +100,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         static let hostsSymbol = "server.rack"
         static let consoleLabel = "Quick Connect to Console"
         static let hostsLabel = "Quick Connect to a Host"
-        /// UX-25: the names the "Icon and Text" mode draws under the three
-        /// shortcuts, the places they open.
+        /// UX-25: the names drawn under the three shortcuts while the
+        /// toolbar shows names (`showsNames`), the places they open.
         static let consoleShortName = "Console"
         static let hostsShortName = "Connections"
         static let calendarShortName = "Calendar"
+        /// The other three glyph items' names. The inspector's is the pane's
+        /// name rather than its Show/Hide label, so the capsule keeps its
+        /// width when the pane opens.
+        static let themeShortName = "Appearance"
+        static let notificationsShortName = "Notifications"
+        static let inspectorShortName = "Inspector"
         static let consoleHelp = "Quick Connect to Console: go to your Console session, or open one if there is none"
         static let hostsHelp = "Quick Connect to a host: pick a saved host, or type ssh user@host"
     }
@@ -196,7 +204,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// segmented control the strip replaced never followed the chrome text
     /// scale either. The kit's compact size at the Default scale.
     static let tabLabelSize: CGFloat = 11.5
-    /// UX-25: the strip's own height, which no display mode may squeeze.
+    /// UX-25: the strip's own height. AppKit's Icon and Text mode, which the
+    /// toolbar no longer uses, squeezed it to a 22pt slot; the floor stays so
+    /// nothing else can.
     static let tabStripHeight: CGFloat = 28
     private let pageActions = NSStackView()
     /// The page's primary action, after Search. A stack holding at most one
@@ -268,20 +278,24 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// button's `isHidden` rather than only the list it was handed.
     private var actionVisibilityObservations: [NSKeyValueObservation] = []
 
-    /// UX-25: the mode the toolbar opened in, so a first-week default that
-    /// nobody chose is never saved as a choice.
-    private var launchDisplayMode: NSToolbar.DisplayMode = .iconOnly
-
     /// UX-25: how long a new install shows the shortcuts' names by default.
     static let labelsWeek: TimeInterval = 7 * 24 * 60 * 60
 
-    /// UX-25: the mode the toolbar opens in. A mode the captain chose wins.
-    /// Otherwise the first week shows "Icon and Text", so the three shortcut
-    /// glyphs say what they open, and after it the toolbar is icons only.
-    static func defaultDisplayMode(saved: Int?, labelsWeekStart: Date?, now: Date) -> NSToolbar.DisplayMode {
-        if let saved, let mode = NSToolbar.DisplayMode(rawValue: UInt(clamping: saved)) { return mode }
-        if let start = labelsWeekStart, now >= start, now.timeIntervalSince(start) < labelsWeek { return .iconAndLabel }
-        return .iconOnly
+    /// UX-25: whether the toolbar opens showing names. A choice the captain
+    /// made wins. Otherwise the first week shows them, so the shortcut glyphs
+    /// say what they open, and after it the toolbar is icons only. Nothing
+    /// saves the first-week default: only the Window menu and Settings write
+    /// a choice.
+    static func defaultShowsNames(saved: Bool?, labelsWeekStart: Date?, now: Date) -> Bool {
+        if let saved { return saved }
+        if let start = labelsWeekStart, now >= start, now.timeIntervalSince(start) < labelsWeek { return true }
+        return false
+    }
+
+    /// What the toolbar shows now, as the Window menu and Settings read it.
+    static func showsNamesNow(now: Date = Date()) -> Bool {
+        defaultShowsNames(saved: AppSettings.shared.workspaceToolbarShowsNames,
+                          labelsWeekStart: AppSettings.shared.toolbarLabelsFirstShown, now: now)
     }
 
     init(splitView: NSSplitView, identifier: String = WorkspaceToolbar.identifier) {
@@ -289,17 +303,34 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         toolbar = NSToolbar(identifier: identifier)
         super.init()
         toolbar.delegate = self
-        launchDisplayMode = Self.defaultDisplayMode(saved: AppSettings.shared.workspaceToolbarDisplayMode,
-                                                    labelsWeekStart: AppSettings.shared.toolbarLabelsFirstShown,
-                                                    now: Date())
-        toolbar.displayMode = launchDisplayMode
+        showsNames = Self.showsNamesNow()
+        // The names are drawn by this toolbar, never by AppKit's Icon and
+        // Text mode: that mode gives every item a label row, the pills and
+        // Search included, which grew the bar or pushed its row off the
+        // centre line (`showsNames`). So the system's mode stays Icon Only,
+        // and its own switch is turned off where macOS has one.
+        toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
+        // After `allowsUserCustomization`, whose setter turns the mode
+        // switch back on (measured).
+        if #available(macOS 15.0, *) { toolbar.allowsDisplayModeCustomization = false }
         toolbar.autosavesConfiguration = false
         toolbar.centeredItemIdentifier = ItemID.tabs
         buildControls()
-        displayModeObservation = toolbar.observe(\.displayMode) { [weak self] _, _ in
-            DispatchQueue.main.async { self?.applyLabelMode() }
+        // Before macOS 15 the toolbar's context menu still offers the
+        // system's modes. A pick other than Icon Only is taken as the names
+        // choice and the mode goes back to Icon Only.
+        displayModeObservation = toolbar.observe(\.displayMode) { [weak self] toolbar, _ in
+            guard toolbar.displayMode != .iconOnly else { return }
+            DispatchQueue.main.async {
+                guard let self, self.toolbar.displayMode != .iconOnly else { return }
+                self.toolbar.displayMode = .iconOnly
+                AppSettings.shared.workspaceToolbarShowsNames = true
+            }
         }
+        namesObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.workspaceToolbarNamesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in self?.setShowsNames(Self.showsNamesNow()) }
         // The customisation sheet ends: put the page's items back where
         // they belong (Use Default Set drops them) and save what it left.
         sheetObserver = NotificationCenter.default.addObserver(
@@ -313,6 +344,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     deinit {
         if let sheetObserver { NotificationCenter.default.removeObserver(sheetObserver) }
+        if let namesObserver { NotificationCenter.default.removeObserver(namesObserver) }
         if let tabThemeToken { ThemeManager.shared.unobserve(tabThemeToken) }
     }
 
@@ -383,11 +415,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         let ids = customizedIdentifiers
         let customised: [String]? = ids == Self.defaultCustomizedIdentifiers ? nil : ids.map { $0.rawValue }
         AppSettings.shared.workspaceToolbarItems = customised
-        // UX-25: a mode is saved only once it is a choice - it moved from
-        // the one the toolbar opened in, or one was saved before.
-        if toolbar.displayMode != launchDisplayMode || AppSettings.shared.workspaceToolbarDisplayMode != nil {
-            AppSettings.shared.workspaceToolbarDisplayMode = Int(toolbar.displayMode.rawValue)
-        }
     }
 
     /// Put the saved items back, once, the first time the toolbar has its
@@ -406,43 +433,103 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         for identifier in wanted { toolbar.insertItem(withItemIdentifier: identifier, at: toolbar.items.count) }
     }
 
-    func toolbarWillAddItem(_ notification: Notification) {
-        if let item = notification.userInfo?["item"] as? NSToolbarItem { applyLabelMode(to: item) }
-        captainChangedItems()
-    }
+    func toolbarWillAddItem(_ notification: Notification) { captainChangedItems() }
 
     // MARK: UX-25 - names under the shortcuts
 
-    /// The items that keep their names in the "Icon and Text" mode: the
-    /// glyph-only buttons, whose glyph alone does not say what it opens. A
-    /// view item already shows its words (the crumb, the tabs, Search, the
-    /// page's buttons), so a second name under it says nothing new, and it
-    /// costs the strip its height.
-    static let namedInLabelMode: Set<NSToolbarItem.Identifier> = [
+    /// Whether the glyph items show their names. Drawn by this toolbar, as
+    /// one image per item - the glyph with its name under it, in the glyph's
+    /// own capsule - so every item keeps the bar's one centre line and the
+    /// bar keeps its height. AppKit's Icon and Text mode, which UX-25 first
+    /// used, reserves a label row under *every* item, so the page's pills,
+    /// the stepper and Search sat above an empty row: on screen the bar grew
+    /// about 15pt with the row pinned to its top, and off screen every item
+    /// rode 4.5pt (the pills 8pt) above the centre line.
+    private(set) var showsNames = false
+
+    /// The items whose glyph alone does not say what it opens, and so carry
+    /// a name: the three that open a place and the three that change the
+    /// window. A view item (the crumb, the tabs, Search, the page's buttons)
+    /// already shows its words.
+    static let namedItems: Set<NSToolbarItem.Identifier> = [
         ItemID.quickConnectConsole, ItemID.quickConnectHosts, ItemID.calendar,
         ItemID.theme, ItemID.notifications, ItemID.inspector,
     ]
 
-    /// The names a view item gave up while the toolbar shows names, put back
-    /// when it goes back to icons (the overflow menu and Text Only read them).
-    private var labelsPutAway: [NSToolbarItem.Identifier: String] = [:]
     private var displayModeObservation: NSKeyValueObservation?
+    private var namesObserver: NSObjectProtocol?
 
-    private var showsNames: Bool { toolbar.displayMode == .iconAndLabel || toolbar.displayMode == .default }
-
-    private func applyLabelMode() {
-        for item in toolbar.items { applyLabelMode(to: item) }
+    func setShowsNames(_ shows: Bool) {
+        guard shows != showsNames else { return }
+        showsNames = shows
+        applyGlyphs()
     }
 
-    private func applyLabelMode(to item: NSToolbarItem) {
-        let id = item.itemIdentifier
-        guard !Self.namedInLabelMode.contains(id), item.view != nil else { return }
-        if showsNames {
-            if !item.label.isEmpty { labelsPutAway[id] = item.label }
-            item.label = ""
-        } else if let label = labelsPutAway.removeValue(forKey: id) {
-            item.label = label
+    /// Every named item's image, for the current symbols and `showsNames`.
+    private func applyGlyphs() {
+        setGlyph(glyph(QuickConnectIcon.consoleSymbol, name: QuickConnectIcon.consoleShortName,
+                       description: QuickConnectIcon.consoleLabel), on: quickConnectConsoleItem)
+        setGlyph(glyph(QuickConnectIcon.hostsSymbol, name: QuickConnectIcon.hostsShortName,
+                       description: QuickConnectIcon.hostsLabel), on: quickConnectHostsItem)
+        setGlyph(glyph(Self.calendarSymbol, name: QuickConnectIcon.calendarShortName, description: "Calendar"),
+                 on: calendarItem)
+        setGlyph(glyph(themeSymbolName, name: QuickConnectIcon.themeShortName, description: nil), on: themeItem)
+        setGlyph(glyph(inspectorSymbolName, name: QuickConnectIcon.inspectorShortName, description: nil),
+                 on: inspectorItem)
+        bellButton.image = glyph("bell", name: QuickConnectIcon.notificationsShortName, description: nil)
+        applyBadgePlacement()
+    }
+
+    /// The name's type: the size AppKit's own toolbar labels use, a step
+    /// smaller, so a glyph and its name fit the capsule's 40pt height.
+    static func nameFont() -> NSFont { .systemFont(ofSize: HelmType.scaled(10), weight: .medium) }
+    /// The gap between a glyph and its name.
+    static let nameGap: CGFloat = 1
+
+    /// `symbol`'s glyph, or while names show, the glyph with `name` centred
+    /// under it - one template image, so the system tints both alike in
+    /// every theme and state, exactly as it tints the glyph alone.
+    private func glyph(_ symbolName: String, name: String, description: String?) -> NSImage? {
+        guard let glyph = symbol(symbolName) else { return nil }
+        guard showsNames else {
+            if let description { glyph.accessibilityDescription = description }
+            return glyph
         }
+        let named = Self.namedGlyph(glyph, name: name, glyphBox: glyphBoxHeight)
+        named.accessibilityDescription = description ?? glyph.accessibilityDescription
+        return named
+    }
+
+    /// The glyph with `name` under it. The glyph is centred in a box
+    /// `glyphBox` tall, the same for every named item, so every name sits on
+    /// one baseline whatever its glyph's height (the sun is 21pt, the
+    /// terminal 20pt, the calendar 23pt at Default text).
+    static func namedGlyph(_ glyph: NSImage, name: String, glyphBox: CGFloat) -> NSImage {
+        let text = NSAttributedString(string: name, attributes: [.font: nameFont(), .foregroundColor: NSColor.black])
+        let textSize = text.size()
+        let box = max(glyphBox, glyph.size.height)
+        let size = NSSize(width: ceil(max(glyph.size.width, textSize.width)),
+                          height: ceil(box + nameGap + textSize.height))
+        let image = NSImage(size: size, flipped: true) { rect in
+            glyph.draw(in: NSRect(x: (rect.width - glyph.size.width) / 2, y: (box - glyph.size.height) / 2,
+                                  width: glyph.size.width, height: glyph.size.height))
+            text.draw(at: NSPoint(x: (rect.width - textSize.width) / 2, y: box + nameGap))
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
+    /// Every glyph a named item can show, in any state.
+    private static var namedSymbols: [String] {
+        [QuickConnectIcon.consoleSymbol, QuickConnectIcon.hostsSymbol, calendarSymbol, AppearanceToggle.lightSymbol,
+         AppearanceToggle.darkSymbol, inspectorOnSymbol, inspectorOffSymbol, "bell"]
+    }
+
+    /// The tallest of them at the current text scale: the box each glyph is
+    /// centred in while names show.
+    private var glyphBoxHeight: CGFloat {
+        Self.namedSymbols.compactMap { symbol($0)?.size.height }.max() ?? 0
     }
     func toolbarDidRemoveItem(_ notification: Notification) { captainChangedItems() }
 
@@ -506,9 +593,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         crumb.setAccessibilityRole(.staticText)
 
         tabs.orientation = .horizontal
-        // UX-25: the "Icon and Text" mode hands a view item a 22pt slot and
-        // squeezed the pills to it, cutting their words. The strip keeps its
-        // own height, and the toolbar makes the room.
+        // UX-25: the strip keeps its own height (`tabStripHeight`).
         tabs.setContentCompressionResistancePriority(.required, for: .vertical)
         tabs.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.tabStripHeight).isActive = true
         tabThemeToken = ThemeManager.shared.observe { [weak self] theme in self?.tabStrip?.applyTheme(theme) }
@@ -529,7 +614,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         primaryActionHost.distribution = .fill
         primaryActionHost.setHuggingPriority(.required, for: .horizontal)
 
-        bellButton.image = symbol("bell")
         bellButton.imagePosition = .imageOnly  // HelmIconButton-exempt: a window toolbar item, which the system sizes
         bellButton.target = self
         bellButton.action = #selector(notificationsClicked)
@@ -549,12 +633,19 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         NSLayoutConstraint.activate([
             bellBadge.heightAnchor.constraint(equalToConstant: Self.badgeHeight),
             bellBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.badgeHeight),
-            bellBadge.topAnchor.constraint(equalTo: bellButton.topAnchor, constant: -2),
-            bellBadge.trailingAnchor.constraint(equalTo: bellButton.trailingAnchor, constant: 2),
             bellBadgeLabel.leadingAnchor.constraint(equalTo: bellBadge.leadingAnchor, constant: 3),
             bellBadgeLabel.trailingAnchor.constraint(equalTo: bellBadge.trailingAnchor, constant: -3),
             bellBadgeLabel.centerYAnchor.constraint(equalTo: bellBadge.centerYAnchor),
         ])
+        badgeOnButton = [
+            bellBadge.topAnchor.constraint(equalTo: bellButton.topAnchor, constant: -2),
+            bellBadge.trailingAnchor.constraint(equalTo: bellButton.trailingAnchor, constant: 2),
+        ]
+        badgeOnGlyph = [
+            bellBadge.centerXAnchor.constraint(equalTo: bellButton.centerXAnchor),
+            bellBadge.centerYAnchor.constraint(equalTo: bellButton.centerYAnchor),
+        ]
+        applyGlyphs()
 
         searchButton.title = "Search"
         searchButton.image = symbol("magnifyingglass")
@@ -723,24 +814,26 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             let item = imageItem(identifier, symbol: QuickConnectIcon.consoleSymbol, label: QuickConnectIcon.consoleShortName,
                                  help: QuickConnectIcon.consoleHelp, action: #selector(quickConnectConsoleClicked))
             item.paletteLabel = QuickConnectIcon.consoleLabel
+            item.view?.setAccessibilityLabel(QuickConnectIcon.consoleLabel)
             // The overflow menu keeps the phrase, where the glyph is gone.
             let menuForm = NSMenuItem(title: QuickConnectIcon.consoleLabel, action: #selector(quickConnectConsoleClicked), keyEquivalent: "")
             menuForm.target = self
             item.menuFormRepresentation = menuForm
-            item.image?.accessibilityDescription = QuickConnectIcon.consoleLabel
             quickConnectConsoleItem = item
+            applyGlyphs()
             applyShortcutHelp()
             return item
         case ItemID.quickConnectHosts:
             let item = imageItem(identifier, symbol: QuickConnectIcon.hostsSymbol, label: QuickConnectIcon.hostsShortName,
                                  help: QuickConnectIcon.hostsHelp, action: #selector(quickConnectHostsClicked))
             item.paletteLabel = QuickConnectIcon.hostsLabel
+            item.view?.setAccessibilityLabel(QuickConnectIcon.hostsLabel)
             // The overflow menu keeps the phrase, where the glyph is gone.
             let menuForm = NSMenuItem(title: QuickConnectIcon.hostsLabel, action: #selector(quickConnectHostsClicked), keyEquivalent: "")
             menuForm.target = self
             item.menuFormRepresentation = menuForm
-            item.image?.accessibilityDescription = QuickConnectIcon.hostsLabel
             quickConnectHostsItem = item
+            applyGlyphs()
             applyShortcutHelp()
             return item
         case ItemID.theme:
@@ -756,8 +849,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         case ItemID.calendar:
             let item = imageItem(identifier, symbol: Self.calendarSymbol, label: QuickConnectIcon.calendarShortName,
                                  help: "Open \(PlaceName.of(.calendar))", action: #selector(calendarClicked))
-            item.image?.accessibilityDescription = "Calendar"
             calendarItem = item
+            applyGlyphs()
             applyShortcutHelp()
             return item
         case ItemID.inspector:
@@ -772,6 +865,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             item.autovalidates = false
             item.isEnabled = true
             inspectorItem = item
+            applyGlyphs()
             return item
         case ItemID.search:
             return viewItem(identifier, view: searchButton, label: "Search")
@@ -811,17 +905,45 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         return item
     }
 
+    /// A glyph item: a view item around a glyph-only button, as the bell
+    /// is, rather than an image item. An image item's picture is scaled down
+    /// to fit the system's icon size, so the glyph with its name under it
+    /// (`showsNames`) came out at about two thirds of the bell's (measured);
+    /// a button shows its image at its own size, in the same capsule. The
+    /// item keeps the action and target, which its menu form and the suites'
+    /// `debugPerform` use.
     private func imageItem(_ identifier: NSToolbarItem.Identifier, symbol name: String, label: String,
                            help: String, action: Selector) -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: identifier)
-        item.image = symbol(name)
-        item.label = label
-        item.paletteLabel = label
-        item.toolTip = help
-        item.isBordered = true
+        let button = glyphButtons[identifier] ?? NSButton()
+        glyphButtons[identifier] = button
+        button.image = symbol(name)
+        button.imagePosition = .imageOnly  // HelmIconButton-exempt: a window toolbar item, which the system sizes
+        button.target = self
+        button.action = action
+        button.setAccessibilityLabel(label)
+        let item = viewItem(identifier, view: button, label: label)
         item.target = self
         item.action = action
+        setHelp(help, on: item)
+        let menuForm = NSMenuItem(title: label, action: action, keyEquivalent: "")
+        menuForm.target = self
+        item.menuFormRepresentation = menuForm
         return item
+    }
+
+    /// The glyph items' buttons, one per identifier, so an item AppKit
+    /// rebuilds (Quick Connect's, per page) reuses its button.
+    private var glyphButtons: [NSToolbarItem.Identifier: NSButton] = [:]
+
+    /// A glyph item's tooltip, on the item and on the button that shows it.
+    private func setHelp(_ help: String, on item: NSToolbarItem?) {
+        item?.toolTip = help
+        (item?.view as? NSButton)?.toolTip = help
+    }
+
+    /// A glyph item's image, which its button draws.
+    private func setGlyph(_ image: NSImage?, on item: NSToolbarItem?) {
+        (item?.view as? NSButton)?.image = image
     }
 
     private func viewItem(_ identifier: NSToolbarItem.Identifier, view: NSView, label: String) -> NSToolbarItem {
@@ -936,7 +1058,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         if let item = toolbar.items.first(where: { $0.itemIdentifier == ItemID.moduleAction }) {
             item.label = title ?? ""
             item.menuFormRepresentation?.title = title ?? ""
-            applyLabelMode(to: item)
         }
         wantsModuleAction = title != nil
         reconcileDynamicItems()
@@ -1185,12 +1306,37 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         sidebarButton.toolTip = sidebarShown ? "Hide the sidebar" : "Show the sidebar"
         sidebarButton.setAccessibilityLabel(label)
         sidebarItem?.label = label
-        if let sidebarItem { applyLabelMode(to: sidebarItem) }
     }
 
     static func sidebarButtonLabel(shown: Bool) -> String { shown ? "Hide Sidebar" : "Show Sidebar" }
 
     static let badgeHeight: CGFloat = 15
+
+    /// The badge on the bell button's corner, which is the bell's own corner
+    /// while the button holds only the glyph.
+    private var badgeOnButton: [NSLayoutConstraint] = []
+    /// The badge on the bell glyph's corner while the button also holds its
+    /// name, which makes the button wider and taller than the glyph.
+    private var badgeOnGlyph: [NSLayoutConstraint] = []
+
+    private func applyBadgePlacement() {
+        guard !badgeOnButton.isEmpty else { return }
+        if showsNames, let image = bellButton.image, let glyph = symbol("bell") {
+            // The image is centred in the button, and the glyph is centred in
+            // the box at its top (`namedGlyph`).
+            let glyphTop = (max(glyphBoxHeight, glyph.size.height) - glyph.size.height) / 2
+            badgeOnGlyph[0].constant = glyph.size.width / 2 + Self.badgeGlyphInset.x
+            badgeOnGlyph[1].constant = -(image.size.height / 2) + glyphTop + Self.badgeGlyphInset.y
+            NSLayoutConstraint.deactivate(badgeOnButton)
+            NSLayoutConstraint.activate(badgeOnGlyph)
+        } else {
+            NSLayoutConstraint.deactivate(badgeOnGlyph)
+            NSLayoutConstraint.activate(badgeOnButton)
+        }
+    }
+
+    /// Where the badge's centre sits from the glyph's top-trailing corner.
+    static let badgeGlyphInset = CGPoint(x: 0, y: 2)
 
     /// The notifications button carries the bell's own count - the number
     /// the floating bar's bell draws, from the same store.
@@ -1240,9 +1386,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         inspectorHelp = shown ? "Hide the inspector"
             : wanted ? "Show the inspector"
             : "The inspector is off, so selecting an item does not open it. Click to turn it back on."
-        inspectorItem?.image = symbol(inspectorSymbolName)
+        setGlyph(glyph(inspectorSymbolName, name: QuickConnectIcon.inspectorShortName, description: nil),
+                 on: inspectorItem)
         inspectorItem?.label = inspectorLabel
-        inspectorItem?.toolTip = inspectorHelp
+        inspectorItem?.view?.setAccessibilityLabel(inspectorLabel)
+        inspectorItem?.menuFormRepresentation?.title = inspectorLabel
+        setHelp(inspectorHelp, on: inspectorItem)
     }
 
     static func inspectorLabel(shown: Bool) -> String { shown ? "Hide Inspector" : "Show Inspector" }
@@ -1272,12 +1421,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var debugInspectorSymbolName: String { inspectorSymbolName }
     #endif
 
+    /// The light/dark toggle's glyph, which follows the theme.
+    private var themeSymbolName = AppearanceToggle.lightSymbol
+
     func applyThemeSymbol(_ theme: HelmTheme) {
         setSearchHint(theme)
         applyCrumb(theme)
         let isDark = theme.mode == .dark
-        themeItem?.image = symbol(isDark ? AppearanceToggle.darkSymbol : AppearanceToggle.lightSymbol)
-        themeItem?.toolTip = AppearanceToggle.tooltip(isDark: isDark)
+        themeSymbolName = isDark ? AppearanceToggle.darkSymbol : AppearanceToggle.lightSymbol
+        setGlyph(glyph(themeSymbolName, name: QuickConnectIcon.themeShortName, description: nil), on: themeItem)
+        setHelp(AppearanceToggle.tooltip(isDark: isDark), on: themeItem)
         if wantsFocusChip { focusChip.applyTheme(theme) }
     }
 
@@ -1302,9 +1455,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     private func applyShortcutHelp() {
         let hidden = AppSettings.shared.hiddenModules
-        quickConnectConsoleItem?.toolTip = Self.shortcutHelp(QuickConnectIcon.consoleHelp, module: .console, hidden: hidden)
-        quickConnectHostsItem?.toolTip = Self.shortcutHelp(QuickConnectIcon.hostsHelp, module: .connections, hidden: hidden)
-        calendarItem?.toolTip = Self.shortcutHelp("Open \(PlaceName.of(.calendar))", module: .calendar, hidden: hidden)
+        setHelp(Self.shortcutHelp(QuickConnectIcon.consoleHelp, module: .console, hidden: hidden), on: quickConnectConsoleItem)
+        setHelp(Self.shortcutHelp(QuickConnectIcon.hostsHelp, module: .connections, hidden: hidden), on: quickConnectHostsItem)
+        setHelp(Self.shortcutHelp("Open \(PlaceName.of(.calendar))", module: .calendar, hidden: hidden), on: calendarItem)
     }
 
     @objc private func quickConnectConsoleClicked() { onQuickConnectConsole?() }
@@ -1449,4 +1602,33 @@ extension WorkspaceToolbar: NSMenuDelegate {
         Self.menuItems(for: shownActions.filter { !$0.isHidden }).filter { !$0.isSeparatorItem }.map(\.title)
     }
     #endif
+}
+
+/// Window > Show Toolbar Names, beside Customize Toolbar: the captain's
+/// switch for the toolbar's shortcut names (`WorkspaceToolbar.showsNames`),
+/// which replaced the system's Icon and Text / Icon Only choice. Settings >
+/// Appearance has the same switch. The item keeps its own checkmark, since
+/// this app validates no menu items: it reads the setting when built and
+/// whenever either switch changes it.
+final class ToolbarNamesMenuItem: NSMenuItem {
+    static let title = "Show Toolbar Names"
+    private var observer: NSObjectProtocol?
+
+    init() {
+        super.init(title: Self.title, action: #selector(toggleToolbarNames), keyEquivalent: "")
+        target = self
+        _ = withSymbol("character.textbox")
+        refresh()
+        observer = NotificationCenter.default.addObserver(
+            forName: AppSettings.workspaceToolbarNamesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in self?.refresh() }
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    private func refresh() { state = WorkspaceToolbar.showsNamesNow() ? .on : .off }
+
+    @objc private func toggleToolbarNames() { AppSettings.shared.workspaceToolbarShowsNames = !WorkspaceToolbar.showsNamesNow() }
 }
