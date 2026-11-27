@@ -91,7 +91,8 @@ enum ExternalToolGuardSelfTest {
         if case .transientFailure = password {} else {
             fail("checkAppPasswordConfigured answered \(password) - unknown is the only honest answer here", &ok)
         }
-        check(!verified, "verifyAppPassword accepted a password without asking av", &ok)
+        check(verified == .unanswered(.transientFailure),
+              "verifyAppPassword answered \(verified) without asking av - unknown is the only honest answer here", &ok)
         check(install.status == .checkFailed, "checkInstall reported \(install.status) without running brew", &ok)
         check(!update.ok, "updateInstall reported success without running brew", &ok)
         // `ensureServiceRunning` runs `/usr/bin/open`, which no stub can

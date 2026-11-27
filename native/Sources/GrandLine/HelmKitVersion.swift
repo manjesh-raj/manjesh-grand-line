@@ -226,7 +226,7 @@ enum HelmKit {
         // HelmChoiceCard.swift
         Component("HelmChoiceCard", "1.1.0", file: "HelmChoiceCard.swift"),
         // HelmIconButton.swift
-        Component("HelmIconButton", "1.1.0", file: "HelmIconButton.swift"),
+        Component("HelmIconButton", "1.2.0", file: "HelmIconButton.swift"),
         // HelmPageScaffold.swift
         Component("HelmPageScaffold", "1.0.0", file: "HelmPageScaffold.swift"),
     ]

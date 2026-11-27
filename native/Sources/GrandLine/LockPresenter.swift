@@ -61,8 +61,8 @@ final class LockPresenter {
     var checkAvailability: () -> VaultSource.AppPasswordAvailability = { VaultSource.checkAppPasswordConfigured() }
 
     /// The typed password's own check (`av inject`). A seam for the same
-    /// reason as `checkAvailability`.
-    var verifyPassword: (String) -> Bool = { VaultSource.verifyAppPassword($0) }
+    /// reason as `checkAvailability`. Only `.matched` unlocks.
+    var verifyPassword: (String) -> VaultSource.AppPasswordVerdict = { VaultSource.verifyAppPassword($0) }
 
     /// Whether `av` is on PATH. A `PATH` lookup that runs nothing, so it is
     /// the one Automic Vault question asked when the lock screen goes up.
@@ -72,6 +72,11 @@ final class LockPresenter {
     /// process. A later refused password is then simply a wrong password, and
     /// does not run `av list` (and raise its dialog) again to say so. Check
     /// again still asks, because that is the person asking.
+    ///
+    /// "Refused" means Automic Vault answered. A check it never answered is
+    /// not a wrong password, and still reaches the waiting state - with Check
+    /// again and the Touch ID fallback - from what `av inject` itself said,
+    /// so it runs no `av list` either (see `attempt`).
     private var passwordKnownConfigured = false
 
     /// R2-UX-01: the app lock preference, read and written here only to
@@ -120,13 +125,26 @@ final class LockPresenter {
         // Off the main thread, because `evaluatePolicy` blocks behind a
         // system panel (GL-25, and `LAContextFactory.evaluate`'s own
         // `dispatchPrecondition` enforces it).
-        lockScreen.localAuthAvailable = { LAContextFactory.deviceOwnerAuthAvailable }
+        //
+        // Design A only changes how the result reads: a cancel and a failure
+        // are told apart, and both leave the app locked. The policy, the
+        // reason string and the thread are unchanged.
+        lockScreen.localAuthKind = {
+            guard LAContextFactory.deviceOwnerAuthAvailable else { return .unavailable }
+            return CredentialVaultKeyStore.biometryAvailable ? .touchID : .macPassword
+        }
         lockScreen.onLocalAuthAttempt = { completion in
             let context = LAContextFactory.make(
                 reason: "unlock Grand Line while Automic Vault is unreachable")
             DispatchQueue.global(qos: .userInitiated).async {
-                let allowed = LAContextFactory.evaluate(context, policy: .deviceOwnerAuthentication)
-                DispatchQueue.main.async { completion(allowed) }
+                let outcome = LAContextFactory.evaluateOutcome(context, policy: .deviceOwnerAuthentication)
+                DispatchQueue.main.async {
+                    switch outcome {
+                    case .confirmed: completion(.confirmed)
+                    case .cancelled: completion(.cancelled)
+                    case .failed: completion(.failed)
+                    }
+                }
             }
         }
         // R2-UX-01: the two setup states used to end in "then relaunch".
@@ -152,7 +170,8 @@ final class LockPresenter {
         let check = checkAvailability
         let alreadyKnown = passwordKnownConfigured
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            if verify(typed) {
+            let verdict = verify(typed)
+            if verdict == .matched {
                 DispatchQueue.main.async {
                     // A verified password proves it is configured, which is
                     // all an undecided install's settlement needs to know.
@@ -162,18 +181,37 @@ final class LockPresenter {
                 }
                 return
             }
-            let availability = alreadyKnown ? nil : check()
+            // A known password and a refused check is simply a wrong
+            // password. But a check Automic Vault never answered compared
+            // nothing, so it goes to the waiting state that says so, from what
+            // `av inject` itself reported - not to "didn't match", which left
+            // the screen with no Check again and no Touch ID fallback for the
+            // rest of the session once one password had verified.
+            let availability: VaultSource.AppPasswordAvailability?
+            switch verdict {
+            case .unanswered(let state) where alreadyKnown: availability = state
+            default: availability = alreadyKnown ? nil : check()
+            }
             DispatchQueue.main.async {
-                completion(false)
-                guard let self, let availability else { return }
-                if availability == .configured {
-                    // The password exists, so this one was simply wrong. The
-                    // form and its "didn't match" line stay as they are.
-                    self.passwordKnownConfigured = true
-                    if self.readPreference() == nil { self.writePreference(true) }
+                guard let self else { completion(false); return }
+                if let availability, availability != .configured {
+                    completion(false)
+                    self.applyPasswordAvailability(availability, reason: self.shownReason)
                     return
                 }
-                self.applyPasswordAvailability(availability, reason: self.shownReason)
+                if availability == .configured {
+                    // The password exists, so this one was simply wrong.
+                    self.passwordKnownConfigured = true
+                    if self.readPreference() == nil { self.writePreference(true) }
+                }
+                // Automic Vault answered this time. If the screen was saying
+                // it could not, it goes back to the ordinary form first, so
+                // the "didn't match" line lands on that form and the Touch ID
+                // button goes back to disabled (design A).
+                if self.lockScreen.isShowingVaultFailure {
+                    self.lockScreen.apply(.locked(subtitle: Self.lockedSubtitle(for: self.shownReason)))
+                }
+                completion(false)
             }
         }
     }
@@ -362,7 +400,7 @@ final class LockPresenter {
     func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
         let verify = verifyPassword
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let ok = verify(password)
+            let ok = verify(password) == .matched
             DispatchQueue.main.async { [weak self] in
                 guard let self else { completion(false); return }
                 if ok {

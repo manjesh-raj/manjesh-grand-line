@@ -16,6 +16,11 @@
 //      asks `av list` why - once per process once the password is known to
 //      exist. A check that could not get an answer, a denied dialog
 //      included, is never re-run on a timer: Check again is the way forward.
+//      And a check Automic Vault never answered is not a refusal: even once
+//      the password is known, it reaches the waiting state with Check again
+//      and the Touch ID fallback (UX issue X1), which it did not between
+//      `fm/grand-line-vault-no-launch-prompt` and
+//      `fm/grandline-lockscreen-touchid-fallback`.
 //   3. The Automic Vault page reads nothing while the app is locked (session
 //      restore lands on it at launch, under the lock screen), reads once when
 //      it is first shown unlocked, shows that read again on later visits, and
@@ -48,6 +53,8 @@ enum VaultReadSessionSelfTest {
             ("aRefusedPasswordAsksWhyOnceThenNotAgain", test_refusedPasswordAsksOnce),
             ("aVerifiedPasswordNeverListsSecrets", test_verifiedPasswordNeverLists),
             ("aDeniedCheckIsNotRetriedOnItsOwn", test_deniedCheckNotRetried),
+            ("aVaultThatStopsAnsweringAfterAnUnlockStillOffersTouchID", test_unansweredAfterUnlockOffersFallback),
+            ("avInjectsOwnWordsDecideTheVerdict", test_injectVerdict),
             ("theVaultPageReadsNothingWhileLockedAndReadsOnUnlock", test_pageWaitsForUnlock),
             ("theVaultPageReadsOnceAndAgainOnlyOnRefresh", test_pageReadsOnce),
             ("aDeniedReadSaysSoAndIsNotRetried", test_deniedReadSaysSo),
@@ -96,11 +103,11 @@ enum VaultReadSessionSelfTest {
         let parent = NSViewController()
         var listed = 0
         var verified = 0
-        var verifyAnswer: Bool
+        var verifyAnswer: VaultSource.AppPasswordVerdict
         var answers: [VaultSource.AppPasswordAvailability]
         var preference: Bool? = true
 
-        init(verify: Bool = false, answers: [VaultSource.AppPasswordAvailability] = [.configured], avOnPath: Bool = true) {
+        init(verify: VaultSource.AppPasswordVerdict = .refused, answers: [VaultSource.AppPasswordAvailability] = [.configured], avOnPath: Bool = true) {
             verifyAnswer = verify
             self.answers = answers
             parent.view = NSView(frame: NSRect(x: 0, y: 0, width: 1000, height: 700))
@@ -161,7 +168,7 @@ enum VaultReadSessionSelfTest {
     }
 
     private static func test_refusedPasswordAsksOnce() -> String? {
-        let harness = LockHarness(verify: false, answers: [.configured])
+        let harness = LockHarness(verify: .refused, answers: [.configured])
         harness.presenter.showLock(reason: .launch)
         harness.type("wrong")
         spin { harness.listed >= 1 }
@@ -182,7 +189,7 @@ enum VaultReadSessionSelfTest {
     }
 
     private static func test_verifiedPasswordNeverLists() -> String? {
-        let harness = LockHarness(verify: true)
+        let harness = LockHarness(verify: .matched)
         harness.preference = nil
         harness.presenter.showLock(reason: .launch)
         harness.type("right")
@@ -198,7 +205,7 @@ enum VaultReadSessionSelfTest {
         // A denied dialog makes `av list` exit non-zero without the
         // service-not-running marker, which is `.transientFailure`.
         for answer in [VaultSource.AppPasswordAvailability.transientFailure, .serviceNotRunning] {
-            let harness = LockHarness(verify: false, answers: [answer, .configured])
+            let harness = LockHarness(verify: .refused, answers: [answer, .configured])
             harness.presenter.showLock(reason: .launch)
             harness.type("anything")
             spin { harness.listed >= 1 }
@@ -207,15 +214,162 @@ enum VaultReadSessionSelfTest {
             guard harness.listed == 1 else {
                 return "\(answer): the check ran \(harness.listed) times with nobody asking - a timer is re-running av list"
             }
-            guard let again = harness.screen.debugCheckAgainButton else {
-                return "\(answer): the screen offers no Check again, so it has no way forward"
+            // Design A: the way forward is the password pill itself - typing
+            // again asks Automic Vault once more, as Check again used to.
+            guard harness.screen.isShowingVaultFailure, !harness.screen.debugFormStack.isHidden,
+                  harness.screen.debugPasswordField.isEnabled else {
+                return "\(answer): the Vault-failing screen offers no password pill, so it has no way forward"
             }
-            again.performClick(nil)
+            harness.type("anything")
             spin { harness.listed >= 2 }
-            guard harness.listed == 2 else { return "\(answer): Check again did not run the check (\(harness.listed))" }
-            guard !harness.screen.debugFormStack.isHidden else {
-                return "\(answer): Check again found the password but the form did not come back"
+            guard harness.listed == 2 else { return "\(answer): typing again did not ask Automic Vault again (\(harness.listed))" }
+            spin(timeout: 0.3)
+            guard !harness.screen.isShowingVaultFailure, !harness.screen.debugFormStack.isHidden,
+                  !harness.screen.debugTouchIDButton.isEnabled else {
+                return "\(answer): Automic Vault answered again but the screen still says it cannot check the password"
             }
+            guard !harness.screen.debugErrorLabel.isHidden,
+                  harness.screen.debugErrorLabel.stringValue.contains("didn't match"), harness.screen.debugIsLit else {
+                return "\(answer): back on the form, the refused password did not say it didn't match on a lit form"
+            }
+        }
+        return nil
+    }
+
+    /// The captain's report: "if there was any issue with Automic Vault,
+    /// there used to be the option to use Touch ID". There still was, but
+    /// only before the first unlock of the session. Once a password had
+    /// verified, the password was known to exist, so a refused check stopped
+    /// asking `av list` why - and an `av inject` that Automic Vault never
+    /// answered (its helper suspended after a sleep, or quit) read as a
+    /// wrong password. The screen stayed on "That password didn't match"
+    /// with no Check again and no Touch ID fallback, however often the right
+    /// password was typed.
+    ///
+    /// Design A (the captain's option 3) is asserted along the way: the
+    /// button is always there, disabled with its reason on an ordinary
+    /// lock, working only while Automic Vault cannot check the password, and
+    /// a failed or cancelled challenge never unlocks.
+    private static func test_unansweredAfterUnlockOffersFallback() -> String? {
+        for state in [VaultSource.AppPasswordAvailability.serviceNotRunning, .transientFailure] {
+            let harness = LockHarness(verify: .matched)
+            let screen = harness.screen
+            var challenges = 0
+            var challengeAnswer = LockScreenController.LocalAuthOutcome.failed
+            // Stubbed: a suite must never raise the real LAContext panel.
+            screen.localAuthKind = { .touchID }
+            screen.onLocalAuthAttempt = { completion in
+                challenges += 1
+                completion(challengeAnswer)
+            }
+            // A launch lock, opened with the right password: the password is
+            // now known to exist in this process.
+            harness.presenter.showLock(reason: .launch)
+            let button = screen.debugTouchIDButton
+            guard !button.isHiddenOrHasHiddenAncestor, !button.isEnabled,
+                  screen.debugTouchIDNote.stringValue.contains("when Automic Vault cannot check your password"),
+                  button.accessibilityHelp() == screen.debugTouchIDNote.stringValue else {
+                return "\(state): an ordinary lock does not show the Touch ID button disabled with its reason (hidden: \(button.isHiddenOrHasHiddenAncestor), enabled: \(button.isEnabled), note: \"\(screen.debugTouchIDNote.stringValue)\")"
+            }
+            harness.type("right")
+            spin(timeout: 6) { !harness.presenter.debugOverlayIsShown }
+            guard !harness.presenter.debugOverlayIsShown else { return "\(state): the first, verified unlock never lifted the lock" }
+
+            // Discriminating power first: with the password known, a check
+            // Automic Vault did answer is still just a wrong password.
+            harness.verifyAnswer = .refused
+            harness.presenter.showLock(reason: .sessionExpired)
+            harness.type("wrong")
+            spin { harness.verified >= 2 }
+            guard screen.debugErrorLabel.stringValue.contains("didn't match"), !screen.debugErrorLabel.isHidden,
+                  !button.isEnabled, !screen.isShowingVaultFailure, harness.listed == 0 else {
+                return "\(state): a refused check with the password known no longer reads as a wrong password (Touch ID enabled: \(button.isEnabled), av list runs: \(harness.listed))"
+            }
+            // A disabled button runs nothing, whatever reaches it.
+            button.performClick(nil)
+            spin(timeout: 0.3)
+            guard challenges == 0 else { return "\(state): the disabled Touch ID button ran a challenge on an ordinary lock" }
+
+            // Now Automic Vault stops answering, and the right password is typed.
+            harness.verifyAnswer = .unanswered(state)
+            harness.presenter.showLock(reason: .sessionExpired)
+            harness.type("right")
+            spin { harness.verified >= 3 && screen.isShowingVaultFailure }
+            guard harness.listed == 0 else {
+                return "\(state): an unanswered check ran av list \(harness.listed) times - av inject already said why"
+            }
+            guard screen.isShowingVaultFailure, button.isEnabled, !button.isHiddenOrHasHiddenAncestor else {
+                let error = screen.debugErrorLabel.isHidden ? "nothing" : "\"\(screen.debugErrorLabel.stringValue)\""
+                return "\(state): Automic Vault stopped answering after an unlock and the lock screen offers no working Touch ID - it said \(error)"
+            }
+            guard !screen.debugFormStack.isHidden, screen.debugIsLit,
+                  screen.debugTouchIDNote.stringValue.contains("Use Touch ID instead") else {
+                return "\(state): the Vault-failing form is not lit with the pill and the Touch ID line"
+            }
+
+            // The fallback itself, through its real button. A failed
+            // challenge leaves the app locked and says so.
+            challengeAnswer = .failed
+            button.performClick(nil)
+            spin(timeout: 0.5)
+            guard challenges == 1 else { return "\(state): the Touch ID button ran \(challenges) challenges, want 1" }
+            guard harness.presenter.debugOverlayIsShown, AppLockGate.shared.isLocked else {
+                return "\(state): a failed Touch ID challenge unlocked the app"
+            }
+            guard button.isEnabled, screen.debugPasswordField.isEnabled,
+                  screen.debugErrorLabel.stringValue.contains("couldn't confirm") else {
+                return "\(state): a failed challenge did not say so and offer the button again (\"\(screen.debugErrorLabel.stringValue)\")"
+            }
+            // A cancel too, worded as the person's own choice.
+            challengeAnswer = .cancelled
+            button.performClick(nil)
+            spin(timeout: 0.5)
+            guard challenges == 2, harness.presenter.debugOverlayIsShown, AppLockGate.shared.isLocked else {
+                return "\(state): a cancelled Touch ID challenge unlocked the app"
+            }
+            guard screen.debugErrorLabel.stringValue.contains("was cancelled"), button.isEnabled else {
+                return "\(state): a cancel did not read as a cancel (\"\(screen.debugErrorLabel.stringValue)\")"
+            }
+            // And a confirmed one opens it, the same way a password does.
+            challengeAnswer = .confirmed
+            button.performClick(nil)
+            spin(timeout: 6) { !harness.presenter.debugOverlayIsShown }
+            guard !harness.presenter.debugOverlayIsShown, !AppLockGate.shared.isLocked else {
+                return "\(state): a confirmed Touch ID challenge did not lift the lock"
+            }
+            guard challenges == 3, harness.verified == 3, harness.listed == 0 else {
+                return "\(state): the fallback ran av (inject \(harness.verified), list \(harness.listed))"
+            }
+            screen.stopAnimations()
+        }
+        return nil
+    }
+
+    /// `VaultSource.appPasswordVerdict(for:)`, against the phrases read from
+    /// the `av` binary's own strings. The comparison shell prints nothing, so
+    /// a silent non-zero exit is the wrong-password case.
+    private static func test_injectVerdict() -> String? {
+        func result(_ outcome: SubprocessResult.Outcome, _ status: Int32, _ stderr: String) -> SubprocessResult {
+            SubprocessResult(outcome: outcome, status: status, stdoutData: Data(),
+                             stderrData: Data(stderr.utf8), duration: 0)
+        }
+        let cases: [(SubprocessResult, VaultSource.AppPasswordVerdict, String)] = [
+            (result(.exited, 0, ""), .matched, "a clean match"),
+            (result(.exited, 1, ""), .refused, "a silent mismatch"),
+            (result(.exited, 1, "Error: Automic Vault approval service is not running; open the menu bar app"),
+             .unanswered(.serviceNotRunning), "the service-not-running marker"),
+            (result(.exited, 1, "Error: request denied"), .unanswered(.transientFailure), "a denied dialog"),
+            (result(.exited, 1, "Error: Automic Vault approval did not reply"), .unanswered(.transientFailure), "no reply"),
+            (result(.exited, 1, "Error: approval XPC connection failed"), .unanswered(.transientFailure), "a failed XPC connection"),
+            (result(.timedOut, Subprocess.timedOutStatus, ""), .unanswered(.transientFailure), "the suspended-helper hang"),
+            // Deliberately still a refusal: not a sign Automic Vault was
+            // unreachable, so it must not open a second door.
+            (result(.exited, 1, "Error: Automic Vault returned no value"), .refused, "no value returned"),
+            (result(.launchFailed, -1, "launch failed"), .refused, "a launch failure"),
+        ]
+        for (run, want, name) in cases {
+            let got = VaultSource.appPasswordVerdict(for: run)
+            guard got == want else { return "\(name): got \(got), want \(want)" }
         }
         return nil
     }
