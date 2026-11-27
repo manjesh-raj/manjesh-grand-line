@@ -147,10 +147,11 @@ enum WorkspaceToolbarSelfTest {
             shell.toolbar.setShowsNames(WorkspaceToolbar.showsNamesNow())
             window.orderOut(nil)
         }
-        shell.toolbar.setNotificationCount(3)
         // Half a device pixel either way is rounding; the defect was 4.5pt.
         let tolerance = 1.0 / max(window.backingScaleFactor, 1)
         var barHeights: Set<CGFloat> = []
+        var sawChevron = false
+        var badgeShowed = true
         for width: CGFloat in [captainWidth, 1100] {
             var frame = window.frame
             frame.size.width = width
@@ -160,6 +161,13 @@ enum WorkspaceToolbarSelfTest {
                 for names in [false, true] {
                     shell.toolbar.setShowsNames(names)
                     settle(shell)
+                    // The shell pushes the notification center's own count
+                    // (none in a suite) as it settles, so the badge is set
+                    // after that, for this measurement.
+                    shell.toolbar.setNotificationCount(3)
+                    shell.view.layoutSubtreeIfNeeded()
+                    window.contentView?.superview?.layoutSubtreeIfNeeded()
+                    badgeShowed = badgeShowed && shell.toolbar.debugBadgeText == "3"
                     let where_ = "\(destination.rawValue) at \(Int(width))pt, names \(names ? "on" : "off")"
                     let bar = window.contentLayoutRect.maxY
                     let barHeight = window.frame.height - bar
@@ -178,15 +186,15 @@ enum WorkspaceToolbarSelfTest {
                     for item in measured where abs(item.midY - centre) > tolerance {
                         fail("\(where_): \(item.id) is centred at \(item.midY), the bar at \(centre)", &ok)
                     }
-                    if width < captainWidth, names {
-                        check(ids.contains("overflow chevron"),
-                              "fixture: \(where_) shows no overflow chevron, so it is not measured", &ok)
-                    }
+                    if width < captainWidth, names, ids.contains("overflow chevron") { sawChevron = true }
                 }
             }
         }
         check(barHeights.count == 1, "the toolbar's height moved between pages and name modes: \(barHeights.sorted())", &ok)
-        check(shell.toolbar.debugBadgeText == "3", "fixture: the bell's badge is not showing", &ok)
+        // Which page overflows at 1100 depends on the runner's text metrics
+        // (CI's 1x runner fits Tasks), so the chevron has to show on one.
+        check(sawChevron, "fixture: no page showed the overflow chevron at 1100pt with names, so it is not measured", &ok)
+        check(badgeShowed, "fixture: the bell's badge was not showing for every measurement", &ok)
         // The names really were drawn: a named glyph is taller with them.
         shell.toolbar.setShowsNames(false)
         let plain = shell.toolbar.debugBellButton.image?.size.height ?? 0
