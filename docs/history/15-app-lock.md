@@ -167,3 +167,46 @@ The lock policy is unchanged: the same two states, the same `.deviceOwnerAuthent
 - Copy-aside injections: hiding the button on an ordinary lock failed all three suites; dropping the `.circle` inset fix failed the shape check ("32.00x40.00 beside a 32.00pt pill"); dropping `joinsKeyViewLoop` failed the Tab check; enabling the button on an ordinary lock (a policy change) failed all three suites.
 - Off-screen renders of every state in Lavender and Powder at both sizes.
 - **Not verified:** the real Touch ID prompt, VoiceOver speech and the focus ring on screen (an off-screen window is never key), and the running animations.
+
+### The beam turns in Low Power Mode, and the ordinary lock has no caption
+
+Branch `fm/grandline-lockscreen-beam-and-caption`.
+Two captain reports from the same screen.
+
+**The lighthouse beam stopped turning.**
+The captain's screenshot showed the lit lamp with one still beam out to sea, which is exactly Reduce Motion's still picture.
+
+- **Trigger:** PF-01 (full review 4) made `DecorativeMotionGate` hold the scene still while Low Power Mode is on, as well as while the app is inactive, the window is occluded, or Reduce Motion is on.
+- **Masking condition:** the captain's Mac keeps Low Power Mode on, on battery and on AC (`pmset -g custom` shows `powermode 1` for both, and `ProcessInfo.isLowPowerModeEnabled` reads true).
+  A self-test process reads Low Power Mode as off unless a suite pins it, so no suite ever drew the scene the way that Mac does.
+- **Symptom:** the beam never turned on that Mac after PF-01 shipped. The captain confirmed it turns with Low Power Mode off.
+- **Nothing else stopped it.** The resume paths (the app becoming active, the window becoming visible, Low Power Mode going off, a Reduce Motion toggle, a launch lock shown before activation) all restart the lens. PR 640's form changes touch nothing the lens reads.
+
+The captain's call: the beam always turns, including in Low Power Mode.
+Only the fog, the waves and the boat pause there.
+Inactive, occluded and Reduce Motion still hold the whole scene still.
+
+- `DecorativeMotionGate` now also reports `heldOnlyByLowPower`: someone is looking, and Low Power Mode is the only reason to hold still.
+  It calls back when either answer changes.
+- `LockScreenController.beamHoldsStill` decides the lens apart from the rest of the decoration.
+  `applyMotionPreference` draws the still beam every time it is wanted, and only restarts a turning lens when it is not already turning, so a callback that leaves it turning keeps its phase.
+- **The Secrets chest follows the same rule.** It has no beam, and its seam pulse, rays and twinkles are all non-beam loops, so they still pause in Low Power Mode. `CredentialVaultViewSelfTest`'s PF-01 case already asserts that and still passes.
+
+**The caption under the password field is gone on an ordinary lock.**
+The captain did not want "Touch ID unlocks Grand Line when Automic Vault cannot check your password." on every lock.
+
+- On an ordinary lock the Touch ID button is still there and disabled, with no line under the field.
+  Its reason stays in its accessibility help (and its tooltip), so VoiceOver still explains the dimmed button.
+- While Automic Vault cannot check the password, the line just says "Use Touch ID to unlock." ("Use your Mac password to unlock." on a Mac with only a login password).
+  The state's own subtitle already says what is wrong with Automic Vault.
+- The in-progress, cancelled and failed lines are unchanged, and so is the lock policy.
+- The card is centred on its own content, so it stays balanced with the line hidden. Measured on the off-screen render: the same centre offset in every state at 1220x760 and 960x620.
+
+### Verified (beam and caption)
+
+- `LockScreenSelfTest.checkLoopsHoldStillWhileNobodyLooks` now asserts the beam and the rest separately: Low Power Mode on gives a turning beam with the fog, waves and boat paused; off, everything runs; inactive, occluded or Reduce Motion, everything holds still; and each case comes back when it clears.
+  A relock that lands while the app is inactive, on a fresh controller, must draw the still beam and then move again on activation.
+- `checkTheTouchIDControl` asserts no caption on an ordinary lock, the reason in the accessibility help, and exactly "Use Touch ID to unlock." in the Vault-failing states. `VaultReadSessionSelfTest` follows.
+- Copy-aside injections: restoring PF-01's whole-scene Low Power pause failed three Low Power cases ("beam still, fog/waves/boat still - want beam turning"); showing the caption on every lock failed `checkTheTouchIDControl` in every theme and size and `aVaultThatStopsAnsweringAfterAnUnlockStillOffersTouchID`; skipping the still-beam redraw on an already-stopped lens failed the relock case.
+- Off-screen renders of the ordinary and both Vault-failing states in Lavender and Powder at 1220x760 and 960x620.
+- **Not verified:** the running beam on screen (an off-screen render shows model values only, so no turning beam appears in it), and VoiceOver speech.

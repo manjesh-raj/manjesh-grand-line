@@ -276,6 +276,14 @@ final class LockLighthouseScene {
         for band in [fogFar, fogBank, fogVeil] { band.stopDrift() }
     }
 
+    /// Stops the fog alone, leaving the lens as it is.
+    func stopDrift() {
+        for band in [fogFar, fogBank, fogVeil] { band.stopDrift() }
+    }
+
+    /// Whether the lens is turning (false for Reduce Motion's still beam).
+    var isTurning: Bool { turning }
+
     func startDrift(reducedMotion: Bool) {
         guard !reducedMotion else { return }
         for band in [fogFar, fogBank, fogVeil] { band.startDrift() }
@@ -375,6 +383,8 @@ final class LockLighthouseScene {
 
     #if FM_SELFTESTS
     var debugLensTurning: Bool { beams[0].animation(forKey: "lens.scale") != nil }
+    /// Reduce Motion's still beam: one beam out to sea, drawn, not turning.
+    var debugStillBeamShown: Bool { !turning && beams[0].animation(forKey: "lens.scale") == nil && beams[0].opacity > 0 }
     var debugVeilOpacity: Float { fogVeil.layer.opacity }
     var debugGlassOpacity: Float { glass.opacity }
     var debugLensSpeed: Float { lensGroup.speed }
