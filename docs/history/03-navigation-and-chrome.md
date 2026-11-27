@@ -1870,3 +1870,39 @@ Deliberately left:
 - The Projects card on a project's detail page.
 - `HostsController.setModuleTabControlHidden`, a no-op that `ModuleTabHosting` still requires, because Crew's page implements it for real.
 - 37 other feature-inventory rows that still say "the floating bar keeps" something. They became wrong in part 1, not here.
+
+## The toolbar's names keep one centre line (`fm/grandline-toolbar-label-alignment`)
+
+The captain reported that once UX-25 (full review 4, PR 637) gave the toolbar's shortcut icons their names, Compose and the rest of the page's pills were no longer centred.
+
+**Cause.** UX-25 showed the names through AppKit's Icon and Text display mode, its default for a new install's first week.
+That mode reserves a label row under **every** toolbar item, including the view items whose labels UX-25 emptied (the crumb, the page's pills, the stepper, Search).
+Measured off screen at 1512pt on Console: in Icon Only every item's content is centred on the bar (y=694, the traffic lights' line).
+In Icon and Text the glyphs move to 698.5 and the 28pt pill stack to 702, over an empty 14pt label row.
+Emptying every item's label does not remove the row.
+On screen AppKit grows the bar instead: the captain's screenshot measures a glass band about 67pt tall against 52pt, with the row on the traffic lights' line and the names under it.
+The off-screen window never grows, so that half rests on the screenshot.
+No layout inside AppKit's own label mode gives one centre line at a fixed height.
+
+**Fix (the captain's pick of three options).** The toolbar draws the names itself and AppKit's display mode stays Icon Only.
+
+- The six glyph items (Console, Connections, Calendar, Appearance, Notifications, Inspector) show their name in 10pt type under the glyph, inside their own capsule, as one template image.
+  Every glyph is centred in one shared box, so the names share a baseline.
+- Those items are view items around a glyph-only button now, like the bell already was.
+  An image item scales its picture down to the system's icon size, and the glyph with its name came out at about two thirds of the bell's.
+  The item keeps its action and target for its menu form and for `debugPerform`.
+- `NSToolbar.allowsDisplayModeCustomization` is off on macOS 15 and later.
+  It has to be set after `allowsUserCustomization`, whose setter turns it back on (measured).
+  On older macOS, a pick from the context menu other than Icon Only is taken as names on and undone.
+- The switch is **Window > Show Toolbar Names**, beside Customize Toolbar, and **Settings > Appearance > Window > Toolbar names**.
+  Both write `AppSettings.workspaceToolbarShowsNames`, which posts `workspaceToolbarNamesDidChange`.
+  The first-week default is unchanged and is still never saved as a choice.
+  A display mode saved by an older build still counts: anything but Icon Only reads as names on, and setting the new value clears the old key.
+- With names on, the bell's badge sits on the bell glyph's corner rather than on the wider button's.
+
+**Tests.** `WorkspaceToolbarSelfTest` case (4) asserts that every visible item's view and the overflow chevron are centred on the bar, with names and without.
+It runs on Console, Tasks, Calendar and Connections, at 1512pt and at 1100pt, with the bell's badge showing.
+It also asserts that the bar keeps one height across all of those.
+Putting the toolbar back in AppKit's Icon and Text mode for names failed 84 of its checks (items 4.5pt to 8pt off the line).
+`ReviewFourUXSelfTest` covers the first-week rule, the legacy mapping, the drawn name and its template, and that the system's mode stays Icon Only.
+Reverting the glyph items to image items failed four of its checks.

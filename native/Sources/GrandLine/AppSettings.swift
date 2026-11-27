@@ -89,6 +89,7 @@ final class AppSettings {
         static let hostsGrouped = "fm.connections.hostsGrouped"
         static let workspaceToolbarItems = "fm.workspaceToolbar.items"
         static let workspaceToolbarDisplayMode = "fm.workspaceToolbar.displayMode"
+        static let workspaceToolbarShowsNames = "fm.workspaceToolbar.showsNames"
         static let appLockIdleSeconds = "fm.appLockIdleSeconds"
         static let appLockSessionSeconds = "fm.appLockSessionSeconds"
     }
@@ -1096,8 +1097,10 @@ final class AppSettings {
         }
     }
 
-    /// R2-ARCH-06: the toolbar's display mode from the same customisation
-    /// sheet (`NSToolbar.DisplayMode`'s raw value), or `nil` for icons only.
+    /// R2-ARCH-06: the toolbar's display mode from the customisation sheet
+    /// (`NSToolbar.DisplayMode`'s raw value). Read only as the fallback for
+    /// `workspaceToolbarShowsNames`: the toolbar no longer has a system
+    /// display mode to choose.
     var workspaceToolbarDisplayMode: Int? {
         get { defaults.object(forKey: Keys.workspaceToolbarDisplayMode) == nil ? nil
                 : defaults.integer(forKey: Keys.workspaceToolbarDisplayMode) }
@@ -1107,4 +1110,37 @@ final class AppSettings {
             }
         }
     }
+
+    /// Whether the toolbar's shortcut icons show their names under the glyph
+    /// (`WorkspaceToolbar.showsNames`), as the captain chose it from the
+    /// Window menu or Settings > Appearance. `nil` while nobody has chosen,
+    /// which leaves it to UX-25's first-week default.
+    ///
+    /// A choice saved by an older build as the system's display mode still
+    /// counts: Icon and Text (and Text Only, the other mode that showed words)
+    /// reads as names on, Icon Only as off. Setting a value replaces it.
+    var workspaceToolbarShowsNames: Bool? {
+        get {
+            if defaults.object(forKey: Keys.workspaceToolbarShowsNames) != nil {
+                return defaults.bool(forKey: Keys.workspaceToolbarShowsNames)
+            }
+            return workspaceToolbarDisplayMode.map(Self.showsNames(legacyDisplayMode:))
+        }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Keys.workspaceToolbarShowsNames) } else {
+                defaults.removeObject(forKey: Keys.workspaceToolbarShowsNames)
+            }
+            workspaceToolbarDisplayMode = nil
+            NotificationCenter.default.post(name: AppSettings.workspaceToolbarNamesDidChange, object: self)
+        }
+    }
+
+    /// An older build's saved `NSToolbar.DisplayMode` raw value as a names
+    /// choice: only Icon Only hid them. The raw value is restated here, since
+    /// this file imports only Foundation; `ReviewFourUXSelfTest` checks it
+    /// against AppKit's.
+    static let legacyIconOnlyDisplayMode = 2
+    static func showsNames(legacyDisplayMode raw: Int) -> Bool { raw != legacyIconOnlyDisplayMode }
+
+    static let workspaceToolbarNamesDidChange = Notification.Name("fm.workspaceToolbarNamesDidChange")
 }

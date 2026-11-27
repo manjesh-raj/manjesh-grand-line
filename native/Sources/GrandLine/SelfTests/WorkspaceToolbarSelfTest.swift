@@ -19,6 +19,16 @@
 //      with its Split pop-up in the toolbar beside Knowledge's five tabs it
 //      pushed the inspector button into the overflow menu at 1512pt. The
 //      pop-up now sits on the module header's row.
+//   4. **Every item keeps the bar's one centre line, with names and
+//      without.** UX-25 showed the shortcuts' names through AppKit's Icon and
+//      Text mode, which reserves a label row under every item - the page's
+//      pills, the stepper and Search included - so the row rode 4.5pt (the
+//      pills 8pt) above the centre line off screen, and on screen the bar
+//      grew about 15pt with its row pinned to the top (the captain's
+//      screenshot). The names are drawn into the glyph items now, and the
+//      bar keeps its height. Checked on four pages that bring their own
+//      pills, at 1512 and at 1100 with the overflow chevron and the bell's
+//      badge showing.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 //
@@ -45,6 +55,11 @@ enum WorkspaceToolbarSelfTest {
         var ok = true
         checkTheBreakpointFollowsTheTextScale(&ok)
         allOK = allOK && ok
+        autoreleasepool {
+            var ok = true
+            checkOneCentreLine(&ok)
+            allOK = allOK && ok
+        }
         for step in ChromeTextScale.steps where step.title == "Default" || step.title == "Larger" {
             ChromeTextScale.shared.setScale(step.scale)
             autoreleasepool {
@@ -120,6 +135,94 @@ enum WorkspaceToolbarSelfTest {
               "at \(step.title) text and 1512pt Knowledge > Notebook overflowed \(notebookOverflow) (R5-UI-01)", &ok)
         check(!shell.toolbar.debugPageActions.isEmpty,
               "fixture: Notebook put no actions in the toolbar - the overflow check measures an empty page", &ok)
+    }
+
+    /// (4): with names and without, every visible item's content and the
+    /// overflow chevron are centred on the bar, and the bar is the same
+    /// height in both.
+    private static func checkOneCentreLine(_ ok: inout Bool) {
+        let (window, shell) = ReviewTourLab.makeOffScreenSplitShell()
+        window.orderFront(nil)
+        defer {
+            shell.toolbar.setShowsNames(WorkspaceToolbar.showsNamesNow())
+            window.orderOut(nil)
+        }
+        // Half a device pixel either way is rounding; the defect was 4.5pt.
+        let tolerance = 1.0 / max(window.backingScaleFactor, 1)
+        var barHeights: Set<CGFloat> = []
+        var sawChevron = false
+        var badgeShowed = true
+        for width: CGFloat in [captainWidth, 1100] {
+            var frame = window.frame
+            frame.size.width = width
+            window.setFrame(frame, display: true)
+            for destination: RailDestination in [.console, .shift, .calendar, .hosts] {
+                shell.workspace.navigator.show(destination)
+                for names in [false, true] {
+                    shell.toolbar.setShowsNames(names)
+                    settle(shell)
+                    // The shell pushes the notification center's own count
+                    // (none in a suite) as it settles, so the badge is set
+                    // after that, for this measurement.
+                    shell.toolbar.setNotificationCount(3)
+                    shell.view.layoutSubtreeIfNeeded()
+                    window.contentView?.superview?.layoutSubtreeIfNeeded()
+                    badgeShowed = badgeShowed && shell.toolbar.debugBadgeText == "3"
+                    let where_ = "\(destination.rawValue) at \(Int(width))pt, names \(names ? "on" : "off")"
+                    let bar = window.contentLayoutRect.maxY
+                    let barHeight = window.frame.height - bar
+                    barHeights.insert(barHeight)
+                    let centre = bar + barHeight / 2
+                    let measured = centres(window)
+                    // The fixture's own power: an item the page brings (its
+                    // pills, its tabs or its primary action) and the bell are
+                    // on the bar, or the check is vacuous.
+                    let ids = Set(measured.map(\.id))
+                    let pageItems = [WorkspaceToolbar.ItemID.pageActions, WorkspaceToolbar.ItemID.tabs,
+                                     WorkspaceToolbar.ItemID.primaryAction].map(\.rawValue)
+                    check(pageItems.contains(where: ids.contains)
+                            && ids.contains(WorkspaceToolbar.ItemID.notifications.rawValue),
+                          "fixture: \(where_) has no page item or no bell on the toolbar (\(ids.sorted()))", &ok)
+                    for item in measured where abs(item.midY - centre) > tolerance {
+                        fail("\(where_): \(item.id) is centred at \(item.midY), the bar at \(centre)", &ok)
+                    }
+                    if width < captainWidth, names, ids.contains("overflow chevron") { sawChevron = true }
+                }
+            }
+        }
+        check(barHeights.count == 1, "the toolbar's height moved between pages and name modes: \(barHeights.sorted())", &ok)
+        // Which page overflows at 1100 depends on the runner's text metrics
+        // (CI's 1x runner fits Tasks), so the chevron has to show on one.
+        check(sawChevron, "fixture: no page showed the overflow chevron at 1100pt with names, so it is not measured", &ok)
+        check(badgeShowed, "fixture: the bell's badge was not showing for every measurement", &ok)
+        // The names really were drawn: a named glyph is taller with them.
+        shell.toolbar.setShowsNames(false)
+        let plain = shell.toolbar.debugBellButton.image?.size.height ?? 0
+        shell.toolbar.setShowsNames(true)
+        let named = shell.toolbar.debugBellButton.image?.size.height ?? 0
+        check(named > plain + 8, "fixture: names on drew no name under the bell (\(plain) -> \(named))", &ok)
+    }
+
+    /// The vertical centre, in window coordinates, of each visible item's
+    /// own view, and of the overflow chevron when there is one. Spaces and
+    /// the sidebar's tracking separator have no view of their own.
+    private static func centres(_ window: NSWindow) -> [(id: String, midY: CGFloat)] {
+        var found: [(id: String, midY: CGFloat)] = []
+        for item in window.toolbar?.visibleItems ?? [] {
+            guard let view = item.view, view.window != nil, !view.isHiddenOrHasHiddenAncestor else { continue }
+            found.append((item.itemIdentifier.rawValue, view.convert(view.bounds, to: nil).midY))
+        }
+        // AppKit's own class; no public API names the chevron's view.
+        func walk(_ view: NSView) {
+            if String(describing: type(of: view)).contains("ClippedItemsIndicator"), !view.isHiddenOrHasHiddenAncestor,
+               view.bounds.height > 0 {
+                found.append(("overflow chevron", view.convert(view.bounds, to: nil).midY))
+                return
+            }
+            view.subviews.forEach(walk)
+        }
+        if let frameView = window.contentView?.superview { walk(frameView) }
+        return found
     }
 
     private static func overflowedItems(_ window: NSWindow) -> [NSToolbarItem] {

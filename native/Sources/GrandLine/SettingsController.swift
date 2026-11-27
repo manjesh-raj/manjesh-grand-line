@@ -490,6 +490,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Keyed by index into `ChromeTextScale.steps` (GL-32).
     private var uiScaleButtons: [Int: HelmButton] = [:]
     private let autoReconnectSwitch = HelmToggle()
+    /// The toolbar's shortcut names, the same switch as Window > Show
+    /// Toolbar Names (`ToolbarNamesMenuItem`).
+    private let toolbarNamesSwitch = HelmToggle()
+    private var toolbarNamesObserver: NSObjectProtocol?
     /// T4: the scrollback depth, typed, and PERF-07's background trim.
     private let scrollbackField = HelmTextField(placeholder: "10,000")
     private var scrollbackRow: SettingsRow?
@@ -1491,6 +1495,22 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             description: "How tall the rows in lists, tables and the sidebar are. Compact fits more on screen.",
             control: densityTabs)
 
+        toolbarNamesSwitch.setAccessibilityLabel(ToolbarNamesMenuItem.title)
+        toolbarNamesSwitch.isOn = WorkspaceToolbar.showsNamesNow()
+        toolbarNamesSwitch.onToggle = { [weak self] in
+            guard let self else { return }
+            AppSettings.shared.workspaceToolbarShowsNames = self.toolbarNamesSwitch.isOn
+        }
+        if toolbarNamesObserver == nil {
+            toolbarNamesObserver = NotificationCenter.default.addObserver(
+                forName: AppSettings.workspaceToolbarNamesDidChange, object: nil, queue: .main
+            ) { [weak self] _ in self?.toolbarNamesSwitch.isOn = WorkspaceToolbar.showsNamesNow() }
+        }
+        let toolbarNamesRow = SettingsRow(
+            title: "Toolbar names",
+            description: "Names under the toolbar's shortcut icons, such as Console and Connections. A new install shows them for its first week.",
+            control: toolbarNamesSwitch)
+
         let familyAside = muted(NSTextField(labelWithString: "Each family has a light and a dark register"))
         familyAside.font = HelmType.caption()
         let sidebarSection = buildSidebarModulesSection()
@@ -1500,7 +1520,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             SettingsSection(group: SettingsGroup(rows: [modeRow])),
             SettingsSection(heading: "App theme", aside: familyAside,
                             group: SettingsGroup(custom: appearanceContainer)),
-            SettingsSection(heading: "Window", group: SettingsGroup(rows: [densityRow])),
+            SettingsSection(heading: "Window", group: SettingsGroup(rows: [densityRow, toolbarNamesRow])),
             sidebarSection,
             SettingsSection(heading: "Text", group: SettingsGroup(rows: [
                 SettingsRow(title: "Interface text size",

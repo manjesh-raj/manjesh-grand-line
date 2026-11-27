@@ -438,8 +438,10 @@ enum SettingsThemeLayoutParitySelfTest {
         // review: the page builds its Set-2 split cards at load, and the rows
         // a split plan takes leave their section cards. Twenty-two since F-04
         // of full review 4 added the Security page's Spotlight card.
-        guard daylightFP.cardCount == 22 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 22")
+        // Twenty-three since `fm/grandline-toolbar-label-alignment` gave the
+        // Appearance page's Window card its Toolbar names row.
+        guard daylightFP.cardCount == 23 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 23")
             ok = false
             return
         }

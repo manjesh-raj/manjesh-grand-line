@@ -90,8 +90,11 @@ enum SettingsSidebarNavigationSelfTest {
     /// rows each split plan takes leave their section cards, so fifteen
     /// section cards are not built. Those rows are the split cards' now
     /// (`SettingsSplitCardsViewSelfTest`). Twenty-two since F-04 of full
-    /// review 4 added the Security page's Spotlight card.
-    private static let expectedCardCount = 22
+    /// review 4 added the Security page's Spotlight card. Twenty-three since
+    /// `fm/grandline-toolbar-label-alignment` gave the Appearance page's
+    /// Window card a Toolbar names row the split card does not take, so the
+    /// card is built again.
+    private static let expectedCardCount = 23
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see
