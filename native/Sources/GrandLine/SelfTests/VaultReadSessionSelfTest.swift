@@ -214,14 +214,23 @@ enum VaultReadSessionSelfTest {
             guard harness.listed == 1 else {
                 return "\(answer): the check ran \(harness.listed) times with nobody asking - a timer is re-running av list"
             }
-            guard let again = harness.screen.debugCheckAgainButton else {
-                return "\(answer): the screen offers no Check again, so it has no way forward"
+            // Design A: the way forward is the password pill itself - typing
+            // again asks Automic Vault once more, as Check again used to.
+            guard harness.screen.isShowingVaultFailure, !harness.screen.debugFormStack.isHidden,
+                  harness.screen.debugPasswordField.isEnabled else {
+                return "\(answer): the Vault-failing screen offers no password pill, so it has no way forward"
             }
-            again.performClick(nil)
+            harness.type("anything")
             spin { harness.listed >= 2 }
-            guard harness.listed == 2 else { return "\(answer): Check again did not run the check (\(harness.listed))" }
-            guard !harness.screen.debugFormStack.isHidden else {
-                return "\(answer): Check again found the password but the form did not come back"
+            guard harness.listed == 2 else { return "\(answer): typing again did not ask Automic Vault again (\(harness.listed))" }
+            spin(timeout: 0.3)
+            guard !harness.screen.isShowingVaultFailure, !harness.screen.debugFormStack.isHidden,
+                  !harness.screen.debugTouchIDButton.isEnabled else {
+                return "\(answer): Automic Vault answered again but the screen still says it cannot check the password"
+            }
+            guard !harness.screen.debugErrorLabel.isHidden,
+                  harness.screen.debugErrorLabel.stringValue.contains("didn't match"), harness.screen.debugIsLit else {
+                return "\(answer): back on the form, the refused password did not say it didn't match on a lit form"
             }
         }
         return nil
@@ -236,14 +245,19 @@ enum VaultReadSessionSelfTest {
     /// wrong password. The screen stayed on "That password didn't match"
     /// with no Check again and no Touch ID fallback, however often the right
     /// password was typed.
+    ///
+    /// Design A (the captain's option 3) is asserted along the way: the
+    /// button is always there, disabled with its reason on an ordinary
+    /// lock, working only while Automic Vault cannot check the password, and
+    /// a failed or cancelled challenge never unlocks.
     private static func test_unansweredAfterUnlockOffersFallback() -> String? {
         for state in [VaultSource.AppPasswordAvailability.serviceNotRunning, .transientFailure] {
             let harness = LockHarness(verify: .matched)
             let screen = harness.screen
             var challenges = 0
-            var challengeAnswer = false
+            var challengeAnswer = LockScreenController.LocalAuthOutcome.failed
             // Stubbed: a suite must never raise the real LAContext panel.
-            screen.localAuthAvailable = { true }
+            screen.localAuthKind = { .touchID }
             screen.onLocalAuthAttempt = { completion in
                 challenges += 1
                 completion(challengeAnswer)
@@ -251,6 +265,12 @@ enum VaultReadSessionSelfTest {
             // A launch lock, opened with the right password: the password is
             // now known to exist in this process.
             harness.presenter.showLock(reason: .launch)
+            let button = screen.debugTouchIDButton
+            guard !button.isHiddenOrHasHiddenAncestor, !button.isEnabled,
+                  screen.debugTouchIDNote.stringValue.contains("when Automic Vault cannot check your password"),
+                  button.accessibilityHelp() == screen.debugTouchIDNote.stringValue else {
+                return "\(state): an ordinary lock does not show the Touch ID button disabled with its reason (hidden: \(button.isHiddenOrHasHiddenAncestor), enabled: \(button.isEnabled), note: \"\(screen.debugTouchIDNote.stringValue)\")"
+            }
             harness.type("right")
             spin(timeout: 6) { !harness.presenter.debugOverlayIsShown }
             guard !harness.presenter.debugOverlayIsShown else { return "\(state): the first, verified unlock never lifted the lock" }
@@ -261,48 +281,63 @@ enum VaultReadSessionSelfTest {
             harness.presenter.showLock(reason: .sessionExpired)
             harness.type("wrong")
             spin { harness.verified >= 2 }
-            guard harness.screen.debugErrorLabel.stringValue.contains("didn't match"),
-                  !harness.screen.debugErrorLabel.isHidden,
-                  harness.screen.debugLocalAuthStack.isHidden, harness.listed == 0 else {
-                return "\(state): a refused check with the password known no longer reads as a wrong password (fallback shown: \(!harness.screen.debugLocalAuthStack.isHidden), av list runs: \(harness.listed))"
+            guard screen.debugErrorLabel.stringValue.contains("didn't match"), !screen.debugErrorLabel.isHidden,
+                  !button.isEnabled, !screen.isShowingVaultFailure, harness.listed == 0 else {
+                return "\(state): a refused check with the password known no longer reads as a wrong password (Touch ID enabled: \(button.isEnabled), av list runs: \(harness.listed))"
             }
+            // A disabled button runs nothing, whatever reaches it.
+            button.performClick(nil)
+            spin(timeout: 0.3)
+            guard challenges == 0 else { return "\(state): the disabled Touch ID button ran a challenge on an ordinary lock" }
 
             // Now Automic Vault stops answering, and the right password is typed.
             harness.verifyAnswer = .unanswered(state)
             harness.presenter.showLock(reason: .sessionExpired)
             harness.type("right")
-            spin { harness.verified >= 3 && screen.debugFormStack.isHidden }
+            spin { harness.verified >= 3 && screen.isShowingVaultFailure }
             guard harness.listed == 0 else {
                 return "\(state): an unanswered check ran av list \(harness.listed) times - av inject already said why"
             }
-            guard !screen.debugLocalAuthStack.isHidden else {
+            guard screen.isShowingVaultFailure, button.isEnabled, !button.isHiddenOrHasHiddenAncestor else {
                 let error = screen.debugErrorLabel.isHidden ? "nothing" : "\"\(screen.debugErrorLabel.stringValue)\""
-                return "\(state): Automic Vault stopped answering after an unlock and the lock screen offers no Touch ID fallback - it said \(error)"
+                return "\(state): Automic Vault stopped answering after an unlock and the lock screen offers no working Touch ID - it said \(error)"
             }
-            guard harness.screen.debugCheckAgainButton != nil, screen.debugFormStack.isHidden else {
-                return "\(state): the unanswered check did not reach the waiting state (Check again, no password form)"
+            guard !screen.debugFormStack.isHidden, screen.debugIsLit,
+                  screen.debugTouchIDNote.stringValue.contains("Use Touch ID instead") else {
+                return "\(state): the Vault-failing form is not lit with the pill and the Touch ID line"
             }
 
-            // The fallback itself, through its real button: a refused or
-            // cancelled challenge leaves the app locked.
-            screen.debugLocalAuthButton.performClick(nil)
+            // The fallback itself, through its real button. A failed
+            // challenge leaves the app locked and says so.
+            challengeAnswer = .failed
+            button.performClick(nil)
             spin(timeout: 0.5)
             guard challenges == 1 else { return "\(state): the Touch ID button ran \(challenges) challenges, want 1" }
             guard harness.presenter.debugOverlayIsShown, AppLockGate.shared.isLocked else {
-                return "\(state): a refused Touch ID challenge unlocked the app"
+                return "\(state): a failed Touch ID challenge unlocked the app"
             }
-            guard screen.debugLocalAuthButton.isEnabled,
-                  screen.debugErrorLabel.stringValue.contains("didn't confirm") else {
-                return "\(state): a refused challenge did not say so and offer the button again"
+            guard button.isEnabled, screen.debugPasswordField.isEnabled,
+                  screen.debugErrorLabel.stringValue.contains("couldn't confirm") else {
+                return "\(state): a failed challenge did not say so and offer the button again (\"\(screen.debugErrorLabel.stringValue)\")"
+            }
+            // A cancel too, worded as the person's own choice.
+            challengeAnswer = .cancelled
+            button.performClick(nil)
+            spin(timeout: 0.5)
+            guard challenges == 2, harness.presenter.debugOverlayIsShown, AppLockGate.shared.isLocked else {
+                return "\(state): a cancelled Touch ID challenge unlocked the app"
+            }
+            guard screen.debugErrorLabel.stringValue.contains("was cancelled"), button.isEnabled else {
+                return "\(state): a cancel did not read as a cancel (\"\(screen.debugErrorLabel.stringValue)\")"
             }
             // And a confirmed one opens it, the same way a password does.
-            challengeAnswer = true
-            screen.debugLocalAuthButton.performClick(nil)
+            challengeAnswer = .confirmed
+            button.performClick(nil)
             spin(timeout: 6) { !harness.presenter.debugOverlayIsShown }
             guard !harness.presenter.debugOverlayIsShown, !AppLockGate.shared.isLocked else {
                 return "\(state): a confirmed Touch ID challenge did not lift the lock"
             }
-            guard harness.verified == 3, harness.listed == 0 else {
+            guard challenges == 3, harness.verified == 3, harness.listed == 0 else {
                 return "\(state): the fallback ran av (inject \(harness.verified), list \(harness.listed))"
             }
             screen.stopAnimations()

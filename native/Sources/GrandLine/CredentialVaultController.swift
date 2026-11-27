@@ -1359,18 +1359,45 @@ enum LAContextFactory {
     ///   password is a wanted second door rather than a weakening - see
     ///   `deviceOwnerAuthAvailable`.
     static func evaluate(_ context: LAContext, policy: LAPolicy? = nil) -> Bool {
+        evaluateOutcome(context, policy: policy) == .confirmed
+    }
+
+    /// What one challenge ended in. Cancelled and failed are both "locked",
+    /// and only `.confirmed` opens anything; they are told apart only so a
+    /// cancel can read as the person's own choice rather than as an error.
+    enum Outcome: Equatable {
+        case confirmed
+        /// The person, the system or the app dismissed the prompt.
+        case cancelled
+        /// Anything else: not recognised, Touch ID locked out, unavailable.
+        case failed
+    }
+
+    /// `evaluate`, with the cancel told apart from a failure. Same rules:
+    /// off the main thread, and no fallback to anything weaker.
+    static func evaluateOutcome(_ context: LAContext, policy: LAPolicy? = nil) -> Outcome {
         dispatchPrecondition(condition: .notOnQueue(.main))
         let resolved = policy ?? (CredentialVaultKeyStore.biometryAvailable
             ? .deviceOwnerAuthenticationWithBiometrics
             : .deviceOwnerAuthentication)
-        var allowed = false
+        var result = Outcome.failed
         let semaphore = DispatchSemaphore(value: 0)
-        context.evaluatePolicy(resolved, localizedReason: context.localizedReason) { success, _ in
-            allowed = success
+        context.evaluatePolicy(resolved, localizedReason: context.localizedReason) { success, error in
+            result = success ? .confirmed : Self.outcome(for: error)
             semaphore.signal()
         }
         semaphore.wait()
-        return allowed
+        return result
+    }
+
+    /// A refused challenge's error, as an `Outcome`. Pure, so a suite can
+    /// assert it without a prompt.
+    static func outcome(for error: Error?) -> Outcome {
+        guard let code = (error as? LAError)?.code else { return .failed }
+        switch code {
+        case .userCancel, .systemCancel, .appCancel: return .cancelled
+        default: return .failed
+        }
     }
 }
 

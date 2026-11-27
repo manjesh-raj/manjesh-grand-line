@@ -1293,62 +1293,75 @@ enum ReviewUIUXSelfTest {
         autoreleasepool {
             let controller = LockScreenController()
             _ = controller.view
+            let button = controller.debugTouchIDButton
 
             // Simulating "the helper is unreachable" is exactly what the two
-            // waiting states *are* - `AppShellController` applies them when
-            // `av list` does not answer, and retries behind them forever.
+            // waiting states *are* - `LockPresenter` applies them when
+            // Automic Vault does not answer.
             let waiting: [LockScreenController.ContentState] = [.serviceNotRunning, .transientFailure]
-            let settled: [LockScreenController.ContentState] = [
-                .locked(subtitle: "Grand Line is locked."), .noPasswordConfigured, .avUnavailable,
-            ]
 
             // Discriminating power first: with no fallback wired, the two
             // waiting states are still the dead end the review found.
-            controller.localAuthAvailable = { true }
+            controller.localAuthKind = { .touchID }
             controller.onLocalAuthAttempt = nil
             for state in waiting {
                 controller.apply(state)
-                guard controller.debugLocalAuthStack.isHidden else {
-                    return "the fallback is offered with nothing wired to it, so this case cannot "
+                guard !button.isEnabled else {
+                    return "the fallback works with nothing wired to it, so this case cannot "
                          + "tell the fix from the defect"
                 }
             }
 
             var challenges = 0
-            var answer = true
+            var answer = LockScreenController.LocalAuthOutcome.confirmed
             controller.onLocalAuthAttempt = { completion in
                 challenges += 1
                 completion(answer)
             }
 
-            // A Mac that cannot authenticate its owner keeps the retry loop
-            // rather than being shown a button that cannot work.
-            controller.localAuthAvailable = { false }
+            // A Mac that cannot authenticate its owner gets the button
+            // disabled with the reason, rather than one that cannot work.
+            controller.localAuthKind = { .unavailable }
             for state in waiting {
                 controller.apply(state)
-                guard controller.debugLocalAuthStack.isHidden else {
-                    return "the fallback is offered on a Mac that cannot authenticate its owner"
+                guard !button.isEnabled, controller.debugTouchIDNote.stringValue.contains("can't confirm it's you"),
+                      button.accessibilityHelp() == controller.debugTouchIDNote.stringValue else {
+                    return "a Mac that cannot authenticate its owner is offered a working fallback, or not told why"
                 }
             }
 
-            controller.localAuthAvailable = { true }
+            // No usable Touch ID but a login password: macOS asks for that
+            // password, as X1 always allowed, and the button says so.
+            controller.localAuthKind = { .macPassword }
+            controller.apply(.transientFailure)
+            guard button.isEnabled, button.symbolName == "key.fill",
+                  button.accessibilityLabel() == "Unlock with your Mac password" else {
+                return "a Mac with only a login password is not offered it by name (\(button.accessibilityLabel() ?? "nil"))"
+            }
+
+            controller.localAuthKind = { .touchID }
             for state in waiting {
                 controller.apply(state)
-                guard !controller.debugLocalAuthStack.isHidden else {
+                guard button.isEnabled, !controller.debugFormStack.isHidden, button.symbolName == "touchid",
+                      button.accessibilityLabel() == "Unlock with Touch ID" else {
                     return "the vault is unreachable and there is still no way past the lock screen "
                          + "but waiting (UX issue X1)"
                 }
             }
 
-            // **GL-09.** The fallback is an extra door, not a wider one. It
-            // must not appear on a state that either has a working password
-            // field or has never had an app password set at all - a machine
-            // with no app secret must not be unlockable by anyone who can
-            // wake its screen.
-            for state in settled {
+            // **GL-09.** The fallback is an extra door, not a wider one.
+            // `.locked` has a working password field, so the button is there
+            // (design A) but disabled; the two setup states have never had an
+            // app password, so there is no form and no button at all.
+            controller.apply(.locked(subtitle: "Grand Line is locked."))
+            guard !button.isHiddenOrHasHiddenAncestor, !button.isEnabled else {
+                return "an ordinary lock does not show the Touch ID button disabled (hidden: "
+                     + "\(button.isHiddenOrHasHiddenAncestor), enabled: \(button.isEnabled))"
+            }
+            for state in [LockScreenController.ContentState.noPasswordConfigured, .avUnavailable] {
                 controller.apply(state)
-                guard controller.debugLocalAuthStack.isHidden else {
-                    return "the local fallback is offered on a settled state, which would let a Mac "
+                guard button.isHiddenOrHasHiddenAncestor else {
+                    return "the local fallback is shown on a setup state, which would let a Mac "
                          + "with no app password configured be unlocked anyway (GL-09)"
                 }
             }
@@ -1358,31 +1371,54 @@ enum ReviewUIUXSelfTest {
             var unlocked = 0
             controller.onUnlockAnimationFinished = { unlocked += 1 }
             controller.apply(.transientFailure)
-            answer = false
-            controller.debugLocalAuthButton.performClick(nil)
+            answer = .failed
+            button.performClick(nil)
             guard challenges == 1 else {
                 return "pressing the fallback ran \(challenges) challenges, not one - the button is "
                      + "not wired to the real handler"
             }
-            // GL-25: a cancel aborts. It must not unlock, and it must not
+            // GL-25: a refusal aborts. It must not unlock, and it must not
             // read as a wrong password the captain never typed.
             guard unlocked == 0 else {
                 return "a refused challenge unlocked the app anyway (GL-09/GL-25)"
             }
             guard !controller.debugErrorLabel.isHidden,
                   !controller.debugErrorLabel.stringValue.localizedCaseInsensitiveContains("password didn't match") else {
-                return "a cancelled challenge reports \(controller.debugErrorLabel.stringValue.debugDescription), "
+                return "a refused challenge reports \(controller.debugErrorLabel.stringValue.debugDescription), "
                      + "which is either silent or blames a password nobody typed"
             }
-            guard controller.debugLocalAuthButton.isEnabled else {
-                return "a cancelled challenge left the fallback button dead, so the captain is stuck "
+            guard button.isEnabled else {
+                return "a refused challenge left the fallback button dead, so the captain is stuck "
                      + "again"
             }
 
+            // In progress: one prompt at a time, and no password racing it.
+            var pending: ((LockScreenController.LocalAuthOutcome) -> Void)?
+            controller.onLocalAuthAttempt = { completion in
+                challenges += 1
+                pending = completion
+            }
+            button.performClick(nil)
+            guard challenges == 2, !button.isEnabled, !controller.debugPasswordField.isEnabled,
+                  controller.debugTouchIDNote.stringValue.contains("Waiting for Touch ID") else {
+                return "an open prompt does not hold the button and the field, or does not say it is waiting"
+            }
+            button.performClick(nil)
+            guard challenges == 2 else { return "a second press started a second prompt while one was open" }
+            pending?(.cancelled)
+            guard unlocked == 0, button.isEnabled, controller.debugPasswordField.isEnabled,
+                  controller.debugErrorLabel.stringValue.contains("was cancelled") else {
+                return "a cancelled prompt unlocked, or did not hand the screen back with a plain word"
+            }
+
             // And the door actually opens.
-            answer = true
-            controller.debugLocalAuthButton.performClick(nil)
-            guard challenges == 2 else { return "the second press ran no challenge" }
+            controller.onLocalAuthAttempt = { completion in
+                challenges += 1
+                completion(answer)
+            }
+            answer = .confirmed
+            button.performClick(nil)
+            guard challenges == 3 else { return "the last press ran no challenge" }
             // The success animation is what fires `onUnlockAnimationFinished`
             // (never the callback directly - `submitTapped`'s own rule), and
             // Reduce Motion is on in CI, so give the real `CATransaction`

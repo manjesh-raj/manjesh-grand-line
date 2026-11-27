@@ -125,13 +125,26 @@ final class LockPresenter {
         // Off the main thread, because `evaluatePolicy` blocks behind a
         // system panel (GL-25, and `LAContextFactory.evaluate`'s own
         // `dispatchPrecondition` enforces it).
-        lockScreen.localAuthAvailable = { LAContextFactory.deviceOwnerAuthAvailable }
+        //
+        // Design A only changes how the result reads: a cancel and a failure
+        // are told apart, and both leave the app locked. The policy, the
+        // reason string and the thread are unchanged.
+        lockScreen.localAuthKind = {
+            guard LAContextFactory.deviceOwnerAuthAvailable else { return .unavailable }
+            return CredentialVaultKeyStore.biometryAvailable ? .touchID : .macPassword
+        }
         lockScreen.onLocalAuthAttempt = { completion in
             let context = LAContextFactory.make(
                 reason: "unlock Grand Line while Automic Vault is unreachable")
             DispatchQueue.global(qos: .userInitiated).async {
-                let allowed = LAContextFactory.evaluate(context, policy: .deviceOwnerAuthentication)
-                DispatchQueue.main.async { completion(allowed) }
+                let outcome = LAContextFactory.evaluateOutcome(context, policy: .deviceOwnerAuthentication)
+                DispatchQueue.main.async {
+                    switch outcome {
+                    case .confirmed: completion(.confirmed)
+                    case .cancelled: completion(.cancelled)
+                    case .failed: completion(.failed)
+                    }
+                }
             }
         }
         // R2-UX-01: the two setup states used to end in "then relaunch".
@@ -180,16 +193,25 @@ final class LockPresenter {
             default: availability = alreadyKnown ? nil : check()
             }
             DispatchQueue.main.async {
-                completion(false)
-                guard let self, let availability else { return }
-                if availability == .configured {
-                    // The password exists, so this one was simply wrong. The
-                    // form and its "didn't match" line stay as they are.
-                    self.passwordKnownConfigured = true
-                    if self.readPreference() == nil { self.writePreference(true) }
+                guard let self else { completion(false); return }
+                if let availability, availability != .configured {
+                    completion(false)
+                    self.applyPasswordAvailability(availability, reason: self.shownReason)
                     return
                 }
-                self.applyPasswordAvailability(availability, reason: self.shownReason)
+                if availability == .configured {
+                    // The password exists, so this one was simply wrong.
+                    self.passwordKnownConfigured = true
+                    if self.readPreference() == nil { self.writePreference(true) }
+                }
+                // Automic Vault answered this time. If the screen was saying
+                // it could not, it goes back to the ordinary form first, so
+                // the "didn't match" line lands on that form and the Touch ID
+                // button goes back to disabled (design A).
+                if self.lockScreen.isShowingVaultFailure {
+                    self.lockScreen.apply(.locked(subtitle: Self.lockedSubtitle(for: self.shownReason)))
+                }
+                completion(false)
             }
         }
     }

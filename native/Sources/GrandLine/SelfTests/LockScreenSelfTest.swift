@@ -40,6 +40,10 @@
 //      field is empty; Reduce Motion and every other state start lit; and
 //      the key monitor goes with the overlay. Typing-first is the one rule
 //      the lamp may never break, so it is asserted on the real responder.
+//   8. **Design A's Touch ID button** (`fm/grandline-lockscreen-touchid-fallback`):
+//      a circle level with the pill in four themes at two sizes, disabled with
+//      its reason on an ordinary lock, working while Automic Vault cannot
+//      check the password, legible, and reached by Tab only when it works.
 //   6. **Source guards.** No colour literals crept back in, the shared
 //      components are genuinely used, and the auth flow is untouched - the last
 //      one because this is the one screen where a well-meant "improvement"
@@ -69,7 +73,8 @@ enum LockScreenSelfTest {
                       checkLoopingAnimationsStopOnUnlock,
                       checkLoopsHoldStillWhileNobodyLooks,
                       checkTheLampGate,
-                      checkTheTowerTakesTheKeyboard] {
+                      checkTheTowerTakesTheKeyboard,
+                      checkTheTouchIDControl] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -177,8 +182,13 @@ enum LockScreenSelfTest {
                         fail(&ok, "\(tag): R2-SEC-06: the well shows \(controller.debugSetupCommand), not the install command")
                     }
                 case .serviceNotRunning, .transientFailure:
-                    if form || av || !waiting || setupWell {
-                        fail(&ok, "\(tag): expected only the waiting spinner - offering a password form here is the bug")
+                    // Design A (`fm/grandline-lockscreen-touchid-fallback`):
+                    // the pill stays, because typing again is the retry, and
+                    // the Touch ID button beside it is the way past. A setup
+                    // well or the install message here would be the
+                    // `fm/grandline-vault-wake-recheck-fix` collapse again.
+                    if !form || av || waiting || setupWell || controller.debugTouchIDButton.isHiddenOrHasHiddenAncestor {
+                        fail(&ok, "\(tag): expected the password pill and the Touch ID button (form=\(form) av=\(av) waiting=\(waiting) well=\(setupWell))")
                     }
                 }
 
@@ -198,11 +208,18 @@ enum LockScreenSelfTest {
                 if card.frame.width <= 0 || card.frame.height <= 0 {
                     fail(&ok, "\(tag): card has no size (\(card.frame))")
                 }
-                if case .locked = state {
+                let openSea: Bool
+                switch state {
+                case .locked, .serviceNotRunning, .transientFailure: openSea = true
+                case .noPasswordConfigured, .avUnavailable: openSea = false
+                }
+                if openSea {
                     // C-4 Open sea (the captain's pick): the locked gate floats
                     // on the scene with no card surface, a round avatar in place
                     // of the mark tile, and the arrow inside the pill in place
-                    // of the Unlock button.
+                    // of the Unlock button. Design A brings the two
+                    // Vault-failing states onto the same form, because the
+                    // Touch ID button sits beside its pill.
                     if !controller.debugOpenStyle {
                         fail(&ok, "\(tag): the locked state is not drawn in the C-4 open style")
                     }
@@ -219,9 +236,9 @@ enum LockScreenSelfTest {
                         fail(&ok, "\(tag): expected the in-field arrow, not the Unlock button")
                     }
                 } else {
-                    // Every other state keeps the card exactly as it was.
+                    // The two setup states keep the card exactly as it was.
                     if controller.debugOpenStyle {
-                        fail(&ok, "\(tag): only the locked state may use the open style")
+                        fail(&ok, "\(tag): a setup state must keep its card, not the open style")
                     }
                     if (card.layer?.borderWidth ?? 0) <= 0 {
                         fail(&ok, "\(tag): card has no border - applyCardSurface not applied?")
@@ -708,6 +725,113 @@ enum LockScreenSelfTest {
         if ok { print("  Tab, ring, Space, Return and the label all hold, and a click leaves the field focused") }
     }
 
+    // MARK: 8 - design A's Touch ID button
+
+    /// Design A (`fm/grandline-lockscreen-touchid-fallback`, the captain's
+    /// pick, option 3): a round Touch ID button beside the pill on every
+    /// lock, disabled with its reason on an ordinary day and working only
+    /// while Automic Vault cannot check the password. What a model check
+    /// cannot see is asserted here, on a real laid-out window: the button is
+    /// a circle level with the pill and inside the window at the narrow
+    /// floor, its reason reads on the sky, the keyboard reaches it only when
+    /// it works, and VoiceOver gets the action and the reason.
+    private static func checkTheTouchIDControl(_ ok: inout Bool) {
+        print("LockScreenSelfTest: design A's Touch ID button - shape, reason, contrast, keyboard and VoiceOver")
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+        for themeID in ["lavender", "powder", "daylight", "dusk"] {
+            guard let register = HelmTheme.appTheme(id: themeID) ?? theme(themeID) else {
+                fail(&ok, "theme \(themeID) not found"); continue
+            }
+            ThemeManager.shared.setTheme(register)
+            for size in [NSSize(width: 1220, height: 760), NSSize(width: 960, height: 620)] {
+                let controller = LockScreenController()
+                let window = mount(controller, size: size)
+                defer { window.contentView = nil; controller.stopAnimations() }
+                controller.localAuthKind = { .touchID }
+                controller.onLocalAuthAttempt = { _ in }
+                let button = controller.debugTouchIDButton
+                let note = controller.debugTouchIDNote
+                let tolerance = 1.0 / max(window.backingScaleFactor, 1)
+                for (name, state) in [("locked", LockScreenController.ContentState.locked(subtitle: "Grand Line is locked.")),
+                                      ("serviceNotRunning", .serviceNotRunning), ("transientFailure", .transientFailure)] {
+                    controller.apply(state)
+                    controller.debugKeyDown()
+                    controller.view.layoutSubtreeIfNeeded()
+                    let tag = "\(themeID)/\(Int(size.width))/\(name)"
+                    let works = name != "locked"
+
+                    // Shape and place: a circle, the pill's height, level
+                    // with it, to its right, and inside the window.
+                    let pill = controller.debugPasswordRow.arrangedSubviews[0]
+                    let b = button.convert(button.bounds, to: controller.view)
+                    let p = pill.convert(pill.bounds, to: controller.view)
+                    if button.isHiddenOrHasHiddenAncestor || b.width <= 0 {
+                        fail(&ok, "\(tag): the Touch ID button is not on screen")
+                        continue
+                    }
+                    if abs(b.width - b.height) > tolerance || abs(b.height - p.height) > tolerance {
+                        fail(&ok, "\(tag): the button is \(fmt(b.width))x\(fmt(b.height)) beside a \(fmt(p.height))pt pill - not a circle the pill's height")
+                    }
+                    if abs(b.midY - p.midY) > tolerance || b.minX < p.maxX {
+                        fail(&ok, "\(tag): the button is not level with the pill and to its right (button \(b), pill \(p))")
+                    }
+                    if !controller.view.bounds.contains(b) {
+                        fail(&ok, "\(tag): the button \(b) falls outside the \(controller.view.bounds.size) window")
+                    }
+
+                    // Enabled only where it works, and the reason on screen
+                    // and in VoiceOver either way.
+                    if button.isEnabled != works {
+                        fail(&ok, "\(tag): the button is \(button.isEnabled ? "enabled" : "disabled"), want \(works ? "enabled" : "disabled")")
+                    }
+                    if note.isHiddenOrHasHiddenAncestor || note.stringValue.isEmpty
+                        || button.accessibilityHelp() != note.stringValue
+                        || button.accessibilityLabel() != "Unlock with Touch ID" {
+                        fail(&ok, "\(tag): VoiceOver does not get the action and the on-screen reason (label \(button.accessibilityLabel() ?? "nil"), help \(button.accessibilityHelp() ?? "nil"))")
+                    }
+                    if !works && !note.stringValue.contains("when Automic Vault cannot check your password") {
+                        fail(&ok, "\(tag): the disabled button does not say when it works (\"\(note.stringValue)\")")
+                    }
+
+                    // The reason line reads on the sky it floats on, in the
+                    // tone each state gives it.
+                    let sky = (controller.debugSkyLayer.colors as? [CGColor] ?? []).prefix(2).compactMap { NSColor(cgColor: $0) }
+                    let ratio = sky.map { HelmContrast.ratio(note.textColor ?? .black, $0) }.min() ?? 0
+                    if ratio < 4.5 {
+                        fail(&ok, "\(tag): the reason line is \(fmt(ratio)):1 on the sky - below the 4.5 text floor")
+                    }
+                    // A working button's glyph on its own fill: WCAG 1.4.11.
+                    if works, let glyph = button.debugGlyphColor, let fill = button.debugHoverFill {
+                        let r = HelmContrast.ratio(glyph, fill)
+                        if r < 3 { fail(&ok, "\(tag): the Touch ID glyph is \(fmt(r)):1 on its fill - below 3:1") }
+                    }
+
+                    // The keyboard: a real exterior ring, and Tab from the
+                    // field reaches the button exactly when it works.
+                    if button.focusRingType != .exterior {
+                        fail(&ok, "\(tag): the button draws no exterior focus ring (GL-16)")
+                    }
+                    // The window's own key view loop, recalculated the way
+                    // the main window does it (`SceneGateKeyboardChecks`).
+                    window.autorecalculatesKeyViewLoop = true
+                    window.recalculateKeyViewLoop()
+                    var view: NSView? = controller.debugPasswordField
+                    var reached = false
+                    for _ in 0..<64 {
+                        view = view?.nextValidKeyView
+                        if view === button { reached = true; break }
+                        if view == nil || view === controller.debugPasswordField { break }
+                    }
+                    if reached != works {
+                        fail(&ok, "\(tag): Tab \(reached ? "reaches" : "never reaches") the button while it is \(works ? "enabled" : "disabled")")
+                    }
+                }
+            }
+        }
+        if ok { print("  a level circle with its reason, legible, keyboard-reachable only when it works, in four themes at two sizes") }
+    }
+
     // MARK: 7 - the lamp gate (L-2)
 
     private static func checkTheLampGate(_ ok: inout Bool) {
@@ -874,6 +998,14 @@ enum LockScreenSelfTest {
             if inCode(lock) || inCode(shell) {
                 fail(&ok, "R2-SEC-06: \(banned) is back on the lock screen - it must show the install command, never run it")
             }
+        }
+        // The Touch ID door's policy is X1's and only X1's: the device
+        // owner (Touch ID or the Mac's login password), nothing that skips
+        // the prompt. A policy change here is a lock-policy change, and no
+        // behavioural check can see it, because a suite never raises the
+        // real prompt.
+        if !shell.contains("LAContextFactory.evaluateOutcome(context, policy: .deviceOwnerAuthentication)") {
+            fail(&ok, "LockPresenter's Touch ID fallback no longer evaluates .deviceOwnerAuthentication - that is a lock-policy change")
         }
         // And the shell must still be the one doing it, off the main thread.
         if !shell.contains("VaultSource.verifyAppPassword") {

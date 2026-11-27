@@ -90,9 +90,10 @@
 // sea fog, and the Going Merry riding the swell.
 //
 // - **The card is not there until the lamp is lit.** `.locked` starts dark;
-//   every other state starts lit, because those cards carry setup commands,
-//   Check again and the Touch ID fallback, and none of that may hide behind a
-//   lamp. Reduce Motion and VoiceOver start lit too.
+//   every other state starts lit, because they carry setup commands, Check
+//   again and the working Touch ID button, and none of that may hide behind a
+//   lamp (nor may the lamp be put out over it). Reduce Motion and VoiceOver
+//   start lit too.
 // - **Typing always works.** The field is first responder from the first
 //   frame, exactly as `focusPasswordField()` has always made it; the card is
 //   hidden by alpha (never `isHidden`, which would move first responder off
@@ -100,9 +101,10 @@
 //   lamp on the first key and hands the event on untouched.
 // - **Tap the lighthouse** to light it, and tap it again to put it out while
 //   the field is empty. Return and the in-field arrow submit as Unlock did.
-// - C-4 Open sea applies to `.locked` only: no card surface, a round avatar,
-//   and the password as a pill on the scene with an arrow inside it. The
-//   setup states keep the card exactly as before.
+// - C-4 Open sea applies to `.locked` and, since design A, to the two
+//   Vault-failing states: no card surface, a round avatar, and the password
+//   as a pill on the scene with an arrow inside it and the Touch ID button
+//   beside it. The two setup states keep the card exactly as before.
 // - The success flourish is still one `CATransaction` whose completion fires
 //   `onUnlockAnimationFinished`; day breaking and the beams fading ride in it.
 import AppKit
@@ -174,14 +176,21 @@ final class LockScreenController: NSViewController {
     /// A separate callback from `onAttempt` rather than a magic password,
     /// because they are different authentications with different failure
     /// text - and because a cancel here must read as "you cancelled", not
-    /// as "that password didn't match".
-    var onLocalAuthAttempt: ((@escaping (Bool) -> Void) -> Void)?
+    /// as "that password didn't match". Only `.confirmed` unlocks.
+    var onLocalAuthAttempt: ((@escaping (LocalAuthOutcome) -> Void) -> Void)?
 
-    /// Whether this Mac can authenticate its owner at all. Injected rather
-    /// than read here so a suite can drive both branches without a Mac that
-    /// has (or lacks) Touch ID, and so this controller keeps knowing nothing
-    /// about `LocalAuthentication`.
-    var localAuthAvailable: () -> Bool = { false }
+    /// How one challenge ended - `LAContextFactory.Outcome`'s three cases,
+    /// restated so this controller keeps knowing nothing about
+    /// `LocalAuthentication`.
+    enum LocalAuthOutcome: Equatable { case confirmed, cancelled, failed }
+
+    /// What this Mac can confirm its owner with: Touch ID, only the Mac's
+    /// own login password (no sensor, lid closed, or nothing enrolled), or
+    /// nothing at all. Injected rather than read here so a suite can drive
+    /// every branch without such a Mac, and read on every `apply`, because a
+    /// closed lid changes it.
+    enum LocalAuthKind: Equatable { case touchID, macPassword, unavailable }
+    var localAuthKind: () -> LocalAuthKind = { .unavailable }
 
     /// R2-UX-01: "Check again" on the two setup states, which used to end in
     /// "then relaunch". The caller runs the same availability check a new
@@ -204,6 +213,12 @@ final class LockScreenController: NSViewController {
     static let cardWidth: CGFloat = 420
     /// §6.10's ribbon weight, shared with `HelmFormSheet`.
     private static let ribbonHeight: CGFloat = 6
+    /// C-4's password pill on the scene.
+    private static let openPillWidth: CGFloat = 250
+    /// Design A's round Touch ID button: the pill's own height, so the two
+    /// read as one row, and the gap the Secrets chest's row uses.
+    private static let touchIDSide: CGFloat = HelmField.controlHeight
+    private static let touchIDGap: CGFloat = 10
     /// Grown alongside `cardWidth` so the wider card doesn't read as flat -
     /// `HelmMetrics.s5`, one step up the spacing scale from the original 20pt.
     private static let cardPadding: CGFloat = HelmMetrics.s5
@@ -287,7 +302,8 @@ final class LockScreenController: NSViewController {
     private let arrowButton = HelmIconButton(symbol: "arrow.right", label: "Unlock")
     private var formFullWidth: NSLayoutConstraint?
     private var formOpenWidth: NSLayoutConstraint?
-    /// Whether the gate draws as C-4 Open sea (no card) - `.locked` only.
+    /// Whether the gate draws as C-4 Open sea (no card) - `.locked` and the
+    /// two Vault-failing states.
     private var openStyle = false
 
     // MARK: Content
@@ -346,15 +362,31 @@ final class LockScreenController: NSViewController {
     private let waitingStack = NSStackView()
     private let waitingLabel = NSTextField(labelWithString: "")
 
-    /// X1: the way out of the retry loop. Shown only in the two states that
-    /// are waiting on Automic Vault, and only when this Mac can actually
-    /// answer the challenge.
-    private let localAuthStack = NSStackView()
-    private let localAuthButton = HelmButton(title: "Unlock with Touch ID or your Mac password",
-                                             variant: .secondary)
-    private let localAuthNote = NSTextField(wrappingLabelWithString:
-        "Automic Vault holds this app's own password. While it is unreachable, "
-        + "macOS can vouch for you instead.")
+    /// X1, as design A (`fm/grandline-lockscreen-touchid-fallback`, the
+    /// captain's pick): a round Touch ID button beside the password pill,
+    /// the shape the Secrets chest's own Touch ID button already has.
+    ///
+    /// **Always visible, enabled only while Automic Vault cannot check the
+    /// password** (`.serviceNotRunning`, `.transientFailure`) - the captain's
+    /// option 3, which keeps the lock policy exactly as X1 set it. On an
+    /// ordinary day it is shown disabled, and `touchIDNote` says why.
+    private let touchIDButton = HelmIconButton(symbol: "touchid", label: "Unlock with Touch ID")
+    /// The pill and the Touch ID button, side by side.
+    private let passwordRow = NSStackView()
+    /// The line under the pill that says what the Touch ID button does in
+    /// this state, or why it is disabled. Also the button's accessibility
+    /// help, so VoiceOver explains a disabled button too.
+    private let touchIDNote = NSTextField(wrappingLabelWithString: "")
+    /// What the note means, which decides its colour.
+    private enum NoteTone { case info, warn }
+    private var touchIDNoteTone = NoteTone.info
+    /// Whether the screen is in one of the two states where Automic Vault
+    /// cannot check the password - the only states the button works in.
+    private(set) var isShowingVaultFailure = false
+    /// What `localAuthKind` answered at the last `apply`.
+    private var shownLocalAuthKind = LocalAuthKind.unavailable
+    /// A challenge is on screen; nothing may start a second one.
+    private var localAuthInFlight = false
 
     // §6.10's footer: a hairline, then a caption line.
     private let footerDivider = NSView()
@@ -593,7 +625,22 @@ final class LockScreenController: NSViewController {
             arrowButton.trailingAnchor.constraint(equalTo: passwordWell.trailingAnchor, constant: -4),
             arrowButton.centerYAnchor.constraint(equalTo: passwordWell.centerYAnchor),
         ])
-        formStack.addArrangedSubview(passwordWell)
+        // Design A: the pill and the Touch ID button share one row. Only the
+        // pill flexes (gotcha (10)); the button is a fixed circle.
+        touchIDButton.target = self
+        touchIDButton.action = #selector(localAuthTapped)
+        touchIDButton.joinsKeyViewLoop = true
+        touchIDButton.widthAnchor.constraint(equalToConstant: Self.touchIDSide).isActive = true
+        touchIDButton.heightAnchor.constraint(equalToConstant: Self.touchIDSide).isActive = true
+        passwordRow.orientation = .horizontal
+        passwordRow.alignment = .centerY
+        passwordRow.distribution = .fill
+        passwordRow.spacing = Self.touchIDGap
+        passwordRow.translatesAutoresizingMaskIntoConstraints = false
+        passwordRow.addArrangedSubview(passwordWell)
+        passwordRow.addArrangedSubview(touchIDButton)
+        passwordWell.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        formStack.addArrangedSubview(passwordRow)
         formStack.addArrangedSubview(unlockButton)
 
         errorLabel.font = HelmType.caption()
@@ -664,21 +711,11 @@ final class LockScreenController: NSViewController {
         waitingStack.addArrangedSubview(waitingLabel)
         waitingStack.isHidden = true
 
-        // X1: the escape from the retry loop.
-        localAuthButton.target = self
-        localAuthButton.action = #selector(localAuthTapped)
-        localAuthButton.translatesAutoresizingMaskIntoConstraints = false
-        localAuthNote.font = HelmType.caption()
-        localAuthNote.alignment = .center
-        localAuthNote.preferredMaxLayoutWidth = 320
-        localAuthNote.translatesAutoresizingMaskIntoConstraints = false
-        localAuthStack.orientation = .vertical
-        localAuthStack.alignment = .centerX
-        localAuthStack.spacing = HelmMetrics.s2
-        localAuthStack.translatesAutoresizingMaskIntoConstraints = false
-        localAuthStack.addArrangedSubview(localAuthNote)
-        localAuthStack.addArrangedSubview(localAuthButton)
-        localAuthStack.isHidden = true
+        touchIDNote.font = HelmType.caption()
+        touchIDNote.alignment = .center
+        touchIDNote.maximumNumberOfLines = 3
+        touchIDNote.translatesAutoresizingMaskIntoConstraints = false
+        touchIDNote.isHidden = true
 
         footerDivider.wantsLayer = true
         footerDivider.translatesAutoresizingMaskIntoConstraints = false
@@ -703,8 +740,8 @@ final class LockScreenController: NSViewController {
 
         avatar.isHidden = true
         let body = NSStackView(views: [
-            markTile, avatar, titleLabel, subtitleLabel, formStack, errorLabel,
-            messageLabel, setupCommandStack, avUnavailableStack, checkAgainButton, waitingStack, localAuthStack,
+            markTile, avatar, titleLabel, subtitleLabel, formStack, errorLabel, touchIDNote,
+            messageLabel, setupCommandStack, avUnavailableStack, checkAgainButton, waitingStack,
             footerStack,
         ])
         body.orientation = .vertical
@@ -712,6 +749,8 @@ final class LockScreenController: NSViewController {
         body.spacing = HelmMetrics.s4
         body.setCustomSpacing(HelmMetrics.s2, after: titleLabel)
         body.setCustomSpacing(HelmMetrics.s5, after: subtitleLabel)
+        body.setCustomSpacing(HelmMetrics.s3, after: formStack)
+        body.setCustomSpacing(HelmMetrics.s2, after: errorLabel)
         body.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(body)
 
@@ -737,9 +776,10 @@ final class LockScreenController: NSViewController {
             // long message grows the card downward rather than sideways.
             subtitleLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             errorLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
+            touchIDNote.widthAnchor.constraint(equalTo: body.widthAnchor),
             messageLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             avMessageLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
-            passwordWell.widthAnchor.constraint(equalTo: formStack.widthAnchor),
+            passwordRow.widthAnchor.constraint(equalTo: formStack.widthAnchor),
             unlockButton.widthAnchor.constraint(equalTo: formStack.widthAnchor),
             setupCommandStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             avUnavailableStack.widthAnchor.constraint(equalTo: body.widthAnchor),
@@ -747,9 +787,11 @@ final class LockScreenController: NSViewController {
             footerStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             footerDivider.widthAnchor.constraint(equalTo: footerStack.widthAnchor),
         ])
-        // The form fills the card, except as C-4's 250pt pill on the scene.
+        // The form fills the card, except as C-4's 250pt pill on the scene -
+        // with design A's Touch ID button beside it.
         formFullWidth = formStack.widthAnchor.constraint(equalTo: body.widthAnchor)
-        formOpenWidth = formStack.widthAnchor.constraint(equalToConstant: 250)
+        formOpenWidth = formStack.widthAnchor.constraint(
+            equalToConstant: Self.openPillWidth + Self.touchIDGap + Self.touchIDSide)
         formFullWidth?.isActive = true
     }
 
@@ -959,7 +1001,6 @@ final class LockScreenController: NSViewController {
         avMessageLabel.textColor = muted
         waitingLabel.textColor = muted
         waitingGlyph.contentTintColor = muted
-        localAuthNote.textColor = muted
         footerLeftLabel.textColor = muted
         footerRightLabel.textColor = muted
         setupCommandLabel.textColor = HelmField.ink(theme)
@@ -986,8 +1027,9 @@ final class LockScreenController: NSViewController {
         applyLayerGeometry()
     }
 
-    /// C-4 Open sea for `.locked`: no card surface, a round avatar, the
-    /// password as a pill on the scene, and light type that reads on the dusk.
+    /// C-4 Open sea for `.locked` and the two Vault-failing states: no card
+    /// surface, a round avatar, the password as a pill on the scene, and
+    /// light type that reads on the dusk.
     /// Every other state keeps the card exactly as `applyCardSurface` drew it.
     private func applyOpenStyle(_ theme: HelmTheme, scene: SceneColors) {
         let open = openStyle
@@ -1025,6 +1067,43 @@ final class LockScreenController: NSViewController {
                                                     over: scene.skyMid)
         avatar.configure(theme: theme, hue: currentHue)
         arrowButton.style = .circle(side: 26, fill: light.withAlphaComponent(0.92), glyph: scene.skyTop, border: nil)
+        applyTouchIDStyle(theme, scene: scene)
+    }
+
+    /// Design A's button and note, from the scene's light ink - the same
+    /// source as the pill and the arrow. Solid when it works (the arrow's own
+    /// recipe), a faint outline when it is disabled or a prompt is open.
+    private func applyTouchIDStyle(_ theme: HelmTheme, scene: SceneColors) {
+        let light = HelmField.sceneLight(theme)
+        if touchIDButton.isEnabled {
+            touchIDButton.style = .circle(side: Self.touchIDSide, fill: light.withAlphaComponent(0.92),
+                                          glyph: scene.skyTop, border: nil)
+        } else {
+            touchIDButton.style = .circle(side: Self.touchIDSide, fill: light.withAlphaComponent(0.10),
+                                          glyph: light.withAlphaComponent(0.55), border: light.withAlphaComponent(0.35))
+        }
+        switch touchIDNoteTone {
+        case .info:
+            touchIDNote.textColor = light.withAlphaComponent(0.84)
+        case .warn:
+            // The theme's amber lifted toward the scene's light, then as far
+            // as the text floor needs against the sky - the error line's own
+            // recipe, in the warning hue.
+            touchIDNote.textColor = HelmContrast.legible(Self.toward(HelmTheme.nsColor(theme.ansiHex[3]), light, 0.45),
+                                                         over: scene.skyMid)
+        }
+        touchIDNote.shadow = titleLabel.shadow
+    }
+
+    /// The error line's colour: red for a refused password or challenge, the
+    /// scene's light for a cancel, which is the person's own choice.
+    private func setErrorTone(cancelled: Bool) {
+        let theme = ThemeManager.shared.theme
+        guard openStyle, let scene = currentScene else { return }
+        let light = HelmField.sceneLight(theme)
+        errorLabel.textColor = cancelled
+            ? light.withAlphaComponent(0.84)
+            : HelmContrast.legible(Self.toward(HelmTheme.nsColor(theme.ansiHex[1]), light, 0.45), over: scene.skyMid)
     }
 
     private func applyRibbon(theme: HelmTheme) {
@@ -1327,7 +1406,19 @@ final class LockScreenController: NSViewController {
     func apply(_ state: ContentState) {
         currentHue = state.hue
         currentSymbol = state.symbol
-        if case .locked = state { openStyle = true } else { openStyle = false }
+        switch state {
+        case .locked, .serviceNotRunning, .transientFailure: openStyle = true
+        case .noPasswordConfigured, .avUnavailable: openStyle = false
+        }
+        // Back from a Vault-failing state to the form, the lamp is already
+        // lit and the captain is mid-retry: it stays lit.
+        let stayLit = isShowingVaultFailure && isLit
+        switch state {
+        case .serviceNotRunning, .transientFailure: isShowingVaultFailure = true
+        default: isShowingVaultFailure = false
+        }
+        shownLocalAuthKind = localAuthKind()
+        localAuthInFlight = false
         resetFlourish()
 
         // Defaults: every state below turns on only what it needs.
@@ -1338,8 +1429,7 @@ final class LockScreenController: NSViewController {
         avUnavailableStack.isHidden = true
         checkAgainButton.isHidden = true
         waitingStack.isHidden = true
-        localAuthStack.isHidden = true
-        localAuthButton.isEnabled = true
+        touchIDNote.isHidden = true
         footerLeftLabel.stringValue = ""
         footerRightLabel.stringValue = ""
 
@@ -1347,10 +1437,7 @@ final class LockScreenController: NSViewController {
         case .locked(let subtitle):
             titleLabel.stringValue = Self.greeting()
             subtitleLabel.stringValue = subtitle
-            formStack.isHidden = false
-            passwordField.stringValue = ""
-            passwordField.isEnabled = true
-            unlockButton.isEnabled = true
+            showPasswordForm()
             footerLeftLabel.stringValue = "Automic Vault"
             footerRightLabel.stringValue = "\u{21A9} to unlock"
             // This same controller instance is reused for every lock, so a
@@ -1388,30 +1475,30 @@ final class LockScreenController: NSViewController {
         // and asking it again unprompted can put Automic Vault's approval
         // dialog back on screen. So the spinner stays still and Check again
         // is the way forward.
+        // Design A: both states keep the password pill, because typing the
+        // password again *is* the retry - it asks Automic Vault once more,
+        // which is all Check again did here - and put the working Touch ID
+        // button beside it. Nothing here retries on its own.
         case .serviceNotRunning:
             titleLabel.stringValue = "Waking Automic Vault"
-            subtitleLabel.stringValue = "Its approval service isn't answering yet. This usually clears in a few seconds - then choose Check again."
-            waitingStack.isHidden = false
-            waitingLabel.stringValue = "Waiting for Automic Vault"
-            checkAgainButton.isHidden = onCheckAgain == nil
-            showLocalAuthIfAvailable()
+            subtitleLabel.stringValue = "Its approval service isn't answering yet, so your password can't be checked. This usually clears in a few seconds."
+            showPasswordForm()
 
         case .transientFailure:
             titleLabel.stringValue = "Couldn't reach the vault"
-            subtitleLabel.stringValue = "Automic Vault didn't answer, or the request was denied. Your password is probably fine - choose Check again to ask once more."
-            waitingStack.isHidden = false
-            waitingLabel.stringValue = "Not checked again until you ask"
-            checkAgainButton.isHidden = onCheckAgain == nil
-            showLocalAuthIfAvailable()
+            subtitleLabel.stringValue = "Automic Vault didn't answer, or the request was denied, so your password can't be checked."
+            showPasswordForm()
         }
+        if openStyle { configureTouchID() }
 
         // The footer only earns its divider when it has something to say.
         footerStack.isHidden = footerLeftLabel.stringValue.isEmpty && footerRightLabel.stringValue.isEmpty
         // Re-derive everything the hue drives for the state just applied.
         applyTheme(ThemeManager.shared.theme)
         // L-2: only `.locked` starts dark. The other states carry setup
-        // commands, Check again and the Touch ID fallback, so they are lit.
-        setLit(!openStyle || Self.startsLit)
+        // commands, Check again and the working Touch ID button, so they
+        // are lit - and stay lit (`canDim`).
+        setLit(!openStyle || isShowingVaultFailure || stayLit || Self.startsLit)
     }
 
     /// Focuses the password field - called every time the overlay becomes
@@ -1448,6 +1535,7 @@ final class LockScreenController: NSViewController {
                 self.arrowButton.isEnabled = true
                 self.passwordField.stringValue = ""
                 self.errorLabel.stringValue = "That password didn't match. Try again."
+                self.setErrorTone(cancelled: false)
                 self.errorLabel.isHidden = false
                 self.playUnlockFailureAnimation()
                 if !HelmMotion.isReduced { self.lighthouse.foghorn() }
@@ -1456,53 +1544,110 @@ final class LockScreenController: NSViewController {
         }
     }
 
-    /// **UX issue X1.** The two states above are the retry loop the review
-    /// got stuck in: Automic Vault is unreachable, the password check cannot
-    /// run, and every other surface in the app is behind this screen. The
-    /// backoff's own comment admitted it - "the lock screen has nothing else
-    /// useful to show and the captain cannot get past it any other way".
+    /// The password pill, empty and ready - `.locked` and the two states
+    /// where Automic Vault cannot check it, where typing again is the retry.
+    private func showPasswordForm() {
+        formStack.isHidden = false
+        passwordField.stringValue = ""
+        passwordField.isEnabled = true
+        unlockButton.isEnabled = true
+        arrowButton.isEnabled = true
+    }
+
+    /// **UX issue X1**, as design A. Automic Vault is unreachable, the
+    /// password check cannot run, and every other surface in the app is
+    /// behind this screen. macOS can authenticate the device owner without
+    /// Automic Vault, and that is a real second door rather than a weaker
+    /// one: Touch ID, or failing that the login password the Mac itself is
+    /// protected by.
     ///
-    /// There is something else useful to show. macOS can authenticate the
-    /// device owner without Automic Vault, and that is a real second door
-    /// rather than a weaker one: Touch ID, or failing that the login
-    /// password the Mac itself is protected by.
+    /// **The button is always there and works only in the two
+    /// Vault-failing states** - the captain's option 3, which is X1's rule
+    /// unchanged. `.locked` has a working password field (no dead end to
+    /// escape), so there the button is disabled and the note says when it
+    /// will work. `.noPasswordConfigured`/`.avUnavailable` are setup cards
+    /// without the form, and that is the GL-09 line: a machine that has
+    /// never had an app password set must not be unlockable by anyone who
+    /// can wake its screen.
     ///
-    /// **Shown only when the challenge can actually be answered.** A dead
-    /// button on the one screen nothing else is reachable from is worse than
-    /// no button, so a Mac that cannot authenticate its owner keeps the
-    /// retry loop and this stays hidden.
-    ///
-    /// **Not offered on the other three states**, and that is the GL-09
-    /// line: `.locked` has a working password field (no dead end to escape),
-    /// and `.noPasswordConfigured`/`.avUnavailable` are setup instructions
-    /// rather than failures - a machine that has never had an app password
-    /// set must not be unlockable by anyone who can wake its screen, because
-    /// there is no app-level secret to have known in the first place.
-    private func showLocalAuthIfAvailable() {
-        guard onLocalAuthAttempt != nil, localAuthAvailable() else { return }
-        localAuthStack.isHidden = false
+    /// **A Mac that cannot authenticate its owner at all** gets the button
+    /// disabled in every state, with the reason, rather than a dead button.
+    /// One with no usable Touch ID but a login password gets a key: macOS
+    /// asks for that password, exactly as X1 always allowed.
+    private func configureTouchID() {
+        let kind = shownLocalAuthKind
+        let usable = kind != .unavailable && onLocalAuthAttempt != nil
+        let works = isShowingVaultFailure && usable && !localAuthInFlight
+        let passwordOnly = kind == .macPassword
+        touchIDButton.setSymbol(passwordOnly ? "key.fill" : "touchid")
+        let action = passwordOnly ? "Unlock with your Mac password" : "Unlock with Touch ID"
+        let note: String
+        if localAuthInFlight {
+            note = passwordOnly ? "Waiting for your Mac password\u{2026}" : "Waiting for Touch ID\u{2026}"
+            touchIDNoteTone = .info
+        } else if !usable {
+            note = isShowingVaultFailure
+                ? "This Mac can't confirm it's you with Touch ID or its password. Type your password again in a few seconds."
+                : "Touch ID isn't available on this Mac, so only your Grand Line password unlocks it."
+            touchIDNoteTone = isShowingVaultFailure ? .warn : .info
+        } else if isShowingVaultFailure {
+            note = passwordOnly
+                ? "Use your Mac password instead, or type your Grand Line password again to retry."
+                : "Use Touch ID instead, or type your password again to retry."
+            touchIDNoteTone = .warn
+        } else {
+            note = passwordOnly
+                ? "Your Mac password unlocks Grand Line when Automic Vault cannot check your password."
+                : "Touch ID unlocks Grand Line when Automic Vault cannot check your password."
+            touchIDNoteTone = .info
+        }
+        touchIDButton.isEnabled = works
+        touchIDButton.setLabel(action)
+        // A disabled control gets no tooltip from AppKit's tracking, and
+        // VoiceOver reads a dimmed button by its label alone - so the reason
+        // travels as the help text, and the note under the pill says it on
+        // screen.
+        touchIDButton.setAccessibilityHelp(note)
+        if !works { touchIDButton.toolTip = "\(action) - \(note)" }
+        touchIDNote.stringValue = note
+        touchIDNote.isHidden = false
+        if let scene = currentScene { applyTouchIDStyle(ThemeManager.shared.theme, scene: scene) }
     }
 
     @objc private func localAuthTapped() {
-        guard let onLocalAuthAttempt else { return }
+        guard let onLocalAuthAttempt, isShowingVaultFailure, !localAuthInFlight,
+              shownLocalAuthKind != .unavailable else { return }
+        // In progress: one prompt at a time, and no password attempt racing it.
+        localAuthInFlight = true
         errorLabel.isHidden = true
-        localAuthButton.isEnabled = false
-        onLocalAuthAttempt { [weak self] success in
+        passwordField.isEnabled = false
+        arrowButton.isEnabled = false
+        configureTouchID()
+        let noun = shownLocalAuthKind == .macPassword ? "macOS" : "Touch ID"
+        onLocalAuthAttempt { [weak self] outcome in
             guard let self else { return }
-            if success {
+            self.localAuthInFlight = false
+            if outcome == .confirmed {
                 // The same path a correct password takes - the animation
                 // plays out and `onUnlockAnimationFinished` is what lifts
                 // the overlay, never this callback (see `submitTapped`).
                 self.playUnlockSuccessAnimation()
-            } else {
-                // GL-25's rule in its own words: a cancel aborts, it never
-                // falls through to something weaker. It also must not read
-                // as a wrong password - the captain typed nothing.
-                self.localAuthButton.isEnabled = true
-                self.errorLabel.stringValue = "macOS didn't confirm it was you. Grand Line is still locked."
-                self.errorLabel.isHidden = false
-                self.playUnlockFailureAnimation()
+                return
             }
+            // GL-25's rule in its own words: a cancel aborts, it never falls
+            // through to something weaker, and nothing here unlocks. It also
+            // must not read as a wrong password - the captain typed nothing.
+            self.passwordField.isEnabled = true
+            self.arrowButton.isEnabled = true
+            self.configureTouchID()
+            let cancelled = outcome == .cancelled
+            self.errorLabel.stringValue = cancelled
+                ? "\(noun == "macOS" ? "The password prompt" : "Touch ID") was cancelled. Grand Line is still locked."
+                : "\(noun) couldn't confirm it's you. Grand Line is still locked."
+            self.setErrorTone(cancelled: cancelled)
+            self.errorLabel.isHidden = false
+            if !cancelled { self.playUnlockFailureAnimation() }
+            self.view.window?.makeFirstResponder(self.passwordField)
         }
     }
 
@@ -1639,7 +1784,8 @@ final class LockScreenController: NSViewController {
     /// "Tap again to dim" never throws away a half-typed password or
     /// interrupts a check.
     private var canDim: Bool {
-        isLit && openStyle && passwordField.stringValue.isEmpty && passwordField.isEnabled && !HelmMotion.isReduced
+        isLit && openStyle && !isShowingVaultFailure && passwordField.stringValue.isEmpty && passwordField.isEnabled
+            && !HelmMotion.isReduced
     }
 
     /// The lit or dark scene at once, with no animation.
@@ -1789,8 +1935,10 @@ extension LockScreenController {
     var debugWaitingStack: NSStackView { waitingStack }
     /// X1: the local fallback's own chrome and button, so a suite can assert
     /// which states offer it and drive the real control.
-    var debugLocalAuthStack: NSStackView { localAuthStack }
-    var debugLocalAuthButton: HelmButton { localAuthButton }
+    /// Design A's Touch ID button and the line that explains it.
+    var debugTouchIDButton: HelmIconButton { touchIDButton }
+    var debugTouchIDNote: NSTextField { touchIDNote }
+    var debugPasswordRow: NSStackView { passwordRow }
     var debugFooterStack: NSStackView { footerStack }
     var debugBoat: NSImageView { boatImageView }
     var debugStarLayers: [CALayer] { starLayers }

@@ -134,3 +134,36 @@ Only `.matched` unlocks, from either the lock screen or compact mode.
   Collapsing the classifier to matched-or-refused failed the second.
 - Off-screen renders of the relock in lavender and powder, at 1220x760 and 860x620, with and without device-owner authentication available.
 - **Not verified:** a real `av inject` against a stopped or suspended helper (a worker never runs `av`), so the exact wording `av inject` prints there is inferred from the binary's strings.
+
+### Design A: the Touch ID button beside the pill
+
+The captain picked design A from the scout's board (`grandline-touchid-lockscreen-designs-scout`), with option 3 for the policy: no change.
+
+- **A round Touch ID button sits beside the password pill on every lock.**
+  It is `HelmIconButton`'s `.circle`, the same control the Secrets chest's own Touch ID button uses, at the pill's height.
+- **It works only while Automic Vault cannot check the password** (`.serviceNotRunning`, `.transientFailure`).
+  On an ordinary lock it is disabled, and the line under the pill says "Touch ID unlocks Grand Line when Automic Vault cannot check your password."
+  That line is also the button's accessibility help, so VoiceOver explains a dimmed button too.
+- **The two Vault-failing states moved from the Daylight Harbour card onto the open-sea form**, because the button sits beside the pill.
+  The pill stays there on purpose: typing the password again asks Automic Vault once more, which is all Check again did in those states.
+  `LockScreenSelfTest` used to fail a password form in `.serviceNotRunning` ("nothing useful to type yet"), and that expectation changed with the design.
+  When Automic Vault answers again, the screen goes back to the ordinary form, still lit, with the usual "didn't match" line.
+- **Every state is covered:** in progress ("Waiting for Touch ID…", button and pill held), cancelled (a plain line, not red), failed (red, with the shake), a Mac with only a login password (a key glyph, "Unlock with your Mac password"), and a Mac that cannot confirm its owner at all (disabled in every state, with the reason).
+- **Cancel and failure are told apart** by `LAContextFactory.evaluateOutcome`, which maps `LAError`'s three cancel codes to `.cancelled`.
+  `evaluate` keeps its `Bool` for every other caller.
+- **The lamp cannot be put out over a working button**: `canDim` is false in the two Vault-failing states, which start lit.
+- **Keyboard:** the button joins the key view loop whenever it works, even with Full Keyboard Access off (`HelmIconButton.joinsKeyViewLoop`, the `SceneGateHotspotView` rule), and a click never takes focus from the field.
+- **`HelmIconButton`'s `.circle` was an oval.**
+  A borderless `NSButton` carries top and bottom alignment insets, so a 32pt circle laid out 32x40 here and the in-pill arrow 28x31.
+  `.circle` now reports zero alignment insets, which also rounds the Secrets chest's Touch ID button.
+
+The lock policy is unchanged: the same two states, the same `.deviceOwnerAuthentication` policy, off the main thread, and only a confirmed challenge plays the unlock.
+`LockScreenSelfTest.checkAuthFlowUntouched` now source-guards that policy string, because no suite raises the real prompt.
+
+### Verified (design A)
+
+- `FM_RUN_LOCK_SCREEN_TESTS` gained `checkTheTouchIDControl`: a circle level with the pill and inside the window in Lavender, Powder, Daylight and Dusk at 1220x760 and 960x620, enabled only in the Vault-failing states, the reason on screen and in the accessibility help, the reason line at 4.5:1 or better on the sky, the glyph at 3:1 on its fill, an exterior ring, and Tab reaching it exactly when it works.
+- `FM_RUN_VAULT_READ_SESSION_TESTS` and `FM_RUN_REVIEW_UI_UX_TESTS` drive the real button through failed, cancelled, in-progress and confirmed challenges.
+- Copy-aside injections: hiding the button on an ordinary lock failed all three suites; dropping the `.circle` inset fix failed the shape check ("32.00x40.00 beside a 32.00pt pill"); dropping `joinsKeyViewLoop` failed the Tab check; enabling the button on an ordinary lock (a policy change) failed all three suites.
+- Off-screen renders of every state in Lavender and Powder at both sizes.
+- **Not verified:** the real Touch ID prompt, VoiceOver speech and the focus ring on screen (an off-screen window is never key), and the running animations.

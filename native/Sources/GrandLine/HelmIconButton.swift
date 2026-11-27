@@ -147,6 +147,36 @@ final class HelmIconButton: NSButton {
         HelmMotion.withoutImplicitAnimation { restyle() }
     }
 
+    /// A `.circle` lays out at exactly its side. A borderless `NSButton`
+    /// carries 3.5pt top and bottom alignment insets (measured on macOS 26:
+    /// a 32x32 intrinsic size came out as a 32.5x39 frame), so without this
+    /// every circle drew as an oval - the Secrets page's round Touch ID
+    /// button at 31.5x39 and the lock screen's in-pill arrow at 28x31.
+    override var alignmentRectInsets: NSEdgeInsets {
+        if case .circle = style { return NSEdgeInsetsZero }
+        return super.alignmentRectInsets
+    }
+
+    /// Opt-in: Tab reaches this button whether or not macOS's Full Keyboard
+    /// Access is on, the way `SceneGateHotspotView` joins its gate's key view
+    /// loop (A-02). A click still never takes focus, so a typing-first gate
+    /// keeps its field. Only while the button is enabled and visible.
+    var joinsKeyViewLoop = false
+
+    override var acceptsFirstResponder: Bool {
+        guard joinsKeyViewLoop else { return super.acceptsFirstResponder }
+        guard isEnabled, !isHiddenOrHasHiddenAncestor else { return false }
+        switch NSApp?.currentEvent?.type {
+        case .leftMouseDown?, .rightMouseDown?, .otherMouseDown?: return false
+        default: return true
+        }
+    }
+
+    override var canBecomeKeyView: Bool {
+        guard joinsKeyViewLoop else { return super.canBecomeKeyView }
+        return acceptsFirstResponder && !bounds.isEmpty
+    }
+
     override var focusRingMaskBounds: NSRect { bounds }
 
     override func drawFocusRingMask() {
